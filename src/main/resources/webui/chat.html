@@ -1403,6 +1403,41 @@
                         <div class="brand-title">CodeSage</div>
                     </div>
                     <div class="header-actions">
+                        <!-- Chat Mode Toggle -->
+                        <div class="mode-toggle" id="mode-toggle">
+                            <button
+                                class="mode-btn active"
+                                data-mode="GENERAL"
+                                onclick="switchChatMode('GENERAL')"
+                                title="通用对话"
+                            >
+                                通用
+                            </button>
+                            <button
+                                class="mode-btn"
+                                data-mode="CODING"
+                                onclick="switchChatMode('CODING')"
+                                title="代码生成与审查"
+                            >
+                                编程
+                            </button>
+                            <button
+                                class="mode-btn"
+                                data-mode="REASONING"
+                                onclick="switchChatMode('REASONING')"
+                                title="深度推理与分析"
+                            >
+                                推理
+                            </button>
+                            <button
+                                class="mode-btn"
+                                data-mode="VISION"
+                                onclick="switchChatMode('VISION')"
+                                title="图片理解与多模态"
+                            >
+                                视觉
+                            </button>
+                        </div>
                         <!-- Model Selector -->
                         <div class="model-selector" id="model-selector">
                             <button
@@ -2348,7 +2383,6 @@
                     const msg = JSON.stringify({
                         type: "send_message",
                         content: text,
-                        mode: currentMode,
                         turnId: currentTurnId,
                         model: currentModel,
                     });
@@ -2863,16 +2897,18 @@
                 stopTurnTimer(turnId);
                 const contentEl = document.getElementById(turnId + "-content");
                 if (contentEl) {
-                    contentEl.innerHTML = `
-                        <div class="budget-exhausted">
-                            <div class="budget-exhausted-title">⏸ 任务已暂停</div>
-                            <div class="budget-exhausted-reason">${escapeHtml(data.reason)}</div>
-                            <div class="budget-exhausted-summary">
-                                已执行 ${data.consumedIterations} 轮，耗时 ${data.elapsedSeconds}s
-                            </div>
-                            ${data.allowContinue ? `<button class="continue-btn" onclick="continueTask('${turnId}')">继续执行 (+10轮)</button>` : ""}
+                    // 追加预算耗尽提示，保留已生成的内容
+                    const exhaustedPanel = document.createElement("div");
+                    exhaustedPanel.className = "budget-exhausted";
+                    exhaustedPanel.innerHTML = `
+                        <div class="budget-exhausted-title">⏸ 任务已暂停</div>
+                        <div class="budget-exhausted-reason">${escapeHtml(data.reason)}</div>
+                        <div class="budget-exhausted-summary">
+                            已执行 ${data.consumedIterations} 轮，耗时 ${data.elapsedSeconds}s
                         </div>
+                        ${data.allowContinue ? `<button class="continue-btn" onclick="continueTask('${turnId}')">继续执行 (+10轮)</button>` : ""}
                     `;
+                    contentEl.appendChild(exhaustedPanel);
                 }
                 const budgetEl = document.getElementById(turnId + "-budget");
                 if (budgetEl) {

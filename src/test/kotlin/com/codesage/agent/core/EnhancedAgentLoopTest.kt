@@ -326,6 +326,133 @@ class EnhancedAgentLoopTest {
         }
     }
 
+    /**
+     * 验证 AI 在工具调用后返回空内容时，会 emit Error 事件而非直接静默结束
+     */
+    @Test
+    fun `empty response after tool calls should emit Error event`() = runBlocking {
+        var callCount = 0
+        val gateway = object : ModelGateway() {
+            override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
+            override suspend fun chat(request: ChatRequest): Result<ChatResponse> {
+                callCount++
+                return when (callCount) {
+                    1 -> Result.success(
+                        ChatResponse(
+                            id = "test_tool",
+                            model = request.model,
+                            choices = listOf(
+                                Choice(
+                                    index = 0,
+                                    message = Message(
+                                        role = Role.ASSISTANT,
+                                        content = "",
+                                        toolCalls = listOf(
+                                            ToolCall(
+                                                id = "t1",
+                                                name = "list_directory",
+                                                arguments = "{\"path\": \"src\"}"
+                                            )
+                                        )
+                                    ),
+                                    finishReason = "tool_calls"
+                                )
+                            ),
+                            usage = null
+                        )
+                    )
+                    // 第二次调用：返回空内容（模拟工具结果处理后 AI 无回答）
+                    else -> Result.success(
+                        ChatResponse(
+                            id = "test_empty",
+                            model = request.model,
+                            choices = listOf(
+                                Choice(
+                                    index = 0,
+                                    message = Message.assistantMessage(""),
+                                    finishReason = "stop"
+                                )
+                            ),
+                            usage = null
+                        )
+                    )
+                }
+            }
+        }
+
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+
+        val contextManager = ContextManager()
+        val session = AgentSession(id = "test_session")
+        val events = loop.run(
+            userMessage = "Test message",
+            session = session,
+            contextManager = contextManager,
+            currentModel = "test-model",
+            systemPrompt = "You are a test assistant"
+        ).toList()
+
+        // 验证收到了 Error 事件（而非静默结束）
+        val errorEvents = events.filterIsInstance<AgentStreamEvent.Error>()
+        assertTrue(errorEvents.isNotEmpty(), "Should emit Error event when LLM returns empty content after tool calls")
+
+        // 验证 Done 事件仍然被发出
+        assertTrue(events.any { it is AgentStreamEvent.Done }, "Should emit Done event even after Error")
+    }
+
+    /**
+     * 验证连续多轮对话中 errorRecovery 计数器不会累积
+     */
+    @Test
+    fun `error recovery counters should not accumulate across separate runs`() = runBlocking {
+        val errorRecovery = AgentErrorRecovery()
+        val gateway = createFakeGatewayWithToolCalls(toolCallCount = 0) // 直接返回空内容
+
+        // 第一次运行
+        val loop1 = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE),
+            errorRecovery = errorRecovery
+        )
+        loop1.run(
+            userMessage = "First",
+            session = AgentSession(id = "s1"),
+            contextManager = ContextManager(),
+            currentModel = "test-model",
+            systemPrompt = "You are a test assistant"
+        ).toList()
+
+        // 第二次运行
+        val loop2 = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE),
+            errorRecovery = errorRecovery
+        )
+        loop2.run(
+            userMessage = "Second",
+            session = AgentSession(id = "s2"),
+            contextManager = ContextManager(),
+            currentModel = "test-model",
+            systemPrompt = "You are a test assistant"
+        ).toList()
+
+        // 两次运行后计数器应该已被重置
+        assertEquals(
+            0,
+            errorRecovery.getRetryCount(FailoverReason.EMPTY_RESPONSE),
+            "Counters should be reset after each run"
+        )
+    }
+
     private fun createFakeToolExecutor(): ToolExecutor {
         return ToolExecutor(null)
     }

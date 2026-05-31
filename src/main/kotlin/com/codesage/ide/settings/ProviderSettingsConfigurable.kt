@@ -1,7 +1,7 @@
 package com.codesage.ide.settings
 
 import com.codesage.model.adapter.minimax.MiniMaxAdapter
-import com.codesage.model.adapter.kimi.KimiAdapter
+
 import com.codesage.model.adapter.OpenAICompatibleAdapter
 import com.codesage.model.gateway.ModelGateway
 import com.codesage.model.registry.ModelRegistry
@@ -74,6 +74,9 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
     private var tempDefaultModel = ""
     private var tempEnableStreaming = true
 
+    // 当前正在编辑的 provider 索引（用于解决切换时的保存竞态）
+    private var editingProviderIndex: Int = -1
+
     // 左侧列表
     private val listModel = CollectionListModel<ProviderEditData>()
     private val providerList = JBList(listModel)
@@ -82,6 +85,9 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
     private val detailCards = JPanel(CardLayout())
     private val emptyPanel = JPanel(BorderLayout())
     private val editPanel = JPanel(BorderLayout())
+
+    // 全局模型设置面板（从 provider 详情中独立出来）
+    private lateinit var generalSection: JPanel
 
     // 编辑表单
     private val nameField = JBTextField()
@@ -113,7 +119,7 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
     private val resetGeneralButton = JButton("恢复默认值").apply {
         addActionListener {
             streamingCheckBox.isSelected = true
-            refreshDefaultModelCombo()
+            refreshModelCombos()
         }
     }
 
@@ -158,6 +164,15 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         val rightPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
         rightPanel.border = JBUI.Borders.emptyLeft(4)
         rightPanel.add(detailCards, BorderLayout.CENTER)
+
+        // 全局模型设置（从 provider 详情中独立出来，避免用户误以为是 per-provider 的）
+        val generalWrapper = JPanel(BorderLayout(0, JBUI.scale(4)))
+        val generalHint = JBLabel("以下模型配置为全局设置，所有对话共用，不绑定特定提供商")
+        generalHint.foreground = UIManager.getColor("Label.disabledForeground")
+        generalHint.font = JBUI.Fonts.miniFont()
+        generalWrapper.add(generalSection, BorderLayout.CENTER)
+        generalWrapper.add(generalHint, BorderLayout.SOUTH)
+        rightPanel.add(generalWrapper, BorderLayout.SOUTH)
 
         // 分栏
         val splitter = JBSplitter(false, 0.22f).apply {
@@ -225,22 +240,17 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
             .addComponentFillVertically(JPanel(), 0)
             .panel
 
-        // 组装右侧
-        val rightContent = JPanel(BorderLayout(0, JBUI.scale(12)))
-        rightContent.border = JBUI.Borders.emptyLeft(4)
-
+        // 组装 provider 详情（仅包含提供商配置，通用设置已独立到右侧面板底部）
         val providerSection = JPanel(BorderLayout())
         providerSection.add(TitledSeparator("提供商配置"), BorderLayout.NORTH)
         providerSection.add(providerForm, BorderLayout.CENTER)
         providerSection.border = JBUI.Borders.emptyBottom(8)
+        editPanel.add(providerSection, BorderLayout.CENTER)
 
-        val generalSection = JPanel(BorderLayout())
-        generalSection.add(TitledSeparator("通用设置"), BorderLayout.NORTH)
+        // 全局模型设置面板（独立出来，避免用户误以为是 per-provider 的）
+        generalSection = JPanel(BorderLayout())
+        generalSection.add(TitledSeparator("全局模型设置"), BorderLayout.NORTH)
         generalSection.add(generalForm, BorderLayout.CENTER)
-
-        rightContent.add(providerSection, BorderLayout.NORTH)
-        rightContent.add(generalSection, BorderLayout.CENTER)
-        editPanel.add(rightContent, BorderLayout.CENTER)
 
         // 事件
         typeCombo.addActionListener { onTemplateSelected() }
@@ -281,9 +291,10 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         providerList.selectedIndex = listModel.size - 1
         listeners.forEach { providerList.addListSelectionListener(it) }
 
+        editingProviderIndex = providerData.size - 1
         loadDataToEdit(data)
         (detailCards.layout as CardLayout).show(detailCards, "edit")
-        refreshDefaultModelCombo()
+        refreshModelCombos()
     }
 
     private fun removeProvider() {
@@ -297,10 +308,16 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
 
         providerData.removeAt(index)
         listModel.remove(index)
+        if (editingProviderIndex == index) {
+            editingProviderIndex = -1
+        } else if (editingProviderIndex > index) {
+            editingProviderIndex--
+        }
         if (listModel.isEmpty()) {
             (detailCards.layout as CardLayout).show(detailCards, "empty")
+            editingProviderIndex = -1
         }
-        refreshDefaultModelCombo()
+        refreshModelCombos()
     }
 
     private fun onProviderSelected() {
@@ -318,6 +335,7 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
     /* ---------- 编辑与数据同步 ---------- */
 
     private fun loadDataToEdit(data: ProviderEditData) {
+        editingProviderIndex = providerData.indexOf(data)
         val p = data.provider
         nameField.text = p.name
         typeCombo.selectedItem = ProviderTemplate.TEMPLATES.find { it.providerType == p.providerType }?.name
@@ -330,8 +348,8 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
     }
 
     private fun saveCurrentEditToData() {
-        val index = providerList.selectedIndex
-        if (index >= 0) {
+        val index = editingProviderIndex
+        if (index >= 0 && index < listModel.size) {
             val data = listModel.getElementAt(index)
             data.provider.name = nameField.text
             data.provider.baseUrl = baseUrlField.text
@@ -360,7 +378,7 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         val enabled = enabledCheckBox.isSelected
         updateFormEnabledState(enabled)
         saveCurrentEditToData()
-        refreshDefaultModelCombo()
+        refreshModelCombos()
     }
 
     private fun updateFormEnabledState(enabled: Boolean) {
@@ -377,22 +395,28 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
 
     /* ---------- 默认模型 ---------- */
 
-    private fun refreshDefaultModelCombo() {
-        val currentSelection = defaultModelCombo.selectedItem as? String
-        defaultModelCombo.removeAllItems()
+    private fun refreshModelCombos() {
         val allModels = mutableListOf<String>()
         providerData.filter { it.provider.isEnabled }.forEach { data ->
             data.provider.models.forEach { model ->
                 val display = "${model}  (${data.provider.name})"
                 allModels.add(display)
-                defaultModelCombo.addItem(display)
             }
         }
-        if (currentSelection != null && allModels.contains(currentSelection)) {
-            defaultModelCombo.selectedItem = currentSelection
-        } else if (allModels.isNotEmpty()) {
-            defaultModelCombo.selectedIndex = 0
+
+        fun refreshCombo(combo: ComboBox<String>, currentSelection: String?) {
+            combo.removeAllItems()
+            allModels.forEach { combo.addItem(it) }
+            if (currentSelection != null && allModels.contains(currentSelection)) {
+                combo.selectedItem = currentSelection
+            } else if (allModels.isNotEmpty()) {
+                combo.selectedIndex = 0
+            }
         }
+
+        refreshCombo(defaultModelCombo, defaultModelCombo.selectedItem as? String)
+        refreshCombo(codingModelCombo, codingModelCombo.selectedItem as? String)
+        refreshCombo(reasoningModelCombo, reasoningModelCombo.selectedItem as? String)
     }
 
     private fun extractModelFromDisplay(display: String): String = display.substringBeforeLast(" (").trim()
@@ -449,11 +473,7 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
             val registry = ModelRegistry.getInstance()
             val adapter = when (provider.providerType) {
                 ProviderTypes.MINIMAX -> MiniMaxAdapter(apiKey, provider.baseUrl, provider.models)
-                ProviderTypes.KIMI -> KimiAdapter(apiKey, provider.baseUrl, provider.models)
-                ProviderTypes.OPENAI, ProviderTypes.OPENAI_COMPATIBLE ->
-                    createCustomAdapter(provider.name, apiKey, provider.baseUrl, provider.models)
-
-                else -> return "不支持的提供商类型: ${provider.providerType}"
+                else -> createCustomAdapter(provider.name, apiKey, provider.baseUrl, provider.models)
             }
             registry.register(adapter)
             val gateway = ModelGateway.getInstance()
@@ -502,7 +522,7 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
                 if (result.isNotEmpty()) {
                     data.provider.models = result.toMutableList()
                     modelsField.text = result.joinToString(", ")
-                    refreshDefaultModelCombo()
+                    refreshModelCombos()
                     Messages.showInfoMessage(
                         this@ProviderSettingsPanel as java.awt.Component,
                         "成功获取 ${result.size} 个模型:\n${
@@ -525,11 +545,7 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         return try {
             val adapter = when (provider.providerType) {
                 ProviderTypes.MINIMAX -> MiniMaxAdapter(apiKey, provider.baseUrl, provider.models)
-                ProviderTypes.KIMI -> KimiAdapter(apiKey, provider.baseUrl, provider.models)
-                ProviderTypes.OPENAI, ProviderTypes.OPENAI_COMPATIBLE ->
-                    createCustomAdapter(provider.name, apiKey, provider.baseUrl, provider.models)
-
-                else -> return emptyList()
+                else -> createCustomAdapter(provider.name, apiKey, provider.baseUrl, provider.models)
             }
             adapter.fetchModels()
         } catch (e: Exception) {
@@ -557,6 +573,8 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         saveCurrentEditToData()
         val config = PluginConfig.getInstance()
         if (tempDefaultModel != config.defaultModel) return true
+        if (tempCodingModel != config.codingModel) return true
+        if (tempReasoningModel != config.reasoningModel) return true
         if (tempDefaultProviderId != config.defaultProviderId) return true
         if (tempEnableStreaming != config.enableStreaming) return true
         val validEditData = providerData.filter { it.provider.isValid() }
@@ -600,6 +618,16 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
             validProviderData.find { it.provider.models.contains(tempDefaultModel) }?.provider?.id ?: ""
         config.defaultModel = tempDefaultModel
         config.defaultProviderId = tempDefaultProviderId
+
+        // 专用模式模型
+        val codingDisplay = codingModelCombo.selectedItem as? String ?: ""
+        tempCodingModel = extractModelFromDisplay(codingDisplay)
+        config.codingModel = tempCodingModel
+
+        val reasoningDisplay = reasoningModelCombo.selectedItem as? String ?: ""
+        tempReasoningModel = extractModelFromDisplay(reasoningDisplay)
+        config.reasoningModel = tempReasoningModel
+
         config.enableStreaming = streamingCheckBox.isSelected
 
         // 同步临时变量
@@ -618,8 +646,7 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
             val apiKey = config.getProviderApiKey(provider.id) ?: return@forEach
             when (provider.providerType) {
                 ProviderTypes.MINIMAX -> registry.createMiniMaxAdapter(apiKey, provider.baseUrl, provider.models)
-                ProviderTypes.KIMI -> registry.createKimiAdapter(apiKey, provider.baseUrl, provider.models)
-                ProviderTypes.OPENAI, ProviderTypes.OPENAI_COMPATIBLE -> {
+                else -> {
                     val adapter = createCustomAdapter(provider.name, apiKey, provider.baseUrl, provider.models)
                     registry.register(adapter)
                 }
@@ -647,17 +674,26 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         }.toMutableList()
         tempDefaultProviderId = config.defaultProviderId
         tempDefaultModel = config.defaultModel
+        tempCodingModel = config.codingModel
+        tempReasoningModel = config.reasoningModel
         tempEnableStreaming = config.enableStreaming
         listModel.removeAll()
         listModel.add(providerData)
         streamingCheckBox.isSelected = tempEnableStreaming
-        refreshDefaultModelCombo()
+        refreshModelCombos()
         val display = findDisplayForModel(tempDefaultModel)
         if (display != null) defaultModelCombo.selectedItem = display
+        findDisplayForModel(tempCodingModel)?.let { codingModelCombo.selectedItem = it }
+        findDisplayForModel(tempReasoningModel)?.let { reasoningModelCombo.selectedItem = it }
         val listeners = providerList.listSelectionListeners
         listeners.forEach { providerList.removeListSelectionListener(it) }
-        if (listModel.size > 0) providerList.selectedIndex = 0
-        else (detailCards.layout as CardLayout).show(detailCards, "empty")
+        if (listModel.size > 0) {
+            providerList.selectedIndex = 0
+            editingProviderIndex = 0
+        } else {
+            (detailCards.layout as CardLayout).show(detailCards, "empty")
+            editingProviderIndex = -1
+        }
         listeners.forEach { providerList.addListSelectionListener(it) }
         if (listModel.size > 0) {
             val firstData = listModel.getElementAt(0)

@@ -34,6 +34,7 @@ class PromptAssembler(
         val role: PromptRole = PromptRole.ASSISTANT,
         val projectLanguage: String? = null,
         val projectFramework: String? = null,
+        val projectRoot: String? = null,
         val toolCount: Int = 0,
         val hasMemory: Boolean = false,
         val hasSubAgent: Boolean = false,
@@ -72,9 +73,14 @@ class PromptAssembler(
         }
 
         // 项目上下文
-        if (context.projectLanguage != null) {
+        if (context.projectLanguage != null || context.projectFramework != null || context.projectRoot != null) {
             builder.appendLine("## Project Context")
-            builder.appendLine("Primary language: ${context.projectLanguage}")
+            context.projectRoot?.let {
+                builder.appendLine("Project root: $it")
+            }
+            context.projectLanguage?.let {
+                builder.appendLine("Primary language: $it")
+            }
             context.projectFramework?.let {
                 builder.appendLine("Framework: $it")
             }

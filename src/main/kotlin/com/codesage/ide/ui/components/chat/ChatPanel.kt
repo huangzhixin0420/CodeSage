@@ -187,12 +187,13 @@ class ChatPanel(
                             }
 
                             is AgentStreamEvent.BudgetExhausted -> {
-                                turn.setError("⏸ 任务已暂停: ${event.reason}\n已执行 ${event.consumedIterations} 轮，耗时 ${event.elapsedSeconds}s")
+                                turn.showBudgetExhausted(event.reason, event.consumedIterations, event.allowContinue)
                                 if (!isUserScrolling) scrollToBottom()
                             }
 
                             is AgentStreamEvent.BudgetExtended -> {
-                                turn.updateThinking("预算已追加: +${event.extraIterations}轮")
+                                turn.updateBudgetStatus(event.newRemainingIterations, 0)
+                                turn.updateThinking("预算已追加: +${event.extraIterations}轮，剩余 ${event.newRemainingIterations} 轮")
                             }
 
                             is AgentStreamEvent.Error -> {

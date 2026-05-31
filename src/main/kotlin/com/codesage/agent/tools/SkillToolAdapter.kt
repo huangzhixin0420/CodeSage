@@ -8,6 +8,7 @@ import com.codesage.skill.SkillInput
 import com.codesage.skill.SkillResult
 import com.codesage.skill.executor.SkillExecutor
 import com.codesage.skill.registry.SkillRegistry
+import com.intellij.openapi.project.Project
 import kotlinx.serialization.json.*
 
 /**
@@ -16,7 +17,8 @@ import kotlinx.serialization.json.*
  */
 class SkillToolAdapter(
     private val skillRegistry: SkillRegistry,
-    private val skillExecutor: SkillExecutor
+    private val skillExecutor: SkillExecutor,
+    private val project: Project? = null
 ) {
     /**
      * 将所有技能转换为 Tool 定义列表
@@ -42,7 +44,12 @@ class SkillToolAdapter(
         return try {
             val argsMap = jsonObjectToMap(Json.parseToJsonElement(arguments).jsonObject)
             val input = SkillInput(argsMap)
-            val context = com.codesage.skill.ExecutionContext() // 基础上下文
+            val context = com.codesage.skill.ExecutionContext(
+                projectPath = project?.basePath,
+                currentFile = project?.let { /* 可扩展：获取当前编辑器打开的文件 */ null },
+                sessionId = null, // 可从调用方传入
+                metadata = mapOf("source" to "ai_tool_call")
+            )
 
             when (val result = skillExecutor.execute(skillId, input, context)) {
                 is SkillResult.Success -> {

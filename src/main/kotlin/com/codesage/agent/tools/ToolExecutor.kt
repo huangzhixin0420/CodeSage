@@ -5,9 +5,10 @@ import com.codesage.model.dto.ToolCall
 import com.codesage.shared.utils.Logger
 import com.codesage.tools.guardrails.*
 import com.intellij.openapi.project.Project
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.*
+import java.io.IOException
+import java.util.concurrent.TimeoutException
 
 /**
  * 工具执行器
@@ -28,14 +29,14 @@ class ToolExecutor(
     private val codeInsightExecutor = CodeInsightExecutor(project)
 
     /**
-     * 执行单个工具调用
+     * 执行单个工具调用（带重试）
      * @return 工具执行结果的 JSON 字符串
      */
     suspend fun execute(toolCall: ToolCall): String {
         logger.info("Executing tool: ${toolCall.name} with args: ${toolCall.arguments}")
         val startTime = System.currentTimeMillis()
 
-        // 1. 频率限制检查
+        // 1. 频率限制检查（不重试）
         val rateLimitResult = rateLimiter?.check(toolCall.name)
         if (rateLimitResult != null && !rateLimitResult.allowed) {
             val message = rateLimitResult.warning ?: "Tool '${toolCall.name}' blocked by rate limiter"
@@ -53,7 +54,7 @@ class ToolExecutor(
         return try {
             val args = parseArguments(toolCall.arguments)
 
-            // 2. Guardrails 前置检查
+            // 2. Guardrails 前置检查（不重试）
             guardrails?.let { g ->
                 when (val preCheck = g.preCheck(toolCall.name, args, toolCall.id)) {
                     is ToolGuardrails.PreCheckResult.Denied -> {
@@ -73,55 +74,20 @@ class ToolExecutor(
                         )
                     }
 
-                    else -> {}
+                    is ToolGuardrails.PreCheckResult.Allowed -> { /* 正常执行 */
+                    }
                 }
             }
 
-            val result = when (toolCall.name) {
-                "read_file" -> ideTools.readFile(args)
-                "write_file" -> ideTools.writeFile(args)
-                "list_directory" -> ideTools.listDirectory(args)
-                "search_code" -> ideTools.searchCode(args)
-                "run_command" -> ideTools.runCommand(args)
-                "get_project_structure" -> ideTools.getProjectStructure(args)
-                "find_file" -> ideTools.findFile(args)
-                "grep_code" -> ideTools.grepCode(args)
-                "get_file_info" -> ideTools.getFileInfo(args)
-                "read_multiple_files" -> ideTools.readMultipleFiles(args)
-                "edit_file" -> ideTools.editFile(args)
-                "delete_file" -> ideTools.deleteFile(args)
-                "copy_file" -> ideTools.copyFile(args)
-                "move_file" -> ideTools.moveFile(args)
-                // Git 工具
-                "git_status" -> extendedTools.gitStatus(args)
-                "git_diff" -> extendedTools.gitDiff(args)
-                "git_log" -> extendedTools.gitLog(args)
-                "git_branch" -> extendedTools.gitBranch(args)
-                // Shell / HTTP / 数据处理工具
-                "exec_shell" -> extendedTools.execShell(args)
-                "http_request" -> extendedTools.httpRequest(args)
-                "parse_json" -> extendedTools.parseJson(args)
-                "encode_base64" -> extendedTools.encodeBase64(args)
-                "decode_base64" -> extendedTools.decodeBase64(args)
-                "format_json" -> extendedTools.formatJson(args)
-                "hash_md5" -> extendedTools.hashMd5(args)
-                "hash_sha256" -> extendedTools.hashSha256(args)
-                // 代码洞察工具（真实 PSI 实现）
-                "analyze_symbol" -> codeInsightExecutor.analyzeSymbol(args)
-                "find_usages" -> codeInsightExecutor.findUsages(args)
-                "get_inheritance_chain" -> codeInsightExecutor.getInheritanceChain(args)
-                "semantic_search" -> codeInsightExecutor.semanticSearch(args)
-                "get_file_summary" -> codeInsightExecutor.getFileSummary(args)
-                "get_project_stats" -> codeInsightExecutor.getProjectStats(args)
-                else -> ToolResult.Error("Unknown tool: ${toolCall.name}")
-            }
+            // 3. 执行工具（带重试）
+            val result = executeToolWithRetry(toolCall, args)
 
-            // 3. Guardrails 后置处理（截断）
+            // 4. Guardrails 后置处理（截断）
             val processedResult = guardrails?.postProcess(toolCall.name, result) ?: result
             val formatted = formatResult(processedResult)
             val duration = System.currentTimeMillis() - startTime
 
-            // 4. 记录审计日志
+            // 5. 记录审计日志
             val wasTruncated = processedResult is ToolResult.Success &&
                     result is ToolResult.Success &&
                     processedResult.data.toString().length < result.data.toString().length
@@ -136,7 +102,7 @@ class ToolExecutor(
                 rateLimitWarning = rateLimitResult?.warning
             )
 
-            // 5. 频率限制成功重置（仅业务成功时重置）
+            // 6. 频率限制成功重置（仅业务成功时重置）
             if (result is ToolResult.Success) {
                 rateLimiter?.recordSuccess(toolCall.name)
             }
@@ -158,6 +124,98 @@ class ToolExecutor(
                 durationMs = duration
             )
             formatResult(ToolResult.Error("Execution failed: ${e.message}"))
+        }
+    }
+
+    /**
+     * 执行工具（带重试机制）
+     * 仅对瞬时错误（IO异常、超时、进程锁等）进行重试，永久性错误（文件不存在、未知工具等）不重试
+     */
+    private suspend fun executeToolWithRetry(toolCall: ToolCall, args: JsonObject): ToolResult {
+        val maxRetries = 2
+        val baseDelayMs = 500L
+
+        var lastException: Exception? = null
+        for (attempt in 0..maxRetries) {
+            try {
+                return executeToolOnce(toolCall, args)
+            } catch (e: Exception) {
+                lastException = e
+                if (attempt < maxRetries && isRetryableError(e)) {
+                    val delayMs = baseDelayMs * (attempt + 1)
+                    logger.warn("[ToolExecutor] Tool ${toolCall.name} failed on attempt ${attempt + 1}, retrying after ${delayMs}ms: ${e.message}")
+                    delay(delayMs)
+                } else {
+                    break
+                }
+            }
+        }
+        // 所有重试耗尽
+        val errorMsg = lastException?.message ?: "Unknown error after $maxRetries retries"
+        return ToolResult.Error("Execution failed after ${maxRetries + 1} attempts: $errorMsg")
+    }
+
+    /**
+     * 单次工具执行（无重试）
+     */
+    private suspend fun executeToolOnce(toolCall: ToolCall, args: JsonObject): ToolResult {
+        return when (toolCall.name) {
+            "read_file" -> ideTools.readFile(args)
+            "write_file" -> ideTools.writeFile(args)
+            "list_directory" -> ideTools.listDirectory(args)
+            "search_code" -> ideTools.searchCode(args)
+            "run_command" -> ideTools.runCommand(args)
+            "get_project_structure" -> ideTools.getProjectStructure(args)
+            "find_file" -> ideTools.findFile(args)
+            "grep_code" -> ideTools.grepCode(args)
+            "get_file_info" -> ideTools.getFileInfo(args)
+            "read_multiple_files" -> ideTools.readMultipleFiles(args)
+            "edit_file" -> ideTools.editFile(args)
+            "delete_file" -> ideTools.deleteFile(args)
+            "copy_file" -> ideTools.copyFile(args)
+            "move_file" -> ideTools.moveFile(args)
+            // Git 工具
+            "git_status" -> extendedTools.gitStatus(args)
+            "git_diff" -> extendedTools.gitDiff(args)
+            "git_log" -> extendedTools.gitLog(args)
+            "git_branch" -> extendedTools.gitBranch(args)
+            // Shell / HTTP / 数据处理工具
+            "exec_shell" -> extendedTools.execShell(args)
+            "http_request" -> extendedTools.httpRequest(args)
+            "parse_json" -> extendedTools.parseJson(args)
+            "encode_base64" -> extendedTools.encodeBase64(args)
+            "decode_base64" -> extendedTools.decodeBase64(args)
+            "format_json" -> extendedTools.formatJson(args)
+            "hash_md5" -> extendedTools.hashMd5(args)
+            "hash_sha256" -> extendedTools.hashSha256(args)
+            // 代码洞察工具（真实 PSI 实现）
+            "analyze_symbol" -> codeInsightExecutor.analyzeSymbol(args)
+            "find_usages" -> codeInsightExecutor.findUsages(args)
+            "get_inheritance_chain" -> codeInsightExecutor.getInheritanceChain(args)
+            "semantic_search" -> codeInsightExecutor.semanticSearch(args)
+            "get_file_summary" -> codeInsightExecutor.getFileSummary(args)
+            "get_project_stats" -> codeInsightExecutor.getProjectStats(args)
+            else -> ToolResult.Error("Unknown tool: ${toolCall.name}")
+        }
+    }
+
+    /**
+     * 判断错误是否可重试
+     */
+    private fun isRetryableError(error: Throwable): Boolean {
+        return when (error) {
+            is IOException -> true
+            is TimeoutException -> true
+            else -> {
+                val msg = error.message?.lowercase() ?: ""
+                // Git 索引锁、文件被占用等临时错误
+                msg.contains("unable to create") ||
+                        msg.contains("index.lock") ||
+                        msg.contains("resource busy") ||
+                        msg.contains("device or resource busy") ||
+                        msg.contains("temporary") ||
+                        msg.contains("try again")
+            }
         }
     }
 

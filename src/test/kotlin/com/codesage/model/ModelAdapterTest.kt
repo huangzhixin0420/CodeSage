@@ -1,6 +1,6 @@
 package com.codesage.model
 
-import com.codesage.model.adapter.kimi.KimiAdapter
+import com.codesage.model.adapter.OpenAICompatibleAdapter
 import com.codesage.model.adapter.minimax.MiniMaxAdapter
 import com.codesage.model.dto.ChatRequest
 import com.codesage.model.dto.Message
@@ -20,8 +20,8 @@ class ModelAdapterTest {
     @Test
     fun `MiniMaxAdapter should support required models`() {
         val adapter = MiniMaxAdapter("test-api-key")
-        assertTrue(adapter.supportedModels.contains("MiniMax-Text-01"))
-        assertTrue(adapter.supportedModels.contains("abab6.5s-chat"))
+        assertTrue(adapter.supportedModels.contains("MiniMax-M2.7"))
+        assertTrue(adapter.supportedModels.contains("MiniMax-M2.5"))
     }
 
     @Test
@@ -43,7 +43,7 @@ class ModelAdapterTest {
         val adapter = MiniMaxAdapter("test-api-key")
 
         val request = ChatRequest(
-            model = "MiniMax-Text-01",
+            model = "MiniMax-M2.5",
             messages = listOf(
                 Message.systemMessage("You are a helpful assistant."),
                 Message.userMessage("Hello")
@@ -57,23 +57,26 @@ class ModelAdapterTest {
     }
 
     @Test
-    fun `KimiAdapter should have correct provider name`() {
-        val adapter = KimiAdapter("test-api-key")
+    fun `OpenAI compatible adapter should work for kimi-like providers`() {
+        val adapter = object : OpenAICompatibleAdapter("test-api-key", "https://api.moonshot.cn") {
+            override val providerName: String = "kimi"
+            override val supportedModels: List<String> = listOf("kimi-k2.6", "moonshot-v1-8k")
+            override val chatEndpointPath: String = "/v1/chat/completions"
+        }
         assertEquals("kimi", adapter.providerName)
-    }
-
-    @Test
-    fun `KimiAdapter should support required models`() {
-        val adapter = KimiAdapter("test-api-key")
         assertTrue(adapter.supportedModels.contains("moonshot-v1-8k"))
-        assertTrue(adapter.supportedModels.contains("moonshot-v1-32k"))
+        assertEquals("https://api.moonshot.cn/v1/chat/completions", adapter.getChatEndpoint())
     }
 
     @Test
     fun `ModelRegistry should register adapters`() {
         val registry = ModelRegistry()
         val minimax = registry.createMiniMaxAdapter("test-key")
-        val kimi = registry.createKimiAdapter("test-key")
+        val kimi = registry.registerOpenAICompatibleAdapter(
+            name = "kimi", apiKey = "test-key",
+            baseUrl = "https://api.moonshot.cn",
+            models = listOf("kimi-k2.6", "moonshot-v1-8k")
+        )
 
         assertEquals(minimax, registry.getAdapter("minimax"))
         assertEquals(kimi, registry.getAdapter("kimi"))
@@ -84,7 +87,7 @@ class ModelAdapterTest {
         val registry = ModelRegistry()
         registry.createMiniMaxAdapter("test-key")
 
-        val adapter = registry.getAdapterForModel("MiniMax-Text-01")
+        val adapter = registry.getAdapterForModel("MiniMax-M2.5")
         assertNotNull(adapter)
         assertEquals("minimax", adapter?.providerName)
     }
@@ -94,7 +97,7 @@ class ModelAdapterTest {
         val adapter = MiniMaxAdapter("test-api-key")
 
         val request = ChatRequest(
-            model = "MiniMax-Text-01",
+            model = "MiniMax-M2.5",
             messages = listOf(
                 Message.userMessage("Hello"),
                 Message.assistantMessage("Hi there!")
@@ -103,7 +106,7 @@ class ModelAdapterTest {
         )
 
         val vendorRequest = adapter.toVendorRequest(request)
-        assertTrue(vendorRequest.contains("\"model\":\"MiniMax-Text-01\""))
+        assertTrue(vendorRequest.contains("\"model\":\"MiniMax-M2.5\""))
         assertTrue(vendorRequest.contains("\"temperature\":0.7"))
     }
 }

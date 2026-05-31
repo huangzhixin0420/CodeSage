@@ -18,10 +18,13 @@ class MiniMaxAdapter(
     override val providerName: String = "minimax"
 
     override val supportedModels: List<String> = customModels ?: listOf(
-        "MiniMax-Text-01",
-        "abab6.5s-chat",
-        "abab6.5g-chat",
-        "abab5.5s-chat"
+        "MiniMax-M2.7",
+        "MiniMax-M2.7-highspeed",
+        "MiniMax-M2.5",
+        "MiniMax-M2.5-highspeed",
+        "MiniMax-M2.1",
+        "MiniMax-M2.1-highspeed",
+        "MiniMax-M2"
     )
 
     override val chatEndpointPath: String = "/v1/chat/completions"

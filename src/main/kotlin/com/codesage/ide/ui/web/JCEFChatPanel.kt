@@ -1,6 +1,7 @@
 package com.codesage.ide.ui.web
 
 import com.codesage.agent.core.AgentStreamEvent
+import com.codesage.agent.core.ChatMode
 import com.codesage.agent.core.EventHistory
 import com.codesage.agent.core.EventBatchEmitter
 import com.codesage.shared.utils.Logger
@@ -43,6 +44,7 @@ class JCEFChatPanel(
     private var stopCallback: (() -> Unit)? = null
     private var switchModelCallback: ((String) -> Unit)? = null
     private var sessionActionHandler: ((String, Map<String, Any>) -> Unit)? = null
+    private var continueBudgetCallback: ((Int) -> Flow<AgentStreamEvent>)? = null
 
     private val pendingMessages = mutableListOf<String>()
 
@@ -312,6 +314,149 @@ class JCEFChatPanel(
                     sessionActionHandler?.invoke("request_sessions", emptyMap())
                 }
 
+                "continue_task" -> {
+                    val extraIterations =
+                        json.jsonObject["extraIterations"]?.jsonPrimitive?.content?.toIntOrNull() ?: 10
+                    val turnId = json.jsonObject["turnId"]?.jsonPrimitive?.content ?: currentTurnId
+                    logger.info("[JS→Kotlin] continue_task invoked, extraIterations=$extraIterations, turnId=$turnId")
+                    val callback = continueBudgetCallback
+                    if (callback == null) {
+                        logger.error("[JS→Kotlin] continueBudgetCallback is null! Cannot continue task.")
+                        sendToJS(
+                            mapOf(
+                                "type" to "error",
+                                "turnId" to (turnId ?: ""),
+                                "message" to "继续执行功能未初始化"
+                            )
+                        )
+                    } else {
+                        currentCollectJob?.cancel()
+                        currentCollectJob = scope?.launch {
+                            var turnStarted = false
+                            var meaningfulEventReceived = false
+                            var startTime = System.currentTimeMillis()
+                            try {
+                                callback(extraIterations).collect { event ->
+                                    if (!turnStarted) {
+                                        turnStarted = true
+                                        logger.info("[ContinueCallback] First stream event received after ${System.currentTimeMillis() - startTime}ms")
+                                    }
+                                    if (event !is AgentStreamEvent.Done) {
+                                        meaningfulEventReceived = true
+                                    }
+                                    when (event) {
+                                        is AgentStreamEvent.TextDelta -> {
+                                            sendToJS(
+                                                mapOf(
+                                                    "type" to "text_delta",
+                                                    "turnId" to (turnId ?: ""),
+                                                    "delta" to event.delta
+                                                )
+                                            )
+                                        }
+
+                                        is AgentStreamEvent.Thinking -> {
+                                            sendToJS(
+                                                mapOf(
+                                                    "type" to "thinking_update",
+                                                    "turnId" to (turnId ?: ""),
+                                                    "message" to event.message
+                                                )
+                                            )
+                                        }
+
+                                        is AgentStreamEvent.ToolCallStart -> {
+                                            sendToJS(
+                                                mapOf(
+                                                    "type" to "tool_call_start",
+                                                    "turnId" to (turnId ?: ""),
+                                                    "toolId" to event.toolCall.id,
+                                                    "toolName" to event.toolCall.name,
+                                                    "summary" to "Running ${event.toolCall.name}..."
+                                                )
+                                            )
+                                        }
+
+                                        is AgentStreamEvent.ToolCallResult -> {
+                                            sendToJS(
+                                                mapOf(
+                                                    "type" to "tool_call_complete",
+                                                    "turnId" to (turnId ?: ""),
+                                                    "toolId" to event.toolCallId,
+                                                    "success" to event.success,
+                                                    "result" to event.result
+                                                )
+                                            )
+                                        }
+
+                                        is AgentStreamEvent.BudgetExhausted -> {
+                                            sendToJS(
+                                                mapOf(
+                                                    "type" to "budget_exhausted",
+                                                    "turnId" to (turnId ?: ""),
+                                                    "reason" to event.reason,
+                                                    "consumedIterations" to event.consumedIterations,
+                                                    "consumedTokens" to event.consumedTokens,
+                                                    "elapsedSeconds" to event.elapsedSeconds,
+                                                    "allowContinue" to event.allowContinue
+                                                )
+                                            )
+                                        }
+
+                                        is AgentStreamEvent.BudgetExtended -> {
+                                            sendToJS(
+                                                mapOf(
+                                                    "type" to "budget_extended",
+                                                    "turnId" to (turnId ?: ""),
+                                                    "extraIterations" to event.extraIterations,
+                                                    "newRemainingIterations" to event.newRemainingIterations
+                                                )
+                                            )
+                                        }
+
+                                        is AgentStreamEvent.Error -> {
+                                            sendToJS(
+                                                mapOf(
+                                                    "type" to "error",
+                                                    "turnId" to (turnId ?: ""),
+                                                    "message" to event.message
+                                                )
+                                            )
+                                        }
+
+                                        AgentStreamEvent.Done -> {
+                                            sendToJS(mapOf("type" to "turn_complete", "turnId" to (turnId ?: "")))
+                                        }
+
+                                        else -> { /* ignore other events in continuation */
+                                        }
+                                    }
+                                }
+                                if (!turnStarted) {
+                                    sendToJS(
+                                        mapOf(
+                                            "type" to "error",
+                                            "turnId" to (turnId ?: ""),
+                                            "message" to "继续执行未收到任何响应"
+                                        )
+                                    )
+                                }
+                            } catch (e: CancellationException) {
+                                logger.info("[ContinueCallback] User cancelled the continuation")
+                            } catch (e: Throwable) {
+                                logger.error("[ContinueCallback] Error in continuation flow", e)
+                                sendToJS(
+                                    mapOf(
+                                        "type" to "error",
+                                        "turnId" to (turnId ?: ""),
+                                        "message" to (e.message ?: "继续执行时发生未知错误")
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
                 else -> logger.debug("Unknown message type: $type")
             }
         } catch (e: Exception) {
@@ -375,10 +520,12 @@ class JCEFChatPanel(
         onSendMessage: (String) -> Flow<AgentStreamEvent>,
         onStop: () -> Unit,
         onSwitchModel: ((String) -> Unit)? = null,
-        onSessionAction: ((String, Map<String, Any>) -> Unit)? = null
+        onSessionAction: ((String, Map<String, Any>) -> Unit)? = null,
+        onContinueBudget: ((Int) -> Flow<AgentStreamEvent>)? = null
     ) {
         this.switchModelCallback = onSwitchModel
         this.sessionActionHandler = onSessionAction
+        this.continueBudgetCallback = onContinueBudget
         this.scope = scope
         this.stopCallback = onStop
         this.messageCallback = { rawMessage ->

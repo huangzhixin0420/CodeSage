@@ -92,7 +92,8 @@ class EnhancedAgentLoop(
         session: AgentSession,
         contextManager: ContextManager,
         currentModel: String,
-        systemPrompt: String
+        systemPrompt: String,
+        isContinuation: Boolean = false
     ): Flow<AgentStreamEvent> = channelFlow {
         var session = session
         interrupted = false
@@ -130,8 +131,12 @@ class EnhancedAgentLoop(
             }
         }
 
-        // 添加用户消息
-        contextManager.addMessage(Message.userMessage(userMessage))
+        // 添加用户消息（续跑模式下不重复添加）
+        if (!isContinuation) {
+            contextManager.addMessage(Message.userMessage(userMessage))
+        } else {
+            logger.info("[Session ${session.id}] Continuing conversation in continuation mode")
+        }
         if (session.name.isBlank()) {
             session.name = userMessage.trim().take(30).let {
                 if (userMessage.trim().length > 30) "$it..." else it
@@ -235,6 +240,16 @@ class EnhancedAgentLoop(
 
                     gateway.chatStream(request).collect { chunk ->
                         if (interrupted) return@collect
+
+                        // 先处理 finishReason（即使 done chunk 也可能携带）
+                        if (chunk.finishReason != null) {
+                            finishReason = chunk.finishReason
+                            if (chunk.finishReason == "tool_calls") {
+                                hasToolCalls = true
+                            }
+                        }
+
+                        // 处理 done chunk：保存 usage 后返回
                         if (chunk.done) {
                             responseUsage = chunk.usage
                             return@collect
@@ -261,16 +276,14 @@ class EnhancedAgentLoop(
                             if (tcDelta.arguments != null) {
                                 builder.arguments.append(tcDelta.arguments)
                                 if (builder.id.isNotEmpty() && builder.name.isNotEmpty()) {
-                                    emitEvent(AgentStreamEvent.ToolCallDelta(builder.id, builder.name, tcDelta.arguments))
+                                    emitEvent(
+                                        AgentStreamEvent.ToolCallDelta(
+                                            builder.id,
+                                            builder.name,
+                                            tcDelta.arguments
+                                        )
+                                    )
                                 }
-                            }
-                        }
-
-                        // 检测完成原因
-                        if (chunk.finishReason != null) {
-                            finishReason = chunk.finishReason
-                            if (chunk.finishReason == "tool_calls") {
-                                hasToolCalls = true
                             }
                         }
                     }
@@ -338,7 +351,7 @@ class EnhancedAgentLoop(
                                 val toolStartTime = System.currentTimeMillis()
                                 val toolResult = executeTool(toolCall, session, ::emitEvent)
                                 val toolDuration = System.currentTimeMillis() - toolStartTime
-                                val success = !toolResult.contains("\"success\":false")
+                                val success = parseToolSuccess(toolResult)
 
                                 logger.info("[Tool] id=${toolCall.id}, name=${toolCall.name}, success=$success, duration=${toolDuration}ms, resultLength=${toolResult.length}")
                                 logger.debug("[Tool] id=${toolCall.id}, result=$toolResult")
@@ -478,8 +491,10 @@ class EnhancedAgentLoop(
                                 if (action.delayMs > 0) delay(action.delayMs)
                                 val prefillMsg = action.prefill
                                 if (prefillMsg != null) {
-                                    // 将 prefill 作为系统提示注入（或添加到上下文）
-                                    contextManager.addMessage(Message.systemMessage("[系统提示: 请继续之前的推理]"))
+                                    // 将 prefill 作为 assistant 消息注入上下文，引导模型继续生成
+                                    // 这适用于 EMPTY_RESPONSE / INCOMPLETE_SCRATCHPAD 等场景
+                                    contextManager.addMessage(Message.assistantMessage(prefillMsg))
+                                    logger.info("Injected prefill message (${prefillMsg.length} chars) into context")
                                 }
                                 emitEvent(AgentStreamEvent.Thinking("重试中..."))
                                 // 继续循环
@@ -522,19 +537,31 @@ class EnhancedAgentLoop(
             }
         }
 
-        if (interrupted) {
-            phase = ConversationPhase.INTERRUPTED
-            emitEvent(AgentStreamEvent.Error("对话被中断"))
-        } else if (taskBudget.isExhausted()) {
-            emitEvent(
-                AgentStreamEvent.BudgetExhausted(
-                    reason = taskBudget.exhaustedReason(),
-                    consumedIterations = taskBudget.netConsumedIterations(),
-                    consumedTokens = taskBudget.consumedTokens(),
-                    elapsedSeconds = (taskBudget.elapsedMs() / 1000).toInt(),
-                    allowContinue = true
+        when {
+            interrupted -> {
+                phase = ConversationPhase.INTERRUPTED
+                emitEvent(
+                    AgentStreamEvent.BudgetExhausted(
+                        reason = "对话被用户中断 (已完成 ${turnNumber} 轮)",
+                        consumedIterations = taskBudget.netConsumedIterations(),
+                        consumedTokens = taskBudget.consumedTokens(),
+                        elapsedSeconds = (taskBudget.elapsedMs() / 1000).toInt(),
+                        allowContinue = true
+                    )
                 )
-            )
+            }
+
+            taskBudget.isExhausted() -> {
+                emitEvent(
+                    AgentStreamEvent.BudgetExhausted(
+                        reason = taskBudget.exhaustedReason(),
+                        consumedIterations = taskBudget.netConsumedIterations(),
+                        consumedTokens = taskBudget.consumedTokens(),
+                        elapsedSeconds = (taskBudget.elapsedMs() / 1000).toInt(),
+                        allowContinue = true
+                    )
+                )
+            }
         }
 
         stateFlow.value = AgentState.IDLE
@@ -548,6 +575,9 @@ class EnhancedAgentLoop(
         } else {
             logger.info("[Session ${session.id}] Conversation loop ended in phase: $phase after $turnNumber turns")
         }
+
+        // 每个任务结束后重置错误恢复计数器，避免影响后续任务
+        errorRecovery.resetAllCounters()
     }
 
     /**
@@ -562,6 +592,21 @@ class EnhancedAgentLoop(
      * 检查是否已被中断
      */
     fun isInterrupted(): Boolean = interrupted
+
+    /**
+     * 解析工具执行结果中的 success 字段
+     */
+    private fun parseToolSuccess(toolResult: String): Boolean {
+        return try {
+            val element = kotlinx.serialization.json.Json.parseToJsonElement(toolResult)
+            val jsonObj = element as? kotlinx.serialization.json.JsonObject
+            val successPrimitive = jsonObj?.get("success") as? kotlinx.serialization.json.JsonPrimitive
+            successPrimitive?.content != "false"
+        } catch (e: Exception) {
+            // 非 JSON 或解析失败时，保守判定为失败
+            false
+        }
+    }
 
     /**
      * 清除系统提示缓存（用于系统提示变更时）
@@ -704,8 +749,12 @@ class EnhancedAgentLoop(
 
     private fun ensureSystemPrompt(contextManager: ContextManager, systemPrompt: String) {
         val context = contextManager.getContext()
-        val hasSystemPrompt = context.any { it.role == Role.SYSTEM }
-        if (!hasSystemPrompt) {
+        // 精确匹配原始系统提示，避免被 [CONTEXT SUMMARY] 等系统消息误导
+        val hasOriginalPrompt = context.any {
+            it.role == Role.SYSTEM && it.content == systemPrompt
+        }
+        if (!hasOriginalPrompt) {
+            logger.info("Original system prompt missing, injecting it back")
             contextManager.addMessage(Message.systemMessage(systemPrompt))
         }
     }

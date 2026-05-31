@@ -171,8 +171,8 @@ class TaskBudget(
     }
 
     companion object {
-        const val DEFAULT_MAX_ITERATIONS = 15
-        const val DEFAULT_MAX_DURATION_MS = 300_000L // 5分钟
+        const val DEFAULT_MAX_ITERATIONS = 30
+        const val DEFAULT_MAX_DURATION_MS = 600_000L // 10分钟
         const val DEFAULT_WARNING_THRESHOLD = 70
     }
 }

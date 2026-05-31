@@ -2,6 +2,8 @@ package com.codesage.agent.tools
 
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.WriteIntentReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 
@@ -181,7 +183,9 @@ class IDETools(private val project: Project?) {
                 ?: return ToolResult.Error("Failed to locate created file: $path")
 
             if (append) {
-                val existing = String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
+                val existing = ApplicationManager.getApplication().runReadAction(Computable {
+                    String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
+                })
                 val newContent = existing + content
                 writeVirtualFile(virtualFile, newContent)
             } else {
@@ -204,20 +208,30 @@ class IDETools(private val project: Project?) {
 
     private fun writeVirtualFile(virtualFile: VirtualFile, content: String) {
         if (project != null) {
-            WriteCommandAction.writeCommandAction(project)
-                .withName("Write File")
-                .withGroupId("CodeSage")
-                .run(object : ThrowableRunnable<Throwable> {
-                    override fun run() {
-                        val document = FileDocumentManager.getInstance().getDocument(virtualFile)
-                        if (document != null) {
-                            document.setText(content)
-                            FileDocumentManager.getInstance().saveDocument(document)
-                        } else {
-                            virtualFile.setBinaryContent(content.toByteArray(StandardCharsets.UTF_8))
+            val app = ApplicationManager.getApplication()
+            val writeAction = Runnable {
+                WriteCommandAction.writeCommandAction(project)
+                    .withName("Write File")
+                    .withGroupId("CodeSage")
+                    .run(object : ThrowableRunnable<Throwable> {
+                        override fun run() {
+                            val document = FileDocumentManager.getInstance().getDocument(virtualFile)
+                            if (document != null) {
+                                document.setText(content)
+                                FileDocumentManager.getInstance().saveDocument(document)
+                            } else {
+                                virtualFile.setBinaryContent(content.toByteArray(StandardCharsets.UTF_8))
+                            }
                         }
-                    }
-                })
+                    })
+            }
+            if (app.isDispatchThread) {
+                WriteIntentReadAction.run(writeAction)
+            } else {
+                app.invokeAndWait({
+                    WriteIntentReadAction.run(writeAction)
+                }, ModalityState.defaultModalityState())
+            }
         } else {
             virtualFile.setBinaryContent(content.toByteArray(StandardCharsets.UTF_8))
         }
@@ -402,16 +416,43 @@ class IDETools(private val project: Project?) {
             processBuilder.redirectErrorStream(false)
 
             val process = processBuilder.start()
-            val stdout = process.inputStream.bufferedReader().readText()
-            val stderr = process.errorStream.bufferedReader().readText()
+
+            // 异步读取 stdout/stderr，避免阻塞导致超时失效
+            val stdoutFuture = java.util.concurrent.CompletableFuture<String>()
+            val stderrFuture = java.util.concurrent.CompletableFuture<String>()
+
+            val stdoutThread = Thread {
+                try {
+                    stdoutFuture.complete(process.inputStream.bufferedReader().readText())
+                } catch (e: Exception) {
+                    stdoutFuture.completeExceptionally(e)
+                }
+            }
+            stdoutThread.isDaemon = true
+            stdoutThread.start()
+
+            val stderrThread = Thread {
+                try {
+                    stderrFuture.complete(process.errorStream.bufferedReader().readText())
+                } catch (e: Exception) {
+                    stderrFuture.completeExceptionally(e)
+                }
+            }
+            stderrThread.isDaemon = true
+            stderrThread.start()
+
             val finished = process.waitFor(timeout, TimeUnit.MILLISECONDS)
 
             if (!finished) {
                 process.destroyForcibly()
+                stdoutThread.interrupt()
+                stderrThread.interrupt()
                 return@withContext ToolResult.Error("Command timed out after ${timeout}ms")
             }
 
             val exitCode = process.exitValue()
+            val stdout = stdoutFuture.get()
+            val stderr = stderrFuture.get()
             ToolResult.Success(
                 JsonObject(
                     mapOf(
@@ -704,31 +745,33 @@ class IDETools(private val project: Project?) {
         val results = mutableListOf<JsonObject>()
         val errors = mutableListOf<String>()
 
-        // 并行读取
+        // 并行读取（所有VFS访问必须在ReadAction中执行）
         val deferreds = paths.map { element ->
             async {
                 val path = element.jsonPrimitive.content
                 val resolvedPath = resolvePath(path)
                 try {
-                    val file = LocalFileSystem.getInstance().findFileByPath(resolvedPath)
-                    if (file != null && !file.isDirectory) {
-                        val content = if (file.length > LARGE_FILE_THRESHOLD) {
-                            // 大文件使用分块读取
-                            readLargeFile(file)
-                        } else {
-                            String(file.contentsToByteArray(), StandardCharsets.UTF_8)
-                        }
-                        JsonObject(
-                            mapOf(
-                                "path" to JsonPrimitive(path),
-                                "content" to JsonPrimitive(content.take(MAX_CONTENT_LENGTH)),
-                                "success" to JsonPrimitive(true)
+                    ApplicationManager.getApplication().runReadAction(Computable {
+                        val file = LocalFileSystem.getInstance().findFileByPath(resolvedPath)
+                        if (file != null && !file.isDirectory) {
+                            val content = if (file.length > LARGE_FILE_THRESHOLD) {
+                                // 大文件使用分块读取
+                                readLargeFile(file)
+                            } else {
+                                String(file.contentsToByteArray(), StandardCharsets.UTF_8)
+                            }
+                            JsonObject(
+                                mapOf(
+                                    "path" to JsonPrimitive(path),
+                                    "content" to JsonPrimitive(content.take(MAX_CONTENT_LENGTH)),
+                                    "success" to JsonPrimitive(true)
+                                )
                             )
-                        )
-                    } else {
-                        errors.add("File not found or is directory: $path")
-                        null
-                    }
+                        } else {
+                            errors.add("File not found or is directory: $path")
+                            null
+                        }
+                    })
                 } catch (e: Exception) {
                     errors.add("Error reading $path: ${e.message}")
                     null
@@ -770,7 +813,9 @@ class IDETools(private val project: Project?) {
             val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByPath(resolvedPath)
                 ?: return ToolResult.Error("File not found: $path")
 
-            val content = String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
+            val content = ApplicationManager.getApplication().runReadAction(Computable {
+                String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
+            })
             val newContent = if (oldString != null && newString != null) {
                 if (!content.contains(oldString)) {
                     return ToolResult.Error("old_string not found in file")
@@ -818,14 +863,24 @@ class IDETools(private val project: Project?) {
 
             val virtualFile = LocalFileSystem.getInstance().findFileByPath(resolvedPath)
             if (project != null && virtualFile != null) {
-                WriteCommandAction.writeCommandAction(project)
-                    .withName("Delete File")
-                    .withGroupId("CodeSage")
-                    .run(object : ThrowableRunnable<Throwable> {
-                        override fun run() {
-                            virtualFile.delete(this)
-                        }
-                    })
+                val app = ApplicationManager.getApplication()
+                val deleteAction = Runnable {
+                    WriteCommandAction.writeCommandAction(project)
+                        .withName("Delete File")
+                        .withGroupId("CodeSage")
+                        .run(object : ThrowableRunnable<Throwable> {
+                            override fun run() {
+                                virtualFile.delete(this)
+                            }
+                        })
+                }
+                if (app.isDispatchThread) {
+                    WriteIntentReadAction.run(deleteAction)
+                } else {
+                    app.invokeAndWait({
+                        WriteIntentReadAction.run(deleteAction)
+                    }, ModalityState.defaultModalityState())
+                }
             } else {
                 file.deleteRecursively()
             }

@@ -24,8 +24,13 @@ import com.codesage.prompt.engine.PromptRole
 import com.codesage.shared.config.PluginConfig
 import com.codesage.shared.utils.Logger
 import com.codesage.tools.guardrails.ToolGuardrails
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.guessProjectDir
+import com.intellij.openapi.roots.ProjectRootManager
+import com.intellij.openapi.util.Computable
 import java.io.File
+import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -92,7 +97,7 @@ sealed class AgentResult {
 class AgentCore(
     private val gateway: ModelGateway = ModelGateway.getInstance(),
     private val taskPlanner: TaskPlanner = TaskPlanner(),
-    project: Project? = null,
+    private val project: Project? = null,
     skillToolAdapter: SkillToolAdapter? = null,
     confirmationCallback: ToolGuardrails.ConfirmationCallback? = null
 ) {
@@ -110,7 +115,25 @@ class AgentCore(
 
     @Volatile
     private var currentSessionId: String? = null
-    private var currentModel: String = "MiniMax-Text-01"
+    private var currentModel: String = ""
+
+    /**
+     * 解析最终使用的模型名。
+     * 优先级：传入的 config > PluginConfig 持久化配置 > 空字符串（由上层检查）
+     */
+    private fun resolveDefaultModel(config: AgentConfig): String {
+        if (config.defaultModel.isNotBlank()) {
+            return config.defaultModel
+        }
+        return try {
+            val pluginDefault = PluginConfig.getInstance().defaultModel
+            if (pluginDefault.isNotBlank()) pluginDefault else ""
+        } catch (e: Exception) {
+            // PluginConfig 在测试环境或非 IDE 环境中可能不可用
+            ""
+        }
+    }
+
     private var systemPrompt: String = AgentConfig.DEFAULT_SYSTEM_PROMPT
     private var currentBudgetConfig: TaskBudget.BudgetConfig? = null
 
@@ -125,8 +148,8 @@ class AgentCore(
     // 错误恢复
     private val errorRecovery: AgentErrorRecovery = AgentErrorRecovery()
 
-    // 增强型对话循环
-    private lateinit var enhancedLoop: EnhancedAgentLoop
+    // 当前正在运行的增强型对话循环（用于中断）
+    private val currentLoop = java.util.concurrent.atomic.AtomicReference<EnhancedAgentLoop?>(null)
 
     // 记忆系统
     private val memoryManager: MemoryManager = MemoryManager()
@@ -168,12 +191,22 @@ class AgentCore(
     // 当前正在运行的 chat Job，用于中断
     private val currentChatJob = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Job?>(null)
 
+    // 最近一次耗尽预算的任务（用于继续执行）
+    @Volatile
+    private var lastExhaustedBudget: TaskBudget? = null
+
     /**
      * 初始化Agent
      */
     fun initialize(config: AgentConfig) {
-        currentModel = config.defaultModel
+        currentModel = resolveDefaultModel(config)
+        if (currentModel.isBlank()) {
+            logger.warn("AgentCore initialized without a valid default model. Please configure a model in CodeSage settings.")
+        }
         currentBudgetConfig = config.budgetConfig
+
+        // 检测项目语言和框架
+        val (projectLanguage, projectFramework, projectRoot) = detectProjectContext()
 
         // 使用 PromptAssembler 动态组装系统提示（带缓存）
         val assembledPrompt = if (config.systemPrompt != AgentConfig.DEFAULT_SYSTEM_PROMPT) {
@@ -185,7 +218,10 @@ class AgentCore(
                     role = PromptRole.ASSISTANT,
                     hasMemory = true,
                     hasSubAgent = true,
-                    toolCount = toolRegistry.getAllTools().size
+                    toolCount = toolRegistry.getAllTools().size,
+                    projectLanguage = projectLanguage,
+                    projectFramework = projectFramework,
+                    projectRoot = projectRoot
                 )
             )
         }
@@ -207,21 +243,6 @@ class AgentCore(
 
         // 初始化对话持久化
         sessionRestore = SessionRestore(conversationPersistence, this)
-
-        // 初始化增强型对话循环
-        enhancedLoop = EnhancedAgentLoop(
-            gateway = gateway,
-            toolRegistry = toolRegistry,
-            toolExecutor = toolExecutor,
-            skillToolAdapter = skillToolAdapter,
-            errorRecovery = errorRecovery,
-            hooks = hooks,
-            stateFlow = _state,
-            memoryManager = memoryManager,
-            memoryNudger = memoryNudger,
-            subAgentExecutor = subAgentExecutor,
-            agentCore = this
-        )
 
         // 尝试恢复之前的会话
         restoreSessions(SessionRestore.RestoreOptions(strategy = SessionRestore.RestoreStrategy.RESTORE_ALL))
@@ -247,25 +268,66 @@ class AgentCore(
     }
 
     /**
+     * 根据 ChatMode 解析实际使用的模型。
+     * 优先级：mode 专用配置 > 当前手动切换的模型 > PluginConfig 默认模型
+     */
+    fun resolveModelForMode(mode: ChatMode): String {
+        if (mode == ChatMode.GENERAL) {
+            return currentModel.ifBlank {
+                try {
+                    PluginConfig.getInstance().defaultModel
+                } catch (_: Exception) {
+                    ""
+                }
+            }
+        }
+        return try {
+            val config = PluginConfig.getInstance()
+            when (mode) {
+                ChatMode.CODING -> config.codingModel
+                ChatMode.REASONING -> config.reasoningModel
+                else -> ""
+            }
+        } catch (_: Exception) {
+            ""
+        }.ifBlank { currentModel }
+    }
+
+    /**
+     * 根据消息内容自动推断 ChatMode。
+     * 用户手动切换 mode 时优先尊重用户选择；仅在 GENERAL 模式下自动推断。
+     */
+    fun detectChatMode(message: String): ChatMode {
+        val lower = message.lowercase()
+        val codingKeywords = listOf(
+            "code", "function", "class", "debug", "refactor", "bug", "compile",
+            "写代码", "代码", "函数", "类", "调试", "重构", "编译", "报错",
+            "implement", "algorithm", "sort", "递归", "leetcode"
+        )
+        val reasoningKeywords = listOf(
+            "analyze", "reason", "prove", "calculate", "推导", "证明", "分析",
+            "推理", "逻辑", "math", "mathematics", "complex", "optimize",
+            "compare", "difference", "优缺点", "为什么", "what if"
+        )
+        val visionKeywords = listOf(
+            "image", "picture", "screenshot", "截图", "图片", "照片",
+            "photo", "diagram", "chart", "可视化", "看图", "describe this"
+        )
+        return when {
+            visionKeywords.any { lower.contains(it) } -> ChatMode.VISION
+            codingKeywords.any { lower.contains(it) } -> ChatMode.CODING
+            reasoningKeywords.any { lower.contains(it) } -> ChatMode.REASONING
+            else -> ChatMode.GENERAL
+        }
+    }
+
+    /**
      * 配置钩子（用于扩展和自定义行为）
      */
     fun setHooks(newHooks: AgentHooks) {
         hooks = newHooks
-        if (::enhancedLoop.isInitialized) {
-            // 重新创建 enhancedLoop 以应用新 hooks
-            enhancedLoop = EnhancedAgentLoop(
-                gateway = gateway,
-                toolRegistry = toolRegistry,
-                toolExecutor = toolExecutor,
-                skillToolAdapter = skillToolAdapter,
-                errorRecovery = errorRecovery,
-                hooks = newHooks,
-                stateFlow = _state,
-                memoryManager = memoryManager,
-                memoryNudger = memoryNudger,
-                subAgentExecutor = subAgentExecutor
-            )
-        }
+        // 注意：不再重新创建成员变量 enhancedLoop。
+        // 新的 hooks 会在下一次 chatWithTools / continueConversation 创建新 EnhancedAgentLoop 时自动应用。
     }
 
     /**
@@ -323,9 +385,7 @@ class AgentCore(
         agentScope.cancel()
         sessions.clear()
         currentSessionId = null
-        if (::enhancedLoop.isInitialized) {
-            enhancedLoop.interrupt()
-        }
+        currentLoop.getAndSet(null)?.interrupt()
         logger.info("AgentCore shutdown completed")
     }
 
@@ -407,7 +467,7 @@ class AgentCore(
     /**
      * 发送消息并获取回复（非流式，不带工具）
      */
-    suspend fun chat(userMessage: String): AgentResult {
+    suspend fun chat(userMessage: String, mode: ChatMode = ChatMode.GENERAL): AgentResult {
         val sessionInfo = getOrCreateSession()
         val session = sessionInfo.session
         val contextManager = sessionInfo.contextManager
@@ -420,7 +480,7 @@ class AgentCore(
             maybeAutoName(session, userMessage)
 
             val request = ChatRequest(
-                model = currentModel,
+                model = resolveModelForMode(mode),
                 messages = contextManager.getContext(),
                 temperature = 0.7,
                 stream = false
@@ -459,7 +519,7 @@ class AgentCore(
     /**
      * 流式聊天（纯文本，不带工具调用）
      */
-    fun chatStream(userMessage: String): Flow<String> {
+    fun chatStream(userMessage: String, mode: ChatMode = ChatMode.GENERAL): Flow<String> {
         val sessionInfo = getOrCreateSession()
         val session = sessionInfo.session
         val contextManager = sessionInfo.contextManager
@@ -473,7 +533,7 @@ class AgentCore(
                 maybeAutoName(session, userMessage)
 
                 val request = ChatRequest(
-                    model = currentModel,
+                    model = resolveModelForMode(mode),
                     messages = contextManager.getContext(),
                     temperature = 0.7,
                     stream = true
@@ -508,8 +568,9 @@ class AgentCore(
      * - 流式文本输出
      * - Hook 体系支持
      * - 追踪和指标收集
+     * - ChatMode 模型路由
      */
-    fun chatWithTools(userMessage: String): Flow<AgentStreamEvent> {
+    fun chatWithTools(userMessage: String, mode: ChatMode = ChatMode.GENERAL): Flow<AgentStreamEvent> {
         val sessionInfo = getOrCreateSession()
         val session = sessionInfo.session
         val contextManager = sessionInfo.contextManager
@@ -535,6 +596,9 @@ class AgentCore(
         val taskBudget = TaskBudget(budgetConfig)
         logger.info("[Session ${session.id}] TaskBudget created: ${taskBudget.summary()}")
 
+        // 新任务开始时清空上一次的耗尽预算记录
+        lastExhaustedBudget = null
+
         // 为每个任务创建独立的 EnhancedAgentLoop（确保预算隔离）
         val loop = EnhancedAgentLoop(
             gateway = gateway,
@@ -551,20 +615,22 @@ class AgentCore(
             budget = taskBudget
         )
 
-        traceCtx.event("loop_started", mapOf("model" to currentModel))
+        val effectiveModel = resolveModelForMode(mode)
+        traceCtx.event("loop_started", mapOf("model" to effectiveModel, "mode" to mode.name))
 
         val startTime = System.currentTimeMillis()
         val flow = loop.run(
             userMessage = userMessage,
             session = session,
             contextManager = contextManager,
-            currentModel = currentModel,
+            currentModel = effectiveModel,
             systemPrompt = systemPrompt
         )
 
         return kotlinx.coroutines.flow.flow {
             val job = currentCoroutineContext()[kotlinx.coroutines.Job]
             currentChatJob.set(job)
+            currentLoop.set(loop)
             var eventCount = 0
             try {
                 flow.collect { event ->
@@ -573,12 +639,20 @@ class AgentCore(
                 }
             } finally {
                 currentChatJob.compareAndSet(job, null)
+                currentLoop.compareAndSet(loop, null)
                 val duration = System.currentTimeMillis() - startTime
                 if (eventCount == 0) {
                     logger.warn("[Session ${session.id}] chatWithTools flow completed with ZERO events in ${duration}ms")
                 } else {
                     logger.info("[Session ${session.id}] chatWithTools flow completed with $eventCount events in ${duration}ms")
                 }
+                // 无论预算是否耗尽，都保存 budget 引用以支持中断后继续
+                if (taskBudget.isExhausted() || loop.isInterrupted()) {
+                    lastExhaustedBudget = taskBudget
+                    val reason = if (loop.isInterrupted()) "interrupted" else taskBudget.exhaustedReason()
+                    logger.info("[Session ${session.id}] Conversation paused (reason=$reason), saved for potential continuation.")
+                }
+
                 // 保存会话历史（异步）
                 agentScope.launch {
                     conversationPersistence.saveSession(session, contextManager.getContext())
@@ -591,7 +665,110 @@ class AgentCore(
                     sessionId = session.id,
                     traceId = traceCtx.traceId,
                     durationMs = duration,
-                    metadata = mapOf("eventCount" to eventCount.toString())
+                    metadata = mapOf(
+                        "eventCount" to eventCount.toString(),
+                        "budgetExhausted" to taskBudget.isExhausted().toString(),
+                        "interrupted" to loop.isInterrupted().toString()
+                    )
+                )
+            }
+        }
+    }
+
+    /**
+     * 检查当前是否可以继续上一次因预算耗尽而暂停的对话
+     */
+    fun canContinue(): Boolean = lastExhaustedBudget?.isExhausted() == true
+
+    /**
+     * 继续上一次因预算耗尽而暂停的对话
+     *
+     * @param extraIterations 追加的迭代次数
+     * @return 流式事件流，如果无法继续则返回 null
+     */
+    fun continueConversation(extraIterations: Int): Flow<AgentStreamEvent>? {
+        val budget = lastExhaustedBudget ?: run {
+            logger.warn("No exhausted budget to continue from")
+            return null
+        }
+        if (!budget.isExhausted()) {
+            logger.warn("Last budget is not exhausted, cannot continue")
+            return null
+        }
+
+        val sessionInfo = currentSessionId?.let { sessions[it] } ?: run {
+            logger.warn("No active session to continue")
+            return null
+        }
+
+        // 追加预算
+        budget.extendIterations(extraIterations)
+        logger.info("[Session ${sessionInfo.session.id}] Budget extended by $extraIterations iterations. New remaining: ${budget.remainingIterations()}")
+
+        _state.value = AgentState.THINKING
+        sessionInfo.session.lastActivityAt = System.currentTimeMillis()
+
+        // 创建续跑循环，复用已扩展的预算
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = toolRegistry,
+            toolExecutor = toolExecutor,
+            skillToolAdapter = skillToolAdapter,
+            errorRecovery = errorRecovery,
+            hooks = hooks,
+            stateFlow = _state,
+            memoryManager = memoryManager,
+            memoryNudger = memoryNudger,
+            subAgentExecutor = subAgentExecutor,
+            agentCore = this,
+            budget = budget
+        )
+
+        val traceCtx = tracer.startTrace("continue_conversation", sessionInfo.session.id)
+        val startTime = System.currentTimeMillis()
+        val flow = loop.run(
+            userMessage = "", // 续跑模式下不添加新用户消息
+            session = sessionInfo.session,
+            contextManager = sessionInfo.contextManager,
+            currentModel = currentModel,
+            systemPrompt = systemPrompt,
+            isContinuation = true
+        )
+
+        return kotlinx.coroutines.flow.flow {
+            val job = currentCoroutineContext()[kotlinx.coroutines.Job]
+            currentChatJob.set(job)
+            currentLoop.set(loop)
+            var eventCount = 0
+            try {
+                flow.collect { event ->
+                    eventCount++
+                    emit(event)
+                }
+            } finally {
+                currentChatJob.compareAndSet(job, null)
+                currentLoop.compareAndSet(loop, null)
+                val duration = System.currentTimeMillis() - startTime
+                if (budget.isExhausted()) {
+                    logger.info("[Session ${sessionInfo.session.id}] Continuation ended, budget still exhausted")
+                } else {
+                    // 如果预算未耗尽，说明任务正常完成，清空记录
+                    lastExhaustedBudget = null
+                }
+                agentScope.launch {
+                    conversationPersistence.saveSession(sessionInfo.session, sessionInfo.contextManager.getContext())
+                }
+                metrics.recordTimer("continue_duration", duration)
+                traceCtx.end()
+                structuredLogger.logAgentEvent(
+                    event = "continue_complete",
+                    sessionId = sessionInfo.session.id,
+                    traceId = traceCtx.traceId,
+                    durationMs = duration,
+                    metadata = mapOf(
+                        "eventCount" to eventCount.toString(),
+                        "budgetExhausted" to budget.isExhausted().toString()
+                    )
                 )
             }
         }
@@ -603,9 +780,7 @@ class AgentCore(
     fun interrupt() {
         val job = currentChatJob.getAndSet(null)
         job?.cancel()
-        if (::enhancedLoop.isInitialized) {
-            enhancedLoop.interrupt()
-        }
+        currentLoop.getAndSet(null)?.interrupt()
         _state.value = AgentState.IDLE
         logger.info("Agent conversation interrupted")
     }
@@ -858,6 +1033,95 @@ class AgentCore(
         return exporter.export(session, format, outputFile)
     }
 
+    /**
+     * 检测项目上下文信息（语言、框架、根目录）
+     */
+    private fun detectProjectContext(): Triple<String?, String?, String?> {
+        val proj = project ?: return Triple(null, null, null)
+        return ApplicationManager.getApplication().runReadAction(Computable {
+            var language: String? = null
+            var framework: String? = null
+            var root: String? = proj.guessProjectDir()?.path
+
+            val baseDir = proj.guessProjectDir()
+            if (baseDir != null) {
+                // 通过构建文件检测语言和框架
+                when {
+                    baseDir.findChild("build.gradle.kts") != null || baseDir.findChild("build.gradle") != null -> {
+                        language = "Kotlin/Java"
+                        framework = "Gradle"
+                    }
+
+                    baseDir.findChild("pom.xml") != null -> {
+                        language = "Java"
+                        framework = "Maven"
+                    }
+
+                    baseDir.findChild("package.json") != null -> {
+                        language = "JavaScript/TypeScript"
+                        val packageJson = baseDir.findChild("package.json")
+                        if (packageJson != null) {
+                            try {
+                                val content = String(packageJson.contentsToByteArray(), StandardCharsets.UTF_8)
+                                framework = when {
+                                    content.contains("\"react\"") -> "React"
+                                    content.contains("\"vue\"") -> "Vue"
+                                    content.contains("\"angular\"") -> "Angular"
+                                    content.contains("\"next\"") -> "Next.js"
+                                    else -> "Node.js"
+                                }
+                            } catch (_: Exception) {
+                                framework = "Node.js"
+                            }
+                        }
+                    }
+
+                    baseDir.findChild("Cargo.toml") != null -> {
+                        language = "Rust"
+                        framework = "Cargo"
+                    }
+
+                    baseDir.findChild("go.mod") != null -> {
+                        language = "Go"
+                    }
+
+                    baseDir.findChild("requirements.txt") != null || baseDir.findChild("pyproject.toml") != null -> {
+                        language = "Python"
+                    }
+
+                    baseDir.findChild("composer.json") != null -> {
+                        language = "PHP"
+                    }
+                }
+
+                // 通过源码根目录进一步确认语言
+                if (language == null) {
+                    val sourceRoots = ProjectRootManager.getInstance(proj).contentSourceRoots
+                    val extensions = sourceRoots.flatMap { root ->
+                        root.children?.map { it.extension } ?: emptyList()
+                    }.filterNotNull().groupingBy { it }.eachCount()
+
+                    language = when {
+                        extensions["kt"] != null || extensions["kts"] != null -> {
+                            if (extensions["java"] != null) "Kotlin/Java" else "Kotlin"
+                        }
+
+                        extensions["java"] != null -> "Java"
+                        extensions["py"] != null -> "Python"
+                        extensions["ts"] != null || extensions["tsx"] != null -> "TypeScript"
+                        extensions["js"] != null || extensions["jsx"] != null -> "JavaScript"
+                        extensions["go"] != null -> "Go"
+                        extensions["rs"] != null -> "Rust"
+                        extensions["swift"] != null -> "Swift"
+                        else -> null
+                    }
+                }
+            }
+
+            Triple(language, framework, root)
+        })
+    }
+
     private fun maybeAutoName(session: AgentSession, userMessage: String) {
         if (session.name.isBlank()) {
             session.name = userMessage.trim().take(30).let {
@@ -882,7 +1146,7 @@ class AgentCore(
  * Agent配置
  */
 data class AgentConfig(
-    val defaultModel: String = "MiniMax-Text-01",
+    val defaultModel: String = "",
     val systemPrompt: String = AgentConfig.DEFAULT_SYSTEM_PROMPT,
     val temperature: Double = 0.7,
     val maxTokens: Int? = null,

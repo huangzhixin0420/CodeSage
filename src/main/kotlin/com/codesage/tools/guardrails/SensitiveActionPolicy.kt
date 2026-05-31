@@ -23,11 +23,22 @@ object SensitiveActionPolicy {
      * 策略决策结果
      */
     data class PolicyDecision(
-        val allowed: Boolean,
+        val verdict: Verdict,
         val riskLevel: RiskLevel,
-        val reason: String,
-        val requiresConfirmation: Boolean
-    )
+        val reason: String
+    ) {
+        enum class Verdict {
+            ALLOWED,              // 允许执行，无需确认
+            REQUIRES_CONFIRMATION, // 需要用户确认
+            BLOCKED               // 绝对禁止，不可绕过
+        }
+
+        /** 向后兼容：是否需要用户确认 */
+        val requiresConfirmation: Boolean get() = verdict == Verdict.REQUIRES_CONFIRMATION
+
+        /** 向后兼容：是否允许执行（BLOCKED 和 REQUIRES_CONFIRMATION 都不算直接允许） */
+        val allowed: Boolean get() = verdict == Verdict.ALLOWED
+    }
 
     // 禁止删除的关键路径模式
     private val PROTECTED_PATHS = listOf(
@@ -85,41 +96,37 @@ object SensitiveActionPolicy {
         val file = File(normalizedPath)
         val relativePath = projectRoot?.let { file.relativePath(it) } ?: path
 
-        // 检查是否是受保护路径
+        // 检查是否是受保护路径（绝对禁止）
         if (PROTECTED_PATHS.any { relativePath.contains(it) }) {
             return PolicyDecision(
-                allowed = false,
+                verdict = PolicyDecision.Verdict.BLOCKED,
                 riskLevel = RiskLevel.DANGEROUS,
-                reason = "Protected path cannot be deleted: $relativePath",
-                requiresConfirmation = true
+                reason = "Protected path cannot be deleted: $relativePath"
             )
         }
 
-        // 检查是否是目录（删除目录更危险）
+        // 检查是否是目录（删除目录更危险，需要确认）
         if (file.isDirectory) {
             return PolicyDecision(
-                allowed = true,
+                verdict = PolicyDecision.Verdict.REQUIRES_CONFIRMATION,
                 riskLevel = RiskLevel.DANGEROUS,
-                reason = "Deleting directory: $relativePath",
-                requiresConfirmation = true
+                reason = "Deleting directory: $relativePath"
             )
         }
 
-        // 检查文件大小（大文件删除可能丢失重要数据）
+        // 检查文件大小（大文件删除可能丢失重要数据，需要确认）
         val size = file.length()
         return if (size > 1024 * 1024) { // > 1MB
             PolicyDecision(
-                allowed = true,
+                verdict = PolicyDecision.Verdict.REQUIRES_CONFIRMATION,
                 riskLevel = RiskLevel.CAUTION,
-                reason = "Deleting large file (${size / 1024}KB): $relativePath",
-                requiresConfirmation = true
+                reason = "Deleting large file (${size / 1024}KB): $relativePath"
             )
         } else {
             PolicyDecision(
-                allowed = true,
+                verdict = PolicyDecision.Verdict.ALLOWED,
                 riskLevel = RiskLevel.SAFE,
-                reason = "Deleting file: $relativePath",
-                requiresConfirmation = false
+                reason = "Deleting file: $relativePath"
             )
         }
     }
@@ -131,32 +138,29 @@ object SensitiveActionPolicy {
         val normalizedPath = normalizePath(path, projectRoot)
         val relativePath = projectRoot?.let { File(normalizedPath).relativePath(it) } ?: path
 
-        // 检查受保护写入模式
+        // 检查受保护写入模式（绝对禁止）
         if (PROTECTED_WRITE_PATTERNS.any { it.matches(relativePath) }) {
             return PolicyDecision(
-                allowed = false,
+                verdict = PolicyDecision.Verdict.BLOCKED,
                 riskLevel = RiskLevel.DANGEROUS,
-                reason = "Cannot modify sensitive file: $relativePath",
-                requiresConfirmation = true
+                reason = "Cannot modify sensitive file: $relativePath"
             )
         }
 
-        // 检查是否覆盖已有文件
+        // 检查是否覆盖已有文件（需要确认）
         val file = File(normalizedPath)
         if (file.exists()) {
             return PolicyDecision(
-                allowed = true,
+                verdict = PolicyDecision.Verdict.REQUIRES_CONFIRMATION,
                 riskLevel = RiskLevel.CAUTION,
-                reason = "Overwriting existing file: $relativePath",
-                requiresConfirmation = true
+                reason = "Overwriting existing file: $relativePath"
             )
         }
 
         return PolicyDecision(
-            allowed = true,
+            verdict = PolicyDecision.Verdict.ALLOWED,
             riskLevel = RiskLevel.SAFE,
-            reason = "Creating new file: $relativePath",
-            requiresConfirmation = false
+            reason = "Creating new file: $relativePath"
         )
     }
 
@@ -168,31 +172,28 @@ object SensitiveActionPolicy {
         val lowerCommand = command.lowercase()
         val tokens = tokenizeCommand(lowerCommand)
 
-        // 检查危险命令模式（token级别匹配，更难绕过）
+        // 检查危险命令模式（token级别匹配，更难绕过）——绝对禁止
         if (matchesDangerousPattern(tokens, lowerCommand)) {
             return PolicyDecision(
-                allowed = false,
+                verdict = PolicyDecision.Verdict.BLOCKED,
                 riskLevel = RiskLevel.DANGEROUS,
-                reason = "Dangerous command detected: ${command.take(50)}",
-                requiresConfirmation = true
+                reason = "Dangerous command detected: ${command.take(50)}"
             )
         }
 
-        // 检查网络相关命令（可能有安全风险）
+        // 检查网络相关命令（可能有安全风险，需要确认）
         if (tokens.any { it == "curl" || it == "wget" || it == "nc" || it == "netcat" }) {
             return PolicyDecision(
-                allowed = true,
+                verdict = PolicyDecision.Verdict.REQUIRES_CONFIRMATION,
                 riskLevel = RiskLevel.CAUTION,
-                reason = "Network command requires caution: ${command.take(50)}",
-                requiresConfirmation = true
+                reason = "Network command requires caution: ${command.take(50)}"
             )
         }
 
         return PolicyDecision(
-            allowed = true,
+            verdict = PolicyDecision.Verdict.ALLOWED,
             riskLevel = RiskLevel.SAFE,
-            reason = "Command: ${command.take(50)}",
-            requiresConfirmation = false
+            reason = "Command: ${command.take(50)}"
         )
     }
 
@@ -242,33 +243,30 @@ object SensitiveActionPolicy {
         val relSrc = projectRoot?.let { File(normalizedSrc).relativePath(it) } ?: source
         val relDst = projectRoot?.let { File(normalizedDst).relativePath(it) } ?: destination
 
-        // 检查源是否是受保护路径
+        // 检查源是否是受保护路径（绝对禁止）
         if (PROTECTED_PATHS.any { relSrc.contains(it) }) {
             return PolicyDecision(
-                allowed = false,
+                verdict = PolicyDecision.Verdict.BLOCKED,
                 riskLevel = RiskLevel.DANGEROUS,
-                reason = "Cannot move protected path: $relSrc",
-                requiresConfirmation = true
+                reason = "Cannot move protected path: $relSrc"
             )
         }
 
-        // 跨项目移动更危险
+        // 跨项目移动更危险（需要确认）
         val srcInProject = projectRoot != null && normalizedSrc.startsWith(projectRoot)
         val dstInProject = projectRoot != null && normalizedDst.startsWith(projectRoot)
         if (srcInProject && !dstInProject) {
             return PolicyDecision(
-                allowed = true,
+                verdict = PolicyDecision.Verdict.REQUIRES_CONFIRMATION,
                 riskLevel = RiskLevel.DANGEROUS,
-                reason = "Moving file outside project: $relSrc → $relDst",
-                requiresConfirmation = true
+                reason = "Moving file outside project: $relSrc → $relDst"
             )
         }
 
         return PolicyDecision(
-            allowed = true,
+            verdict = PolicyDecision.Verdict.ALLOWED,
             riskLevel = RiskLevel.CAUTION,
-            reason = "Moving: $relSrc → $relDst",
-            requiresConfirmation = false
+            reason = "Moving: $relSrc → $relDst"
         )
     }
 

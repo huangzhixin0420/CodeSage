@@ -2,7 +2,6 @@ package com.codesage.model.registry
 
 import com.codesage.model.adapter.ModelAdapter
 import com.codesage.model.adapter.minimax.MiniMaxAdapter
-import com.codesage.model.adapter.kimi.KimiAdapter
 import com.codesage.model.dto.ModelInfo
 
 /**
@@ -59,16 +58,6 @@ class ModelRegistry {
      */
     fun createMiniMaxAdapter(apiKey: String, baseUrl: String? = null, models: List<String>? = null): MiniMaxAdapter {
         val adapter = MiniMaxAdapter(apiKey, baseUrl ?: "https://api.minimaxi.com", models)
-        register(adapter)
-        return adapter
-    }
-
-    /**
-     * 创建Kimi适配器
-     * @param models 用户配置的模型列表，传入后覆盖默认值
-     */
-    fun createKimiAdapter(apiKey: String, baseUrl: String? = null, models: List<String>? = null): KimiAdapter {
-        val adapter = KimiAdapter(apiKey, baseUrl ?: "https://api.moonshot.cn", models)
         register(adapter)
         return adapter
     }

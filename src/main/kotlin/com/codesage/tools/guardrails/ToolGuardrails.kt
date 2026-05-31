@@ -53,15 +53,17 @@ class ToolGuardrails(
     suspend fun preCheck(toolName: String, args: Map<String, Any>, toolCallId: String? = null): PreCheckResult {
         val decision = evaluateToolOperation(toolName, args)
 
-        // 危险操作直接拒绝，不进入确认流程
-        if (!decision.allowed) {
+        // 绝对禁止的操作直接拒绝，不进入确认流程
+        if (decision.verdict == SensitiveActionPolicy.PolicyDecision.Verdict.BLOCKED) {
             return PreCheckResult.Denied(decision.reason)
         }
 
-        // 无需确认
-        if (!decision.requiresConfirmation) {
+        // 允许执行，无需确认
+        if (decision.verdict == SensitiveActionPolicy.PolicyDecision.Verdict.ALLOWED) {
             return PreCheckResult.Allowed
         }
+
+        // REQUIRES_CONFIRMATION: 进入确认流程
 
         val exactKey = generateExactKey(toolName, args)
         val categoryKey = generateCategoryKey(toolName, args)
@@ -87,14 +89,21 @@ class ToolGuardrails(
         }
 
         // 请求用户确认（带超时）
-        val permission = withTimeoutOrNull(confirmationTimeoutMs) {
-            confirmationCallback?.requestConfirmation(
-                toolName = toolName,
-                operation = describeOperation(toolName, args),
-                reason = decision.reason,
-                riskLevel = decision.riskLevel
-            )
-        } ?: Permission.DENY
+        val permission = if (confirmationCallback == null) {
+            // Headless / 无 UI 环境下的降级策略：记录日志并拒绝
+            // 注意：自动化场景可通过配置调整为 ALLOW_ONCE
+            logger.warn("No confirmation callback available for $toolName, operation denied in headless mode")
+            Permission.DENY
+        } else {
+            withTimeoutOrNull(confirmationTimeoutMs) {
+                confirmationCallback.requestConfirmation(
+                    toolName = toolName,
+                    operation = describeOperation(toolName, args),
+                    reason = decision.reason,
+                    riskLevel = decision.riskLevel
+                )
+            } ?: Permission.DENY
+        }
 
         return when (permission) {
             Permission.ALLOW_ONCE -> {
@@ -202,10 +211,9 @@ class ToolGuardrails(
         return when (toolName) {
             "delete_file" -> {
                 val path = args["path"]?.toString() ?: return SensitiveActionPolicy.PolicyDecision(
-                    allowed = false,
+                    verdict = SensitiveActionPolicy.PolicyDecision.Verdict.BLOCKED,
                     riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS,
-                    reason = "Missing path argument",
-                    requiresConfirmation = true
+                    reason = "Missing path argument"
                 )
                 policy.evaluateDelete(path, projectRoot)
             }
@@ -234,20 +242,18 @@ class ToolGuardrails(
             }
 
             else -> SensitiveActionPolicy.PolicyDecision(
-                allowed = true,
+                verdict = SensitiveActionPolicy.PolicyDecision.Verdict.ALLOWED,
                 riskLevel = SensitiveActionPolicy.RiskLevel.SAFE,
-                reason = "Tool: $toolName",
-                requiresConfirmation = false
+                reason = "Tool: $toolName"
             )
         }
     }
 
     private fun safeDeny(reason: String): SensitiveActionPolicy.PolicyDecision {
         return SensitiveActionPolicy.PolicyDecision(
-            allowed = false,
+            verdict = SensitiveActionPolicy.PolicyDecision.Verdict.BLOCKED,
             riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS,
-            reason = reason,
-            requiresConfirmation = true
+            reason = reason
         )
     }
 

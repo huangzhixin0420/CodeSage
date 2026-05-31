@@ -139,6 +139,7 @@ open class ModelGateway(
             body.source().let { source ->
                 var consecutiveNullChunks = 0
                 val maxConsecutiveNullChunks = 1000
+                var emittedAnyChunk = false
 
                 while (true) {
                     val line = source.readUtf8Line() ?: break
@@ -150,6 +151,7 @@ open class ModelGateway(
                     val chunk = adapter.parseStreamChunk(line)
                     if (chunk != null) {
                         consecutiveNullChunks = 0
+                        emittedAnyChunk = true
                         emit(chunk)
                         if (chunk.done) break
                     } else {
@@ -160,6 +162,11 @@ open class ModelGateway(
                             )
                         }
                     }
+                }
+
+                // 兜底：如果整个响应体没有 emit 任何 chunk，至少 emit done
+                if (!emittedAnyChunk) {
+                    emit(StreamChunk(id = "", delta = "", done = true, usage = null))
                 }
             }
         }

@@ -28,7 +28,8 @@ class SensitiveActionPolicyTest {
     fun `delete directory requires confirmation`() {
         val dir = File(projectRoot, "test_dir").apply { mkdirs() }
         val decision = SensitiveActionPolicy.evaluateDelete("test_dir", projectRoot)
-        assertTrue(decision.allowed)
+        // REQUIRES_CONFIRMATION  verdict 下 allowed=false（需要显式确认）
+        assertFalse(decision.allowed)
         assertEquals(SensitiveActionPolicy.RiskLevel.DANGEROUS, decision.riskLevel)
         assertTrue(decision.requiresConfirmation)
     }
@@ -64,7 +65,8 @@ class SensitiveActionPolicyTest {
     @Test
     fun `curl command requires caution`() {
         val decision = SensitiveActionPolicy.evaluateCommand("curl https://example.com")
-        assertTrue(decision.allowed)
+        // REQUIRES_CONFIRMATION verdict 下 allowed=false（需要显式确认）
+        assertFalse(decision.allowed)
         assertEquals(SensitiveActionPolicy.RiskLevel.CAUTION, decision.riskLevel)
         assertTrue(decision.requiresConfirmation)
     }

@@ -187,11 +187,10 @@ class ExtendedTools(private val project: Project?) {
         val workingDir = resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
         val timeout = args["timeout"]?.jsonPrimitive?.longOrNull?.coerceIn(1000L, 300000L) ?: 60000L
 
-        // 安全检查
-        val validation = validateShellCommand(command)
-        if (!validation.valid) {
-            return@withContext ToolResult.Error("Security check failed: ${validation.reason}")
-        }
+        // 注意：exec_shell 的安全检查已统一委托给 ToolGuardrails。
+        // ExtendedTools 不再执行独立的命令拦截，避免双重标准导致的不一致用户体验。
+        // 绝对危险的操作（如 rm -rf /）由 SensitiveActionPolicy 统一评估为 BLOCKED 并拒绝，
+        // 高风险操作（如网络命令）由 ToolGuardrails 触发用户确认流程。
 
         try {
             val processBuilder = ProcessBuilder(
@@ -255,33 +254,6 @@ class ExtendedTools(private val project: Project?) {
             logger.error("Shell execution failed: $command", e)
             ToolResult.Error("Shell execution failed: ${e.message}")
         }
-    }
-
-    private data class CommandValidation(val valid: Boolean, val reason: String = "")
-
-    private val DANGEROUS_PATTERNS = listOf(
-        Regex("""rm\s+-rf\s+/"""),
-        Regex(""">\s*/dev/\w+"""),
-        Regex("""dd\s+if=.*of=/dev/\w+"""),
-        Regex("""mkfs\."""),
-        Regex(""":\(\)\{.*\};:"""), // fork bomb
-        Regex("""wget\s+.*\|\s*sh"""),
-        Regex("""curl\s+.*\|\s*sh"""),
-        Regex("""eval\s*\$"""),
-        Regex("""chmod\s+-R\s+777\s+/"""),
-        Regex("""sudo\s+rm\s+-rf\s+/"""),
-    )
-
-    private fun validateShellCommand(command: String): CommandValidation {
-        if (command.isBlank()) {
-            return CommandValidation(false, "Empty command")
-        }
-        for (pattern in DANGEROUS_PATTERNS) {
-            if (pattern.containsMatchIn(command)) {
-                return CommandValidation(false, "Command matches dangerous pattern: ${pattern.pattern}")
-            }
-        }
-        return CommandValidation(true)
     }
 
     // === HTTP Tool ===

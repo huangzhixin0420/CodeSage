@@ -4,7 +4,6 @@ import com.codesage.agent.memory.MemoryProvider
 import com.codesage.model.dto.Message
 import com.codesage.model.dto.Role
 import com.codesage.shared.utils.Logger
-import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * 上下文截断策略
@@ -43,7 +42,7 @@ class ContextManager(
     private val memoryProvider: MemoryProvider? = null
 ) {
     private val logger = Logger.getLogger<ContextManager>()
-    private val history = CopyOnWriteArrayList<Message>()
+    private val history = ArrayList<Message>()
     private val historyLock = Any()
 
     // ContextEngine（可选，用于智能压缩）
@@ -70,20 +69,32 @@ class ContextManager(
 
     /**
      * 获取当前上下文消息列表
+     * 注意：在 maybeTruncate() 执行期间，history 可能被清空并重建。
+     * 为保证读取一致性，此处加锁。
      */
-    fun getContext(): List<Message> = history.toList()
+    fun getContext(): List<Message> {
+        synchronized(historyLock) {
+            return history.toList()
+        }
+    }
 
     /**
      * 获取系统消息
      */
-    fun getSystemMessages(): List<Message> =
-        history.filter { it.role == Role.SYSTEM }
+    fun getSystemMessages(): List<Message> {
+        synchronized(historyLock) {
+            return history.filter { it.role == Role.SYSTEM }
+        }
+    }
 
     /**
      * 获取对话历史
      */
-    fun getConversationHistory(): List<Message> =
-        history.filter { it.role != Role.SYSTEM }
+    fun getConversationHistory(): List<Message> {
+        synchronized(historyLock) {
+            return history.filter { it.role != Role.SYSTEM }
+        }
+    }
 
     /**
      * 添加消息
@@ -154,17 +165,29 @@ class ContextManager(
     /**
      * 获取消息总数
      */
-    fun size(): Int = history.size
+    fun size(): Int {
+        synchronized(historyLock) {
+            return history.size
+        }
+    }
 
     /**
      * 估算当前上下文的 token 数
      */
-    fun estimateTokens(): Int = TokenEstimator.estimateMessagesTokens(history)
+    fun estimateTokens(): Int {
+        synchronized(historyLock) {
+            return TokenEstimator.estimateMessagesTokens(history)
+        }
+    }
 
     /**
      * 获取最后一条消息
      */
-    fun lastMessage(): Message? = history.lastOrNull()
+    fun lastMessage(): Message? {
+        synchronized(historyLock) {
+            return history.lastOrNull()
+        }
+    }
 
     /**
      * 检查是否需要截断/压缩
@@ -175,8 +198,10 @@ class ContextManager(
         if (engine != null && config.enableContextEngine) {
             val currentTokens = estimateTokens()
             if (engine.shouldCompress(currentTokens)) {
-                logger.info("Context compression triggered: $currentTokens tokens >= ${engine.thresholdTokens()} threshold")
-                val compressed = engine.compress(history, currentTokens)
+                val beforeCount = history.size
+                logger.info("Context compression triggered: $currentTokens tokens >= ${engine.thresholdTokens()} threshold, messages=$beforeCount")
+                val compressed = engine.compress(history.toList(), currentTokens)
+                logger.info("Context compression complete: ${compressed.size} messages (was $beforeCount)")
                 history.clear()
                 history.addAll(compressed)
                 return
@@ -189,6 +214,7 @@ class ContextManager(
             else -> minOf(config.summarizeThreshold, config.maxHistoryMessages)
         }
         if (history.size > threshold) {
+            logger.info("Context truncation triggered: ${history.size} messages > $threshold threshold")
             truncate()
         }
     }
@@ -210,14 +236,17 @@ class ContextManager(
      */
     private fun keepRecent() {
         val systemMsgs = history.filter { it.role == Role.SYSTEM }
+        val nonSystemCapacity = (config.maxHistoryMessages - systemMsgs.size).coerceAtLeast(1)
         val recentMsgs = history
             .filter { it.role != Role.SYSTEM }
-            .takeLast(config.maxHistoryMessages - systemMsgs.size)
+            .takeLast(nonSystemCapacity)
 
         synchronized(historyLock) {
+            val beforeCount = history.size
             history.clear()
             history.addAll(systemMsgs)
             history.addAll(recentMsgs)
+            logger.info("keepRecent truncation: $beforeCount -> ${history.size} messages (system=${systemMsgs.size}, recent=${recentMsgs.size})")
         }
     }
 
@@ -467,14 +496,18 @@ class ContextManager(
     }
 
     /**
-     * 判断是否为记忆相关的系统消息
+     * 判断是否为记忆相关的系统消息（注入的记忆上下文）
+     * 注意：这里只匹配由本类 injectMemoryContext 生成的标记格式，
+     * 避免误删用户原始系统提示中恰好包含这些子串的内容。
      */
     private fun isMemoryContextMessage(content: String): Boolean {
-        return content.contains("<memory-context>") ||
-                content.contains("[MEMORY SYSTEM]") ||
-                content.contains("[SYSTEM NOTE:") ||
-                content.contains("[RELEVANT CONTEXT]") ||
-                content.contains("[CONTEXT SUMMARY]")
+        // 必须是系统消息，且以特定标记开头（避免误匹配用户提示中的示例）
+        return content.startsWith("<memory-context>") ||
+                content.startsWith("[MEMORY SYSTEM]") ||
+                content.startsWith("[SYSTEM NOTE:") ||
+                content.startsWith("[RELEVANT CONTEXT]") ||
+                content.startsWith("[CONTEXT SUMMARY]") ||
+                content.startsWith("[CONTEXT COMPACTION")
     }
 
     companion object {

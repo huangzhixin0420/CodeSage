@@ -32,7 +32,8 @@ class CodeSageProjectService(private val project: Project) {
 
         val skillToolAdapter = SkillToolAdapter(
             skillRegistry = appService.skillRegistry,
-            skillExecutor = appService.skillExecutor
+            skillExecutor = appService.skillExecutor,
+            project = project
         )
 
         agentCore = AgentCore(

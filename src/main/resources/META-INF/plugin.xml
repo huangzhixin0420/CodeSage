@@ -89,5 +89,64 @@
                 first-keystroke="ctrl shift A"
             />
         </action>
+
+        <!-- Inline Chat Actions -->
+        <action
+            id="CodeSage.OpenInlineChat"
+            class="com.codesage.ide.inline.actions.OpenInlineChatAction"
+            text="CodeSage Inline Chat"
+            description="在编辑器内打开 AI 对话"
+        >
+            <add-to-group group-id="EditorPopupMenu" anchor="first" />
+            <keyboard-shortcut
+                keymap="$default"
+                first-keystroke="alt shift ENTER"
+            />
+        </action>
+
+        <action
+            id="CodeSage.ExplainCode"
+            class="com.codesage.ide.inline.actions.ExplainCodeAction"
+            text="Explain with CodeSage"
+        >
+            <add-to-group
+                group-id="EditorPopupMenu"
+                anchor="after"
+                relative-to-action="CodeSage.OpenInlineChat"
+            />
+        </action>
+
+        <action
+            id="CodeSage.RefactorCode"
+            class="com.codesage.ide.inline.actions.RefactorCodeAction"
+            text="Refactor with CodeSage"
+        >
+            <add-to-group
+                group-id="EditorPopupMenu"
+                anchor="after"
+                relative-to-action="CodeSage.ExplainCode"
+            />
+        </action>
+
+        <action
+            id="CodeSage.GenerateTest"
+            class="com.codesage.ide.inline.actions.GenerateTestAction"
+            text="Generate Test with CodeSage"
+        >
+            <add-to-group
+                group-id="EditorPopupMenu"
+                anchor="after"
+                relative-to-action="CodeSage.RefactorCode"
+            />
+        </action>
     </actions>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Inline Chat Intention Action -->
+        <intentionAction>
+            <className
+            >com.codesage.ide.inline.actions.FixErrorIntention</className>
+            <category>CodeSage</category>
+        </intentionAction>
+    </extensions>
 </idea-plugin>

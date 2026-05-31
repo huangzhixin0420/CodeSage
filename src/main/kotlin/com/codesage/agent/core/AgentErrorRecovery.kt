@@ -1,6 +1,7 @@
 package com.codesage.agent.core
 
 import com.codesage.model.dto.Message
+import com.codesage.model.registry.ModelRegistry
 import com.codesage.shared.exceptions.*
 import com.codesage.shared.utils.Logger
 import java.util.concurrent.ConcurrentHashMap
@@ -82,7 +83,8 @@ class AgentErrorRecovery {
         FailoverReason.IMAGE_TOO_LARGE to 2,
         FailoverReason.MULTIMODAL_UNSUPPORTED to 1,
         FailoverReason.AUTH_EXPIRED to 2,
-        FailoverReason.PROVIDER_UNAVAILABLE to 3
+        FailoverReason.PROVIDER_UNAVAILABLE to 3,
+        FailoverReason.UNKNOWN to 2  // 未知错误也给予 2 次重试机会
     )
 
     /**
@@ -199,10 +201,23 @@ class AgentErrorRecovery {
                     modelName = model
                 )
 
+            // 模型未配置/未找到
+            message.contains("模型未配置") || message.contains("model not found") || message.contains("no adapter found") ||
+                    message.contains("not found") && message.contains("model") ->
+                ClassifiedError(
+                    reason = FailoverReason.PROVIDER_UNAVAILABLE,
+                    retryable = true,
+                    shouldCompress = false,
+                    shouldFallback = true,
+                    statusCode = statusCode,
+                    originalError = error,
+                    modelName = model
+                )
+
             // 无效工具调用（区分 API 返回的 tool 错误和真正的工具调用格式错误）
             message.contains("tool") && (message.contains("invalid") || message.contains("not found") || message.contains(
                 "unknown"
-            )) && !message.contains("api error") && !message.contains("status_code") ->
+            )) && !message.contains("api error") && !message.contains("status_code") && !message.contains("model") ->
                 ClassifiedError(
                     reason = FailoverReason.INVALID_TOOL_CALL,
                     retryable = true,
@@ -280,10 +295,15 @@ class AgentErrorRecovery {
         // 增加重试计数
         retryCounters[counterKey]?.incrementAndGet()
 
+        // 动态获取可用的 fallback 模型（优先使用传入的列表，否则从 Registry 查询）
+        val effectiveFallbackModels = fallbackModels.ifEmpty {
+            getAvailableFallbackModels(classified.modelName)
+        }
+
         val action = when (classified.reason) {
             FailoverReason.RATE_LIMIT -> {
                 val delayMs = calculateBackoff(currentRetries)
-                val fallback = fallbackModels.firstOrNull()
+                val fallback = effectiveFallbackModels.firstOrNull()
                 if (fallback != null && classified.shouldFallback) {
                     RecoveryAction.RetryWithModel(fallback, delayMs)
                 } else {
@@ -301,7 +321,7 @@ class AgentErrorRecovery {
                 RecoveryAction.CompressAndRetry()
 
             FailoverReason.MULTIMODAL_UNSUPPORTED -> {
-                val fallback = fallbackModels.firstOrNull()
+                val fallback = effectiveFallbackModels.firstOrNull()
                 if (fallback != null) {
                     RecoveryAction.RetryWithModel(fallback)
                 } else {
@@ -311,7 +331,7 @@ class AgentErrorRecovery {
 
             FailoverReason.TIMEOUT -> {
                 val delayMs = calculateBackoff(currentRetries)
-                val fallback = fallbackModels.firstOrNull()
+                val fallback = effectiveFallbackModels.firstOrNull()
                 if (fallback != null && currentRetries >= 1) {
                     RecoveryAction.RetryWithModel(fallback, delayMs)
                 } else {
@@ -336,7 +356,7 @@ class AgentErrorRecovery {
                 RecoveryAction.SimpleRetry(delayMs = 500)
 
             FailoverReason.PROVIDER_UNAVAILABLE -> {
-                val fallback = fallbackModels.firstOrNull()
+                val fallback = effectiveFallbackModels.firstOrNull()
                 if (fallback != null) {
                     RecoveryAction.RetryWithModel(fallback, calculateBackoff(currentRetries))
                 } else {
@@ -344,8 +364,11 @@ class AgentErrorRecovery {
                 }
             }
 
-            FailoverReason.UNKNOWN ->
-                RecoveryAction.Abort("未知错误: ${classified.originalError.message}")
+            FailoverReason.UNKNOWN -> {
+                val delayMs = calculateBackoff(currentRetries)
+                logger.warn("Unknown error encountered, attempting simple retry: ${classified.originalError.message}")
+                RecoveryAction.SimpleRetry(delayMs)
+            }
         }
 
         // 将恢复动作应用到 AgentCore 实例
@@ -413,7 +436,9 @@ class AgentErrorRecovery {
     private fun calculateBackoff(attempt: Int): Long {
         val baseDelay = 1000L
         val maxDelay = 30000L
-        val exponential = baseDelay * (1 shl attempt) // 2^attempt
+        // 限制 shift 位数防止整数溢出（1 shl 31 会变成负数）
+        val safeAttempt = attempt.coerceAtMost(30)
+        val exponential = baseDelay * (1L shl safeAttempt) // 2^attempt
         val jitter = (Math.random() * 0.3 * exponential).toLong() // ±30% jitter
         return min(exponential + jitter, maxDelay)
     }
@@ -428,6 +453,25 @@ class AgentErrorRecovery {
     }
 
     companion object {
-        val DEFAULT_FALLBACK_MODELS = listOf("kimi-latest", "MiniMax-Text-01")
+        /**
+         * 默认后备模型列表（已废弃硬编码列表）。
+         * 为避免 fallback 到用户未配置的提供商导致 ModelNotFoundException，
+         * 现改为从 ModelRegistry 动态获取用户实际已配置的可用模型。
+         */
+        val DEFAULT_FALLBACK_MODELS = emptyList<String>()
+    }
+
+    /**
+     * 从 ModelRegistry 动态获取可用的 fallback 模型列表（排除当前失败的模型）。
+     */
+    private fun getAvailableFallbackModels(currentModel: String): List<String> {
+        return try {
+            val registry = ModelRegistry.getInstance()
+            registry.listAvailableModels()
+                .map { it.id }
+                .filter { it != currentModel }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 }

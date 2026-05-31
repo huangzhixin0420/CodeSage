@@ -19,14 +19,9 @@ class EventBatchEmitter(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 ) {
     private val buffer = ArrayBlockingQueue<AgentStreamEvent>(batchSize * 2)
-    private val textDeltaPool = ArrayBlockingQueue<AgentStreamEvent.TextDelta>(POOL_SIZE)
+    // 注意：TextDelta 是 data class（不可变），对象池在此场景下无法真正复用对象，
+    // 因此移除了对象池逻辑，直接创建新实例。后续如需极致优化，可改用 @JvmInline value class。
 
-    init {
-        // 预热对象池
-        repeat(POOL_SIZE) {
-            textDeltaPool.offer(AgentStreamEvent.TextDelta(""))
-        }
-    }
 
     /**
      * 将事件流转换为批量事件流
@@ -69,24 +64,10 @@ class EventBatchEmitter(
     fun emitImmediate(event: AgentStreamEvent): AgentStreamEvent = event
 
     /**
-     * 从对象池获取 TextDelta（减少 GC）
+     * 获取 TextDelta 事件实例
      */
     fun acquireTextDelta(delta: String): AgentStreamEvent.TextDelta {
-        val pooled = textDeltaPool.poll()
-        return if (pooled != null) {
-            // 由于 data class 不可变，无法复用，此处仅为演示对象池模式
-            // 实际高 GC 场景可使用 @JvmInline value class 或手动管理缓冲
-            AgentStreamEvent.TextDelta(delta)
-        } else {
-            AgentStreamEvent.TextDelta(delta)
-        }
-    }
-
-    /**
-     * 将 TextDelta 归还对象池
-     */
-    fun releaseTextDelta(event: AgentStreamEvent.TextDelta) {
-        textDeltaPool.offer(event)
+        return AgentStreamEvent.TextDelta(delta)
     }
 
     /**
@@ -127,6 +108,5 @@ class EventBatchEmitter(
     companion object {
         const val DEFAULT_BATCH_SIZE = 10
         const val DEFAULT_BATCH_INTERVAL_MS = 16L // ~60fps
-        const val POOL_SIZE = 256
     }
 }

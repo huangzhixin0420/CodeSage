@@ -46,13 +46,28 @@ data class ProviderTemplate(
                 name = "MiniMax",
                 providerType = ProviderTypes.MINIMAX,
                 baseUrl = "https://api.minimaxi.com",
-                defaultModels = listOf("MiniMax-Text-01", "abab6.5s-chat", "abab6.5g-chat", "abab5.5s-chat")
+                defaultModels = listOf(
+                    "MiniMax-M2.7",
+                    "MiniMax-M2.7-highspeed",
+                    "MiniMax-M2.5",
+                    "MiniMax-M2.5-highspeed",
+                    "MiniMax-M2.1",
+                    "MiniMax-M2.1-highspeed",
+                    "MiniMax-M2"
+                )
             ),
             ProviderTemplate(
                 name = "Kimi (Moonshot)",
                 providerType = ProviderTypes.KIMI,
                 baseUrl = "https://api.moonshot.cn",
-                defaultModels = listOf("moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k")
+                defaultModels = listOf(
+                    "kimi-k2.6",
+                    "kimi-k2.5",
+                    "moonshot-v1-auto",
+                    "moonshot-v1-8k",
+                    "moonshot-v1-32k",
+                    "moonshot-v1-128k"
+                )
             ),
             ProviderTemplate(
                 name = "OpenAI",
@@ -156,6 +171,12 @@ class PluginConfigState {
     @Tag("defaultModel")
     var defaultModel: String = ""
 
+    @Tag("codingModel")
+    var codingModel: String = ""
+
+    @Tag("reasoningModel")
+    var reasoningModel: String = ""
+
     @Tag("enableStreaming")
     var enableStreaming: Boolean = true
 
@@ -178,13 +199,13 @@ class PluginConfigState {
     // ==================== 预算与轮次管理 ====================
 
     @Tag("maxIterationsPerTask")
-    var maxIterationsPerTask: Int = 15
+    var maxIterationsPerTask: Int = 30
 
     @Tag("maxTokensPerTask")
     var maxTokensPerTask: Int = 0
 
     @Tag("maxDurationSecondsPerTask")
-    var maxDurationSecondsPerTask: Int = 300
+    var maxDurationSecondsPerTask: Int = 600
 
     @Tag("enableIterationBudget")
     var enableIterationBudget: Boolean = true
@@ -299,6 +320,18 @@ class PluginConfig : PersistentStateComponent<PluginConfigState> {
         get() = state.defaultModel
         set(value) {
             state.defaultModel = value
+        }
+
+    var codingModel: String
+        get() = state.codingModel
+        set(value) {
+            state.codingModel = value
+        }
+
+    var reasoningModel: String
+        get() = state.reasoningModel
+        set(value) {
+            state.reasoningModel = value
         }
 
     /**

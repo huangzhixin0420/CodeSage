@@ -83,12 +83,7 @@ class CodeSageAppService {
                         logger.info("MiniMax adapter registered: ${provider.name}, models: ${provider.models}")
                     }
 
-                    ProviderTypes.KIMI -> {
-                        modelRegistry.createKimiAdapter(apiKey, provider.baseUrl, provider.models)
-                        logger.info("Kimi adapter registered: ${provider.name}, models: ${provider.models}")
-                    }
-
-                    ProviderTypes.OPENAI, ProviderTypes.OPENAI_COMPATIBLE -> {
+                    ProviderTypes.KIMI, ProviderTypes.OPENAI, ProviderTypes.OPENAI_COMPATIBLE -> {
                         if (provider.models.isNotEmpty()) {
                             modelRegistry.registerOpenAICompatibleAdapter(
                                 name = provider.name,

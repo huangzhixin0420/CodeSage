@@ -131,6 +131,14 @@ class AgentToolWindowPanel(
 
                         "request_sessions" -> refreshSessionList()
                     }
+                },
+                onContinueBudget = { extraIterations ->
+                    logger.info("[AgentToolWindowPanel] continue budget invoked, extraIterations=$extraIterations")
+                    core.continueConversation(extraIterations)
+                        ?: kotlinx.coroutines.flow.flow {
+                            emit(com.codesage.agent.core.AgentStreamEvent.Error("无法继续：没有可恢复的已暂停任务"))
+                            emit(com.codesage.agent.core.AgentStreamEvent.Done)
+                        }
                 }
             )
 

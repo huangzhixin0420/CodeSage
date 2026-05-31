@@ -8,9 +8,9 @@ class TaskBudgetTest {
     @Test
     fun `default config should have sensible defaults`() {
         val budget = TaskBudget()
-        assertEquals(15, budget.config.maxIterations)
+        assertEquals(30, budget.config.maxIterations)
         assertEquals(0, budget.config.maxTokens)
-        assertEquals(300_000L, budget.config.maxDurationMs)
+        assertEquals(600_000L, budget.config.maxDurationMs)
         assertTrue(budget.config.enableIteration)
         assertFalse(budget.config.enableToken)
         assertTrue(budget.config.enableTime)

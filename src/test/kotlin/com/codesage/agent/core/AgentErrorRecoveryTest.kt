@@ -167,14 +167,15 @@ class AgentErrorRecoveryTest {
     }
 
     @Test
-    fun `should abort for unknown errors`() {
+    fun `should retry for unknown errors`() {
         val error = RuntimeException("Unknown")
         val classified = recovery.classify(error)
         val agent = AgentCore()
 
         val action = recovery.recover(agent, classified)
 
-        assertTrue(action is RecoveryAction.Abort)
+        // UNKNOWN 错误现在默认给予 2 次 SimpleRetry 机会，而非直接 Abort
+        assertTrue(action is RecoveryAction.SimpleRetry)
     }
 
     @Test
@@ -193,7 +194,8 @@ class AgentErrorRecoveryTest {
         val error = RateLimitException("Rate limit exceeded")
         val classified = recovery.classify(error, model = "model-a")
         val agent = AgentCore()
-        assertEquals("MiniMax-Text-01", agent.getCurrentModel())
+        agent.initialize(AgentConfig(defaultModel = "model-a"))
+        assertEquals("model-a", agent.getCurrentModel())
 
         val action = recovery.recover(agent, classified, fallbackModels = listOf("fallback-model"))
 

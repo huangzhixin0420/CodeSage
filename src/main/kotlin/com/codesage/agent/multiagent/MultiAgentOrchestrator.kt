@@ -61,17 +61,41 @@ abstract class BaseAgent(
         logger.info("[$name] Processing task: ${task.description}")
         // Use chatWithTools for sub-agents so they can use IDE tools
         val resultBuilder = StringBuilder()
+        val toolCallLog = StringBuilder()
         var errorMessage: String? = null
         agentCore.chatWithTools(task.description).collect { event ->
             when (event) {
                 is com.codesage.agent.core.AgentStreamEvent.TextDelta -> resultBuilder.append(event.delta)
+                is com.codesage.agent.core.AgentStreamEvent.ToolCallStart -> {
+                    toolCallLog.appendLine("[Tool: ${event.toolCall.name}]")
+                }
+
+                is com.codesage.agent.core.AgentStreamEvent.ToolCallResult -> {
+                    toolCallLog.appendLine("[Result: ${event.toolName}] success=${event.success}")
+                }
+
+                is com.codesage.agent.core.AgentStreamEvent.SubAgentComplete -> {
+                    toolCallLog.appendLine("[SubAgent] success=${event.success}")
+                }
+
                 is com.codesage.agent.core.AgentStreamEvent.Error -> {
                     errorMessage = event.message
+                }
+
+                is com.codesage.agent.core.AgentStreamEvent.BudgetExhausted -> {
+                    toolCallLog.appendLine("[BudgetExhausted] ${event.reason}")
                 }
 
                 else -> { /* ignore other events for result aggregation */
                 }
             }
+        }
+        // 将工具调用日志附加到结果中，确保工具执行结果不丢失
+        if (toolCallLog.isNotEmpty()) {
+            resultBuilder.appendLine()
+            resultBuilder.appendLine("---")
+            resultBuilder.appendLine("Execution Log:")
+            resultBuilder.append(toolCallLog)
         }
         return if (errorMessage != null) {
             AgentResult.Failure(errorMessage, AgentSession(id = "sub_agent_${role.name}"))
