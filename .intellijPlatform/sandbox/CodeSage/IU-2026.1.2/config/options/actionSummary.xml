@@ -1,0 +1,34 @@
+<application>
+  <component name="ActionsLocalSummary">
+    <e n="EditorCopy">
+      <i c="2" l="1779881393615" />
+    </e>
+    <e n="WelcomeScreen.OpenProject">
+      <i c="2" l="1779879431861" />
+    </e>
+    <e n="com.intellij.diagnostic.IdeErrorsDialog$BackAction">
+      <i c="5" l="1779881261457" />
+    </e>
+    <e n="com.intellij.diagnostic.IdeErrorsDialog$ForwardAction">
+      <i c="1" l="1779881259886" />
+    </e>
+    <e n="com.intellij.diagnostic.IdeErrorsDialog$GoToLastAction">
+      <i c="2" l="1779881256156" />
+    </e>
+    <e n="com.intellij.ide.plugins.DynamicPluginVfsListener$prepareChange$2$afterVfsChange$1$1">
+      <i c="1" l="1779885484225" />
+    </e>
+    <e n="com.intellij.notification.NotificationAction$Simple">
+      <i c="3" l="1779883983921" />
+    </e>
+    <e n="com.intellij.openapi.project.LightEditActionFactory$SimpleLightEditCompatibleAction">
+      <i c="1" l="1779880898365" />
+    </e>
+    <e n="com.intellij.openapi.wm.impl.SquareAnActionButton">
+      <i c="5" l="1779884901170" />
+    </e>
+    <e n="com.intellij.toolWindow.ToolWindowHeader$HideAction">
+      <i c="19" l="1779885260286" />
+    </e>
+  </component>
+</application>

@@ -1,0 +1,59 @@
+# CodeSage 内置技能配置文件
+# 此文件定义了内置技能的元数据，实际技能逻辑在代码中实现
+
+skills:
+  - id: "builtin_file_reader"
+    name: "File Reader"
+    description: "读取文件内容"
+    category: FILE_OPERATION
+    tags: ["file", "read", "io"]
+    version: "1.0.0"
+    
+  - id: "builtin_file_writer"
+    name: "File Writer"
+    description: "写入内容到文件"
+    category: FILE_OPERATION
+    tags: ["file", "write", "io"]
+    version: "1.0.0"
+    
+  - id: "builtin_file_search"
+    name: "File Search"
+    description: "搜索文件和目录"
+    category: FILE_OPERATION
+    tags: ["file", "search", "glob"]
+    version: "1.0.0"
+    
+  - id: "builtin_project_analysis"
+    name: "Project Analysis"
+    description: "分析项目结构和依赖"
+    category: CODE_SEARCH
+    tags: ["project", "analysis", "structure"]
+    version: "1.0.0"
+    
+  - id: "builtin_git_operation"
+    name: "Git Operation"
+    description: "执行Git操作命令"
+    category: GIT
+    tags: ["git", "version", "control", "vcs"]
+    version: "1.0.0"
+    
+  - id: "builtin_command_execution"
+    name: "Command Execution"
+    description: "执行系统命令"
+    category: EXECUTION
+    tags: ["shell", "command", "exec", "terminal"]
+    version: "1.0.0"
+    
+  - id: "builtin_web_request"
+    name: "Web Request"
+    description: "发送HTTP请求"
+    category: NETWORK
+    tags: ["http", "request", "network", "api", "rest"]
+    version: "1.0.0"
+    
+  - id: "builtin_code_search"
+    name: "Code Search"
+    description: "在项目中搜索代码"
+    category: CODE_SEARCH
+    tags: ["search", "code", "find", "grep", "regex"]
+    version: "1.0.0"

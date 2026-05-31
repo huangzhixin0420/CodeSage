@@ -1,0 +1,515 @@
+package com.codesage.agent.tools
+
+import com.codesage.shared.utils.Logger
+import com.intellij.openapi.project.Project
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.*
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
+import java.security.MessageDigest
+import java.util.Base64
+import java.util.concurrent.TimeUnit
+
+/**
+ * 扩展工具集 - Git / Shell / HTTP / 数据处理
+ */
+class ExtendedTools(private val project: Project?) {
+    private val logger = Logger.getLogger<ExtendedTools>()
+    private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+
+    /**
+     * SSRF 防护开关，默认为 true。
+     * 仅用于测试环境绕过本地地址拦截。
+     */
+    var ssrfProtectionEnabled: Boolean = true
+
+    private fun resolveWorkingDir(path: String?): String {
+        return when {
+            path == null -> project?.basePath ?: System.getProperty("user.dir")
+            File(path).isAbsolute -> path
+            else -> File(project?.basePath ?: ".", path).canonicalPath
+        }
+    }
+
+    // === Git Tools ===
+
+    fun gitStatus(args: JsonObject): ToolResult {
+        val workingDir = resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
+        return executeGitCommand(listOf("git", "status", "--porcelain", "-b"), workingDir) { stdout, _, exitCode ->
+            if (exitCode != 0) return@executeGitCommand ToolResult.Error("git status failed")
+
+            val lines = stdout.lines().filter { it.isNotBlank() }
+            val branchLine = lines.firstOrNull { it.startsWith("##") }?.substring(2)?.trim() ?: "unknown"
+            val files = lines.filterNot { it.startsWith("##") }.map { line ->
+                val status = line.take(2)
+                val file = line.drop(3)
+                JsonObject(
+                    mapOf(
+                        "status" to JsonPrimitive(status.trim()),
+                        "file" to JsonPrimitive(file)
+                    )
+                )
+            }
+
+            ToolResult.Success(
+                JsonObject(
+                    mapOf(
+                        "branch" to JsonPrimitive(branchLine),
+                        "changed_files" to JsonArray(files),
+                        "count" to JsonPrimitive(files.size)
+                    )
+                )
+            )
+        }
+    }
+
+    fun gitDiff(args: JsonObject): ToolResult {
+        val workingDir = resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
+        val cached = args["cached"]?.jsonPrimitive?.booleanOrNull ?: false
+        val file = args["file"]?.jsonPrimitive?.content
+
+        val cmd = mutableListOf("git", "diff")
+        if (cached) cmd.add("--cached")
+        if (file != null) cmd.add(file)
+
+        return executeGitCommand(cmd, workingDir) { stdout, stderr, exitCode ->
+            if (exitCode != 0 && stderr.isNotBlank()) {
+                ToolResult.Error("git diff failed: $stderr")
+            } else {
+                ToolResult.Success(
+                    JsonObject(
+                        mapOf(
+                            "diff" to JsonPrimitive(stdout),
+                            "has_changes" to JsonPrimitive(stdout.isNotBlank())
+                        )
+                    )
+                )
+            }
+        }
+    }
+
+    fun gitLog(args: JsonObject): ToolResult {
+        val workingDir = resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
+        val limit = args["limit"]?.jsonPrimitive?.intOrNull?.coerceIn(1, 100) ?: 20
+
+        return executeGitCommand(
+            listOf("git", "log", "--oneline", "-n", limit.toString()),
+            workingDir
+        ) { stdout, _, exitCode ->
+            if (exitCode != 0) return@executeGitCommand ToolResult.Error("git log failed")
+
+            val commits = stdout.lines().filter { it.isNotBlank() }.map { line ->
+                val hash = line.takeWhile { it != ' ' }
+                val message = line.drop(hash.length).trim()
+                JsonObject(
+                    mapOf(
+                        "hash" to JsonPrimitive(hash),
+                        "message" to JsonPrimitive(message)
+                    )
+                )
+            }
+
+            ToolResult.Success(
+                JsonObject(
+                    mapOf(
+                        "commits" to JsonArray(commits),
+                        "count" to JsonPrimitive(commits.size)
+                    )
+                )
+            )
+        }
+    }
+
+    fun gitBranch(args: JsonObject): ToolResult {
+        val workingDir = resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
+
+        return executeGitCommand(listOf("git", "branch", "-a"), workingDir) { stdout, _, exitCode ->
+            if (exitCode != 0) return@executeGitCommand ToolResult.Error("git branch failed")
+
+            val branches = stdout.lines().filter { it.isNotBlank() }.map { line ->
+                val current = line.startsWith("* ")
+                val name = line.removePrefix("* ").trim()
+                JsonObject(
+                    mapOf(
+                        "name" to JsonPrimitive(name),
+                        "current" to JsonPrimitive(current)
+                    )
+                )
+            }
+
+            val currentBranch = branches.firstOrNull { it["current"]?.jsonPrimitive?.booleanOrNull == true }
+                ?.get("name")?.jsonPrimitive?.content ?: "unknown"
+
+            ToolResult.Success(
+                JsonObject(
+                    mapOf(
+                        "current" to JsonPrimitive(currentBranch),
+                        "branches" to JsonArray(branches),
+                        "count" to JsonPrimitive(branches.size)
+                    )
+                )
+            )
+        }
+    }
+
+    private fun executeGitCommand(
+        command: List<String>,
+        workingDir: String,
+        transform: (String, String, Int) -> ToolResult
+    ): ToolResult {
+        val gitDir = File(workingDir, ".git")
+        if (!gitDir.exists()) {
+            return ToolResult.Error("Not a Git repository: $workingDir")
+        }
+        return try {
+            val process = ProcessBuilder(command)
+                .directory(File(workingDir))
+                .redirectErrorStream(false)
+                .start()
+            val stdout = process.inputStream.bufferedReader().readText()
+            val stderr = process.errorStream.bufferedReader().readText()
+            val exitCode = process.waitFor()
+            transform(stdout, stderr, exitCode)
+        } catch (e: Exception) {
+            logger.error("Git command failed: $command", e)
+            ToolResult.Error("Git command failed: ${e.message}")
+        }
+    }
+
+    // === Shell Tool ===
+
+    suspend fun execShell(args: JsonObject): ToolResult = withContext(Dispatchers.IO) {
+        val command = args["command"]?.jsonPrimitive?.content
+            ?: return@withContext ToolResult.Error("Missing 'command' parameter")
+        val workingDir = resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
+        val timeout = args["timeout"]?.jsonPrimitive?.longOrNull?.coerceIn(1000L, 300000L) ?: 60000L
+
+        // 安全检查
+        val validation = validateShellCommand(command)
+        if (!validation.valid) {
+            return@withContext ToolResult.Error("Security check failed: ${validation.reason}")
+        }
+
+        try {
+            val processBuilder = ProcessBuilder(
+                if (System.getProperty("os.name").contains("Windows")) {
+                    listOf("cmd", "/c", command)
+                } else {
+                    listOf("/bin/bash", "-c", command)
+                }
+            )
+            processBuilder.directory(File(workingDir))
+            processBuilder.redirectErrorStream(false)
+
+            val process = processBuilder.start()
+
+            // 异步读取 stdout/stderr，避免阻塞导致超时失效
+            val stdoutFuture = java.util.concurrent.CompletableFuture<String>()
+            val stderrFuture = java.util.concurrent.CompletableFuture<String>()
+
+            val stdoutThread = Thread {
+                try {
+                    stdoutFuture.complete(process.inputStream.bufferedReader().readText())
+                } catch (e: Exception) {
+                    stdoutFuture.completeExceptionally(e)
+                }
+            }
+            stdoutThread.isDaemon = true
+            stdoutThread.start()
+
+            val stderrThread = Thread {
+                try {
+                    stderrFuture.complete(process.errorStream.bufferedReader().readText())
+                } catch (e: Exception) {
+                    stderrFuture.completeExceptionally(e)
+                }
+            }
+            stderrThread.isDaemon = true
+            stderrThread.start()
+
+            val finished = process.waitFor(timeout, TimeUnit.MILLISECONDS)
+
+            if (!finished) {
+                process.destroyForcibly()
+                stdoutThread.interrupt()
+                stderrThread.interrupt()
+                return@withContext ToolResult.Error("Command timed out after ${timeout}ms")
+            }
+
+            val exitCode = process.exitValue()
+            val stdout = stdoutFuture.get()
+            val stderr = stderrFuture.get()
+            ToolResult.Success(
+                JsonObject(
+                    mapOf(
+                        "stdout" to JsonPrimitive(stdout),
+                        "stderr" to JsonPrimitive(stderr),
+                        "exit_code" to JsonPrimitive(exitCode)
+                    )
+                )
+            )
+        } catch (e: Exception) {
+            logger.error("Shell execution failed: $command", e)
+            ToolResult.Error("Shell execution failed: ${e.message}")
+        }
+    }
+
+    private data class CommandValidation(val valid: Boolean, val reason: String = "")
+
+    private val DANGEROUS_PATTERNS = listOf(
+        Regex("""rm\s+-rf\s+/"""),
+        Regex(""">\s*/dev/\w+"""),
+        Regex("""dd\s+if=.*of=/dev/\w+"""),
+        Regex("""mkfs\."""),
+        Regex(""":\(\)\{.*\};:"""), // fork bomb
+        Regex("""wget\s+.*\|\s*sh"""),
+        Regex("""curl\s+.*\|\s*sh"""),
+        Regex("""eval\s*\$"""),
+        Regex("""chmod\s+-R\s+777\s+/"""),
+        Regex("""sudo\s+rm\s+-rf\s+/"""),
+    )
+
+    private fun validateShellCommand(command: String): CommandValidation {
+        if (command.isBlank()) {
+            return CommandValidation(false, "Empty command")
+        }
+        for (pattern in DANGEROUS_PATTERNS) {
+            if (pattern.containsMatchIn(command)) {
+                return CommandValidation(false, "Command matches dangerous pattern: ${pattern.pattern}")
+            }
+        }
+        return CommandValidation(true)
+    }
+
+    // === HTTP Tool ===
+
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
+
+    private val blockedUrlPatterns = listOf(
+        Regex("""127\.0\.0\.1"""),
+        Regex("""localhost""", RegexOption.IGNORE_CASE),
+        Regex("""\[::1\]"""),
+        Regex("""^https?://10\.""", RegexOption.IGNORE_CASE),
+        Regex("""^https?://172\.(1[6-9]|2[0-9]|3[01])\.""", RegexOption.IGNORE_CASE),
+        Regex("""^https?://192\.168\.""", RegexOption.IGNORE_CASE),
+        Regex("""^https?://169\.254\.""", RegexOption.IGNORE_CASE),
+        Regex("""^file://""", RegexOption.IGNORE_CASE),
+        Regex("""^ftp://""", RegexOption.IGNORE_CASE),
+        Regex("""^http://0\.0\.0\.0""", RegexOption.IGNORE_CASE),
+        Regex("""^http://\[?::""", RegexOption.IGNORE_CASE)
+    )
+
+    suspend fun httpRequest(args: JsonObject): ToolResult = withContext(Dispatchers.IO) {
+        val url = args["url"]?.jsonPrimitive?.content
+            ?: return@withContext ToolResult.Error("Missing 'url' parameter")
+        val method = args["method"]?.jsonPrimitive?.content?.uppercase() ?: "GET"
+        val body = args["body"]?.jsonPrimitive?.content
+        val timeout = args["timeout"]?.jsonPrimitive?.intOrNull?.coerceIn(1000, 60000) ?: 30000
+        val headers = args["headers"]?.jsonObject
+
+        // SSRF 防护
+        if (isBlockedUrl(url)) {
+            return@withContext ToolResult.Error("Access denied: URL points to internal/private network")
+        }
+
+        val requestBuilder = Request.Builder().url(url)
+
+        headers?.forEach { (key, value) ->
+            if (value is JsonPrimitive) {
+                requestBuilder.addHeader(key, value.content)
+            }
+        }
+
+        when (method) {
+            "GET" -> requestBuilder.get()
+            "DELETE" -> requestBuilder.delete()
+            "HEAD" -> requestBuilder.head()
+            "POST" -> {
+                val requestBody = body?.toRequestBody("application/json".toMediaType()) ?: "".toRequestBody(null)
+                requestBuilder.post(requestBody)
+            }
+
+            "PUT" -> {
+                val requestBody = body?.toRequestBody("application/json".toMediaType()) ?: "".toRequestBody(null)
+                requestBuilder.put(requestBody)
+            }
+
+            "PATCH" -> {
+                val requestBody = body?.toRequestBody("application/json".toMediaType()) ?: "".toRequestBody(null)
+                requestBuilder.patch(requestBody)
+            }
+
+            "OPTIONS" -> requestBuilder.method("OPTIONS", null)
+            else -> return@withContext ToolResult.Error("Unsupported HTTP method: $method")
+        }
+
+        val client = httpClient.newBuilder()
+            .connectTimeout(timeout.toLong(), TimeUnit.MILLISECONDS)
+            .readTimeout(timeout.toLong(), TimeUnit.MILLISECONDS)
+            .build()
+
+        try {
+            client.newCall(requestBuilder.build()).execute().use { response ->
+                val responseBody = response.body?.string() ?: ""
+                val responseHeaders = JsonObject(response.headers.toMultimap().map { (k, v) ->
+                    k to JsonPrimitive(v.joinToString(", "))
+                }.toMap())
+
+                // 自动 JSON 格式化
+                val formattedBody = if (responseBody.isNotBlank() && response.header("Content-Type")
+                        ?.contains("application/json") == true
+                ) {
+                    try {
+                        json.encodeToString(JsonElement.serializer(), json.parseToJsonElement(responseBody))
+                    } catch (_: Exception) {
+                        responseBody
+                    }
+                } else {
+                    responseBody
+                }
+
+                ToolResult.Success(
+                    JsonObject(
+                        mapOf(
+                            "status_code" to JsonPrimitive(response.code),
+                            "status_text" to JsonPrimitive(response.message),
+                            "headers" to responseHeaders,
+                            "body" to JsonPrimitive(formattedBody),
+                            "is_successful" to JsonPrimitive(response.isSuccessful)
+                        )
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            logger.error("HTTP request failed: $url", e)
+            ToolResult.Error("HTTP request failed: ${e.message}")
+        }
+    }
+
+    private fun isBlockedUrl(url: String): Boolean {
+        if (!ssrfProtectionEnabled) return false
+        return blockedUrlPatterns.any { it.containsMatchIn(url) }
+    }
+
+    // === Data Processing Tools ===
+
+    fun parseJson(args: JsonObject): ToolResult {
+        val jsonString = args["json"]?.jsonPrimitive?.content
+            ?: return ToolResult.Error("Missing 'json' parameter")
+        val query = args["query"]?.jsonPrimitive?.content
+
+        return try {
+            val element = json.parseToJsonElement(jsonString)
+            val result = if (query != null) {
+                queryJson(element, query)
+            } else {
+                element
+            }
+            val typeName = when (result) {
+                is JsonPrimitive -> when {
+                    result.isString -> "string"
+                    result.booleanOrNull != null -> "boolean"
+                    result.intOrNull != null || result.longOrNull != null || result.doubleOrNull != null || result.floatOrNull != null -> "number"
+                    else -> "primitive"
+                }
+
+                is JsonObject -> "object"
+                is JsonArray -> "array"
+                is JsonNull -> "null"
+            }
+            ToolResult.Success(
+                JsonObject(
+                    mapOf(
+                        "result" to result,
+                        "type" to JsonPrimitive(typeName)
+                    )
+                )
+            )
+        } catch (e: Exception) {
+            ToolResult.Error("JSON parse error: ${e.message}")
+        }
+    }
+
+    private fun queryJson(element: JsonElement, query: String): JsonElement {
+        var current = element
+        val parts = query.split(".")
+        for (part in parts) {
+            current = when (current) {
+                is JsonObject -> current[part] ?: return JsonNull
+                is JsonArray -> {
+                    val index = part.toIntOrNull()
+                    if (index != null && index in current.indices) current[index] else JsonNull
+                }
+
+                else -> return JsonNull
+            }
+        }
+        return current
+    }
+
+    fun encodeBase64(args: JsonObject): ToolResult {
+        val input = args["input"]?.jsonPrimitive?.content
+            ?: return ToolResult.Error("Missing 'input' parameter")
+        val encoded = Base64.getEncoder().encodeToString(input.toByteArray(Charsets.UTF_8))
+        return ToolResult.Success(JsonObject(mapOf("encoded" to JsonPrimitive(encoded))))
+    }
+
+    fun decodeBase64(args: JsonObject): ToolResult {
+        val input = args["input"]?.jsonPrimitive?.content
+            ?: return ToolResult.Error("Missing 'input' parameter")
+        return try {
+            val decoded = Base64.getDecoder().decode(input).toString(Charsets.UTF_8)
+            ToolResult.Success(JsonObject(mapOf("decoded" to JsonPrimitive(decoded))))
+        } catch (e: Exception) {
+            ToolResult.Error("Base64 decode error: ${e.message}")
+        }
+    }
+
+    fun formatJson(args: JsonObject): ToolResult {
+        val jsonString = args["json"]?.jsonPrimitive?.content
+            ?: return ToolResult.Error("Missing 'json' parameter")
+        val compact = args["compact"]?.jsonPrimitive?.booleanOrNull ?: false
+
+        return try {
+            val element = json.parseToJsonElement(jsonString)
+            val formatter = if (compact) {
+                Json { ignoreUnknownKeys = true }
+            } else {
+                Json { ignoreUnknownKeys = true; prettyPrint = true }
+            }
+            val formatted = formatter.encodeToString(JsonElement.serializer(), element)
+            ToolResult.Success(
+                JsonObject(
+                    mapOf(
+                        "formatted" to JsonPrimitive(formatted)
+                    )
+                )
+            )
+        } catch (e: Exception) {
+            ToolResult.Error("JSON format error: ${e.message}")
+        }
+    }
+
+    fun hashMd5(args: JsonObject): ToolResult {
+        val input = args["input"]?.jsonPrimitive?.content
+            ?: return ToolResult.Error("Missing 'input' parameter")
+        val digest = MessageDigest.getInstance("MD5").digest(input.toByteArray(Charsets.UTF_8))
+        val hex = digest.joinToString("") { "%02x".format(it) }
+        return ToolResult.Success(JsonObject(mapOf("hash" to JsonPrimitive(hex))))
+    }
+
+    fun hashSha256(args: JsonObject): ToolResult {
+        val input = args["input"]?.jsonPrimitive?.content
+            ?: return ToolResult.Error("Missing 'input' parameter")
+        val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
+        val hex = digest.joinToString("") { "%02x".format(it) }
+        return ToolResult.Success(JsonObject(mapOf("hash" to JsonPrimitive(hex))))
+    }
+}

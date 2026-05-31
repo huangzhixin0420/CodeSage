@@ -1,0 +1,3390 @@
+<html>
+  <head>
+    <title>Indexing diagnostics of 'CodeSage'</title>
+    <style>body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+}
+
+table, th, td {
+  border: 1px solid black;
+  border-collapse: collapse;
+}
+
+table {
+  width: 80%;
+}
+
+table.activity-table {
+  width: 100%;
+}
+
+table.metrics-table {
+  width: auto;
+}
+
+.red-text {
+  color: red;
+}
+
+table.narrow-activity-table {
+  width: 80%;
+}
+
+table.two-columns td {
+  width: 50%;
+}
+
+th, td {
+  padding: 3px;
+}
+
+th {
+  background: lightgrey;
+}
+
+td {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.stats-content {
+  margin-left: 20%;
+}
+
+.stats-activity-content {
+  margin-left: 20%;
+  margin-right: 5%;
+}
+
+.aggregate-report-content {
+  margin-left: 10%;
+}
+
+.aggregate-activity-report-content {
+  margin-left: 10%;
+  margin-right: 10%;
+}
+
+.aggregate-header {
+  padding-top: 1em;
+  padding-bottom: 1em;
+  margin-bottom: 0;
+}
+
+.table-with-margin{
+  margin-top: 1em;
+  margin-bottom: 2em;
+}
+
+.navigation-bar {
+  width: 15%;
+  background-color: lightgrey;
+  position: fixed;
+  height: 100%;
+}
+
+div.navigation-bar ul {
+  list-style-type: none;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  font-size: 24px;
+}
+
+div.navigation-bar ul li a, label {
+  display: block;
+  color: #000;
+  padding: 8px 20px;
+  text-decoration: none;
+}
+
+label input {
+  margin-left: 10px;
+  width: 20px;
+  height: 20px;
+}
+
+div.navigation-bar ul li a:hover {
+  background-color: #555;
+  color: white;
+}
+
+.minor-data {}
+
+.invisible {
+  display: none;
+}
+
+.jetbrains-logo {
+  width: 50%;
+  bottom: 5%;
+  position: absolute;
+  left: 20%;
+}
+
+.centered-text {
+  text-align: center;
+}
+
+.linkable-table-row:hover {
+  background: #f2f3ff;
+  outline: none;
+  cursor: pointer;
+}
+
+.scanning-table-row {
+  background-color: aliceblue;
+}
+
+.not-applicable-data{
+  color: darkgrey;
+}</style>
+    <script>document.addEventListener("DOMContentLoaded", () => {
+  const rows = document.getElementsByClassName("linkable-table-row")
+  for (const row of rows) {
+    const href = row.getAttribute("href")
+    row.addEventListener("click", () => {
+      window.open(href, "_blank");
+    });
+  }
+});</script>
+  </head>
+  <body>
+    <div class="aggregate-activity-report-content">
+      <h1 class="aggregate-header">CodeSage</h1>
+      <div>All durations are wall time; total and content loading time include pauses
+        <table class="centered-text table-with-margin activity-table"><caption style="caption-side: bottom; text-align: right; font-size: 14px">Click for details</caption>
+          <thead>
+            <tr>
+              <th colspan="14">History of scannings and indexings</th>
+            </tr>
+            <tr>
+              <th colspan="7">Time</th>
+              <th colspan="5">Files</th>
+              <th rowspan="2">Scanning ID(s)</th>
+              <th rowspan="2">Scanning Type</th>
+            </tr>
+            <tr>
+              <th>Started</th>
+              <th>Started dumb mode</th>
+              <th>Finished</th>
+              <th>Total&nbsp;time</th>
+              <th>Time spent on pause</th>
+              <th>Full dumb mode time</th>
+              <th>Dumb mode time w/o pauses</th>
+              <th>Scanned</th>
+              <th>Shared indexes (w/o content loading)</th>
+              <th>Scheduled for indexing</th>
+              <th>Shared indexes (content loaded)</th>
+              <th>Total indexed (shared indexes included)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-37-22.232.html">
+              <td>20:37:22 27 5月</td>
+              <td>20:37:22 27 5月</td>
+              <td>20:37:22 27 5月</td>
+              <td>93 ms</td>
+              <td>0</td>
+              <td>93 ms</td>
+              <td>93 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>9<br>(incl. 9 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-37-07.190.html">
+              <td>20:37:07 27 5月</td>
+              <td>20:37:07 27 5月</td>
+              <td>20:37:07 27 5月</td>
+              <td>94 ms</td>
+              <td>0</td>
+              <td>94 ms</td>
+              <td>94 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>9<br>(incl. 9 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-36-53.002.html">
+              <td>20:36:52 27 5月</td>
+              <td>20:36:52 27 5月</td>
+              <td>20:36:53 27 5月</td>
+              <td>92 ms</td>
+              <td>0</td>
+              <td>92 ms</td>
+              <td>92 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>8</td>
+              <td>1</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-36-52.905.html">
+              <td>20:36:52 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>20:36:52 27 5月</td>
+              <td>599 ms</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>5376</td>
+              <td>0</td>
+              <td>8</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>1</td>
+              <td>full on index restart</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-36-37.124.html">
+              <td>20:36:37 27 5月</td>
+              <td>20:36:37 27 5月</td>
+              <td>20:36:37 27 5月</td>
+              <td>24 ms</td>
+              <td>0</td>
+              <td>24 ms</td>
+              <td>24 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>1<br>(incl. 1 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-36-37.085.html">
+              <td>20:36:36 27 5月</td>
+              <td>20:36:36 27 5月</td>
+              <td>20:36:37 27 5月</td>
+              <td>108 ms</td>
+              <td>0</td>
+              <td>108 ms</td>
+              <td>108 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>21<br>(incl. 21 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-36-22.075.html">
+              <td>20:36:22 27 5月</td>
+              <td>20:36:22 27 5月</td>
+              <td>20:36:22 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-36-22.039.html">
+              <td>20:36:21 27 5月</td>
+              <td>20:36:21 27 5月</td>
+              <td>20:36:22 27 5月</td>
+              <td>91 ms</td>
+              <td>0</td>
+              <td>91 ms</td>
+              <td>91 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>10<br>(incl. 10 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-36-07.008.html">
+              <td>20:36:06 27 5月</td>
+              <td>20:36:06 27 5月</td>
+              <td>20:36:07 27 5月</td>
+              <td>95 ms</td>
+              <td>0</td>
+              <td>95 ms</td>
+              <td>95 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-35-51.970.html">
+              <td>20:35:51 27 5月</td>
+              <td>20:35:51 27 5月</td>
+              <td>20:35:51 27 5月</td>
+              <td>94 ms</td>
+              <td>0</td>
+              <td>94 ms</td>
+              <td>94 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-35-36.935.html">
+              <td>20:35:36 27 5月</td>
+              <td>20:35:36 27 5月</td>
+              <td>20:35:36 27 5月</td>
+              <td>97 ms</td>
+              <td>0</td>
+              <td>97 ms</td>
+              <td>97 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>5<br>(incl. 5 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-35-21.912.html">
+              <td>20:35:21 27 5月</td>
+              <td>20:35:21 27 5月</td>
+              <td>20:35:21 27 5月</td>
+              <td>104 ms</td>
+              <td>0</td>
+              <td>104 ms</td>
+              <td>104 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>12<br>(incl. 12 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-35-07.049.html">
+              <td>20:35:06 27 5月</td>
+              <td>20:35:06 27 5月</td>
+              <td>20:35:06 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-35-06.971.html">
+              <td>20:35:06 27 5月</td>
+              <td>20:35:06 27 5月</td>
+              <td>20:35:06 27 5月</td>
+              <td>213 ms</td>
+              <td>0</td>
+              <td>213 ms</td>
+              <td>213 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>26<br>(incl. 26 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-34-17.760.html">
+              <td>20:34:17 27 5月</td>
+              <td>20:34:17 27 5月</td>
+              <td>20:34:17 27 5月</td>
+              <td>24 ms</td>
+              <td>0</td>
+              <td>24 ms</td>
+              <td>24 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-34-17.663.html">
+              <td>20:34:16 27 5月</td>
+              <td>20:34:16 27 5月</td>
+              <td>20:34:17 27 5月</td>
+              <td>912 ms</td>
+              <td>0</td>
+              <td>912 ms</td>
+              <td>912 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>87<br>(incl. 87 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-34-16.381.html">
+              <td>20:34:14 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>20:34:16 27 5月</td>
+              <td>1 s 958 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>5346</td>
+              <td>0</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>full on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-33-56.748.html">
+              <td>20:33:56 27 5月</td>
+              <td>20:33:56 27 5月</td>
+              <td>20:33:56 27 5月</td>
+              <td>24 ms</td>
+              <td>0</td>
+              <td>24 ms</td>
+              <td>24 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>3<br>(incl. 3 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-33-56.716.html">
+              <td>20:33:56 27 5月</td>
+              <td>20:33:56 27 5月</td>
+              <td>20:33:56 27 5月</td>
+              <td>100 ms</td>
+              <td>0</td>
+              <td>100 ms</td>
+              <td>100 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>23<br>(incl. 23 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-33-41.718.html">
+              <td>20:33:41 27 5月</td>
+              <td>20:33:41 27 5月</td>
+              <td>20:33:41 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-33-41.679.html">
+              <td>20:33:41 27 5月</td>
+              <td>20:33:41 27 5月</td>
+              <td>20:33:41 27 5月</td>
+              <td>99 ms</td>
+              <td>0</td>
+              <td>99 ms</td>
+              <td>99 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>10<br>(incl. 10 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-33-26.641.html">
+              <td>20:33:26 27 5月</td>
+              <td>20:33:26 27 5月</td>
+              <td>20:33:26 27 5月</td>
+              <td>100 ms</td>
+              <td>0</td>
+              <td>100 ms</td>
+              <td>100 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-33-11.609.html">
+              <td>20:33:11 27 5月</td>
+              <td>20:33:11 27 5月</td>
+              <td>20:33:11 27 5月</td>
+              <td>107 ms</td>
+              <td>0</td>
+              <td>107 ms</td>
+              <td>107 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>6<br>(incl. 6 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-32-56.679.html">
+              <td>20:32:56 27 5月</td>
+              <td>20:32:56 27 5月</td>
+              <td>20:32:56 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-32-56.629.html">
+              <td>20:32:56 27 5月</td>
+              <td>20:32:56 27 5月</td>
+              <td>20:32:56 27 5月</td>
+              <td>163 ms</td>
+              <td>0</td>
+              <td>163 ms</td>
+              <td>163 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>32<br>(incl. 32 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-31-37.722.html">
+              <td>20:31:37 27 5月</td>
+              <td>20:31:37 27 5月</td>
+              <td>20:31:37 27 5月</td>
+              <td>24 ms</td>
+              <td>0</td>
+              <td>24 ms</td>
+              <td>24 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>1<br>(incl. 1 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-31-37.612.html">
+              <td>20:31:36 27 5月</td>
+              <td>20:31:36 27 5月</td>
+              <td>20:31:37 27 5月</td>
+              <td>1 s 168 ms</td>
+              <td>0</td>
+              <td>1 s 168 ms</td>
+              <td>1 s 168 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>82<br>(incl. 82 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-31-36.162.html">
+              <td>20:31:33 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>20:31:36 27 5月</td>
+              <td>2 s 232 ms</td>
+              <td>2 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>5322</td>
+              <td>0</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>full on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-31-26.195.html">
+              <td>20:31:26 27 5月</td>
+              <td>20:31:26 27 5月</td>
+              <td>20:31:26 27 5月</td>
+              <td>109 ms</td>
+              <td>0</td>
+              <td>109 ms</td>
+              <td>109 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>20</td>
+              <td>1</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-31-26.081.html">
+              <td>20:31:25 27 5月</td>
+              <td>20:31:25 27 5月</td>
+              <td>20:31:26 27 5月</td>
+              <td>661 ms</td>
+              <td>&lt; 1 ms</td>
+              <td>114 ms</td>
+              <td>114 ms</td>
+              <td>5322</td>
+              <td>0</td>
+              <td>20</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>1</td>
+              <td>full on index restart</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-30-55.128.html">
+              <td>20:30:55 27 5月</td>
+              <td>20:30:55 27 5月</td>
+              <td>20:30:55 27 5月</td>
+              <td>82 ms</td>
+              <td>0</td>
+              <td>82 ms</td>
+              <td>82 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-30-40.093.html">
+              <td>20:30:40 27 5月</td>
+              <td>20:30:40 27 5月</td>
+              <td>20:30:40 27 5月</td>
+              <td>79 ms</td>
+              <td>0</td>
+              <td>79 ms</td>
+              <td>79 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>6<br>(incl. 6 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-30-25.125.html">
+              <td>20:30:25 27 5月</td>
+              <td>20:30:25 27 5月</td>
+              <td>20:30:25 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-30-25.082.html">
+              <td>20:30:24 27 5月</td>
+              <td>20:30:24 27 5月</td>
+              <td>20:30:25 27 5月</td>
+              <td>94 ms</td>
+              <td>0</td>
+              <td>94 ms</td>
+              <td>94 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>10<br>(incl. 10 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-30-10.024.html">
+              <td>20:30:09 27 5月</td>
+              <td>20:30:09 27 5月</td>
+              <td>20:30:10 27 5月</td>
+              <td>82 ms</td>
+              <td>0</td>
+              <td>82 ms</td>
+              <td>82 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-29-54.985.html">
+              <td>20:29:54 27 5月</td>
+              <td>20:29:54 27 5月</td>
+              <td>20:29:54 27 5月</td>
+              <td>85 ms</td>
+              <td>0</td>
+              <td>85 ms</td>
+              <td>85 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-29-39.957.html">
+              <td>20:29:39 27 5月</td>
+              <td>20:29:39 27 5月</td>
+              <td>20:29:39 27 5月</td>
+              <td>103 ms</td>
+              <td>0</td>
+              <td>103 ms</td>
+              <td>103 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>8<br>(incl. 8 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-29-25.096.html">
+              <td>20:29:25 27 5月</td>
+              <td>20:29:25 27 5月</td>
+              <td>20:29:25 27 5月</td>
+              <td>26 ms</td>
+              <td>0</td>
+              <td>26 ms</td>
+              <td>26 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0<br>(incl. 1 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-29-25.030.html">
+              <td>20:29:24 27 5月</td>
+              <td>20:29:24 27 5月</td>
+              <td>20:29:25 27 5月</td>
+              <td>207 ms</td>
+              <td>0</td>
+              <td>207 ms</td>
+              <td>207 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>82<br>(incl. 83 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-28-22.152.html">
+              <td>20:28:22 27 5月</td>
+              <td>20:28:22 27 5月</td>
+              <td>20:28:22 27 5月</td>
+              <td>26 ms</td>
+              <td>0</td>
+              <td>26 ms</td>
+              <td>26 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-28-22.069.html">
+              <td>20:28:21 27 5月</td>
+              <td>20:28:21 27 5月</td>
+              <td>20:28:22 27 5月</td>
+              <td>596 ms</td>
+              <td>0</td>
+              <td>596 ms</td>
+              <td>596 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>53<br>(incl. 53 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-28-20.598.html">
+              <td>20:28:18 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>20:28:20 27 5月</td>
+              <td>2 s 440 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>5294</td>
+              <td>0</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>full on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-27-59.858.html">
+              <td>20:27:59 27 5月</td>
+              <td>20:27:59 27 5月</td>
+              <td>20:27:59 27 5月</td>
+              <td>24 ms</td>
+              <td>0</td>
+              <td>24 ms</td>
+              <td>24 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>1<br>(incl. 1 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-27-59.811.html">
+              <td>20:27:59 27 5月</td>
+              <td>20:27:59 27 5月</td>
+              <td>20:27:59 27 5月</td>
+              <td>102 ms</td>
+              <td>0</td>
+              <td>102 ms</td>
+              <td>102 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>23<br>(incl. 23 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-27-44.758.html">
+              <td>20:27:44 27 5月</td>
+              <td>20:27:44 27 5月</td>
+              <td>20:27:44 27 5月</td>
+              <td>85 ms</td>
+              <td>0</td>
+              <td>85 ms</td>
+              <td>85 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-27-29.728.html">
+              <td>20:27:29 27 5月</td>
+              <td>20:27:29 27 5月</td>
+              <td>20:27:29 27 5月</td>
+              <td>97 ms</td>
+              <td>0</td>
+              <td>97 ms</td>
+              <td>97 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>5<br>(incl. 5 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-27-14.737.html">
+              <td>20:27:14 27 5月</td>
+              <td>20:27:14 27 5月</td>
+              <td>20:27:14 27 5月</td>
+              <td>131 ms</td>
+              <td>0</td>
+              <td>131 ms</td>
+              <td>131 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>8<br>(incl. 8 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-26-59.839.html">
+              <td>20:26:59 27 5月</td>
+              <td>20:26:59 27 5月</td>
+              <td>20:26:59 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-26-59.796.html">
+              <td>20:26:59 27 5月</td>
+              <td>20:26:59 27 5月</td>
+              <td>20:26:59 27 5月</td>
+              <td>234 ms</td>
+              <td>0</td>
+              <td>234 ms</td>
+              <td>234 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>31<br>(incl. 31 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-26-07.445.html">
+              <td>20:26:07 27 5月</td>
+              <td>20:26:07 27 5月</td>
+              <td>20:26:07 27 5月</td>
+              <td>25 ms</td>
+              <td>0</td>
+              <td>25 ms</td>
+              <td>25 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>2<br>(incl. 2 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-26-07.367.html">
+              <td>20:26:06 27 5月</td>
+              <td>20:26:06 27 5月</td>
+              <td>20:26:07 27 5月</td>
+              <td>876 ms</td>
+              <td>0</td>
+              <td>876 ms</td>
+              <td>876 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>86<br>(incl. 86 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-26-06.132.html">
+              <td>20:26:03 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>20:26:06 27 5月</td>
+              <td>2 s 289 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>5273</td>
+              <td>0</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>full on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-25-46.090.html">
+              <td>20:25:46 27 5月</td>
+              <td>20:25:46 27 5月</td>
+              <td>20:25:46 27 5月</td>
+              <td>26 ms</td>
+              <td>0</td>
+              <td>26 ms</td>
+              <td>26 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-25-46.062.html">
+              <td>20:25:45 27 5月</td>
+              <td>20:25:45 27 5月</td>
+              <td>20:25:46 27 5月</td>
+              <td>112 ms</td>
+              <td>0</td>
+              <td>112 ms</td>
+              <td>112 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>22<br>(incl. 22 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-25-30.989.html">
+              <td>20:25:30 27 5月</td>
+              <td>20:25:30 27 5月</td>
+              <td>20:25:30 27 5月</td>
+              <td>77 ms</td>
+              <td>0</td>
+              <td>77 ms</td>
+              <td>77 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-25-15.948.html">
+              <td>20:25:15 27 5月</td>
+              <td>20:25:15 27 5月</td>
+              <td>20:25:15 27 5月</td>
+              <td>80 ms</td>
+              <td>0</td>
+              <td>80 ms</td>
+              <td>80 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>7<br>(incl. 7 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-25-00.962.html">
+              <td>20:25:00 27 5月</td>
+              <td>20:25:00 27 5月</td>
+              <td>20:25:00 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-25-00.932.html">
+              <td>20:25:00 27 5月</td>
+              <td>20:25:00 27 5月</td>
+              <td>20:25:00 27 5月</td>
+              <td>97 ms</td>
+              <td>0</td>
+              <td>97 ms</td>
+              <td>97 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>12<br>(incl. 12 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-24-46.019.html">
+              <td>20:24:45 27 5月</td>
+              <td>20:24:45 27 5月</td>
+              <td>20:24:45 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-24-45.950.html">
+              <td>20:24:45 27 5月</td>
+              <td>20:24:45 27 5月</td>
+              <td>20:24:45 27 5月</td>
+              <td>154 ms</td>
+              <td>0</td>
+              <td>154 ms</td>
+              <td>154 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>27<br>(incl. 27 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-24-05.189.html">
+              <td>20:24:05 27 5月</td>
+              <td>20:24:05 27 5月</td>
+              <td>20:24:05 27 5月</td>
+              <td>26 ms</td>
+              <td>0</td>
+              <td>26 ms</td>
+              <td>26 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>1<br>(incl. 1 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-24-05.108.html">
+              <td>20:24:04 27 5月</td>
+              <td>20:24:04 27 5月</td>
+              <td>20:24:05 27 5月</td>
+              <td>720 ms</td>
+              <td>0</td>
+              <td>720 ms</td>
+              <td>720 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>87<br>(incl. 87 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-24-03.865.html">
+              <td>20:24:01 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>20:24:03 27 5月</td>
+              <td>2 s 202 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>5248</td>
+              <td>0</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>full on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-23-51.106.html">
+              <td>20:23:50 27 5月</td>
+              <td>20:23:50 27 5月</td>
+              <td>20:23:51 27 5月</td>
+              <td>111 ms</td>
+              <td>0</td>
+              <td>111 ms</td>
+              <td>111 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>19</td>
+              <td>1</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-23-50.991.html">
+              <td>20:23:50 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>20:23:50 27 5月</td>
+              <td>536 ms</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>5248</td>
+              <td>0</td>
+              <td>19</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>1</td>
+              <td>full on index restart</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-23-35.198.html">
+              <td>20:23:35 27 5月</td>
+              <td>20:23:35 27 5月</td>
+              <td>20:23:35 27 5月</td>
+              <td>60 ms</td>
+              <td>0</td>
+              <td>60 ms</td>
+              <td>60 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>5<br>(incl. 5 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-22-50.106.html">
+              <td>20:22:50 27 5月</td>
+              <td>20:22:50 27 5月</td>
+              <td>20:22:50 27 5月</td>
+              <td>66 ms</td>
+              <td>0</td>
+              <td>66 ms</td>
+              <td>66 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>6<br>(incl. 6 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-22-35.095.html">
+              <td>20:22:35 27 5月</td>
+              <td>20:22:35 27 5月</td>
+              <td>20:22:35 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-22-35.074.html">
+              <td>20:22:35 27 5月</td>
+              <td>20:22:35 27 5月</td>
+              <td>20:22:35 27 5月</td>
+              <td>65 ms</td>
+              <td>0</td>
+              <td>65 ms</td>
+              <td>65 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>9<br>(incl. 9 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-22-20.035.html">
+              <td>20:22:19 27 5月</td>
+              <td>20:22:19 27 5月</td>
+              <td>20:22:20 27 5月</td>
+              <td>65 ms</td>
+              <td>0</td>
+              <td>65 ms</td>
+              <td>65 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-22-05.001.html">
+              <td>20:22:04 27 5月</td>
+              <td>20:22:04 27 5月</td>
+              <td>20:22:05 27 5月</td>
+              <td>69 ms</td>
+              <td>0</td>
+              <td>69 ms</td>
+              <td>69 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-21-49.974.html">
+              <td>20:21:49 27 5月</td>
+              <td>20:21:49 27 5月</td>
+              <td>20:21:49 27 5月</td>
+              <td>75 ms</td>
+              <td>0</td>
+              <td>75 ms</td>
+              <td>75 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>7<br>(incl. 7 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-21-34.961.html">
+              <td>20:21:34 27 5月</td>
+              <td>20:21:34 27 5月</td>
+              <td>20:21:34 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-21-34.934.html">
+              <td>20:21:34 27 5月</td>
+              <td>20:21:34 27 5月</td>
+              <td>20:21:34 27 5月</td>
+              <td>77 ms</td>
+              <td>0</td>
+              <td>77 ms</td>
+              <td>77 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>9<br>(incl. 9 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-21-19.937.html">
+              <td>20:21:19 27 5月</td>
+              <td>20:21:19 27 5月</td>
+              <td>20:21:19 27 5月</td>
+              <td>112 ms</td>
+              <td>0</td>
+              <td>112 ms</td>
+              <td>112 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>6<br>(incl. 6 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-20-57.538.html">
+              <td>20:20:57 27 5月</td>
+              <td>20:20:57 27 5月</td>
+              <td>20:20:57 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-20-57.510.html">
+              <td>20:20:57 27 5月</td>
+              <td>20:20:57 27 5月</td>
+              <td>20:20:57 27 5月</td>
+              <td>147 ms</td>
+              <td>0</td>
+              <td>147 ms</td>
+              <td>147 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>31<br>(incl. 31 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-19-41.442.html">
+              <td>20:19:41 27 5月</td>
+              <td>20:19:41 27 5月</td>
+              <td>20:19:41 27 5月</td>
+              <td>26 ms</td>
+              <td>0</td>
+              <td>26 ms</td>
+              <td>26 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>4<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-19-41.379.html">
+              <td>20:19:40 27 5月</td>
+              <td>20:19:40 27 5月</td>
+              <td>20:19:41 27 5月</td>
+              <td>527 ms</td>
+              <td>0</td>
+              <td>527 ms</td>
+              <td>527 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>87<br>(incl. 87 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-19-40.407.html">
+              <td>20:19:38 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>20:19:40 27 5月</td>
+              <td>2 s 81 ms</td>
+              <td>2 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>5214</td>
+              <td>0</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>full on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-19-18.578.html">
+              <td>20:19:18 27 5月</td>
+              <td>20:19:18 27 5月</td>
+              <td>20:19:18 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-19-18.528.html">
+              <td>20:19:18 27 5月</td>
+              <td>20:19:18 27 5月</td>
+              <td>20:19:18 27 5月</td>
+              <td>68 ms</td>
+              <td>0</td>
+              <td>68 ms</td>
+              <td>68 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>22<br>(incl. 22 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-17-48.992.html">
+              <td>20:17:48 27 5月</td>
+              <td>20:17:48 27 5月</td>
+              <td>20:17:48 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-17-48.973.html">
+              <td>20:17:48 27 5月</td>
+              <td>20:17:48 27 5月</td>
+              <td>20:17:48 27 5月</td>
+              <td>57 ms</td>
+              <td>0</td>
+              <td>57 ms</td>
+              <td>57 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>5<br>(incl. 5 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-17-03.907.html">
+              <td>20:17:03 27 5月</td>
+              <td>20:17:03 27 5月</td>
+              <td>20:17:03 27 5月</td>
+              <td>81 ms</td>
+              <td>0</td>
+              <td>81 ms</td>
+              <td>81 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>7<br>(incl. 7 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-16-48.963.html">
+              <td>20:16:48 27 5月</td>
+              <td>20:16:48 27 5月</td>
+              <td>20:16:48 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-16-48.919.html">
+              <td>20:16:48 27 5月</td>
+              <td>20:16:48 27 5月</td>
+              <td>20:16:48 27 5月</td>
+              <td>126 ms</td>
+              <td>0</td>
+              <td>126 ms</td>
+              <td>126 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>12<br>(incl. 12 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-15-56.539.html">
+              <td>20:15:56 27 5月</td>
+              <td>20:15:56 27 5月</td>
+              <td>20:15:56 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-15-56.463.html">
+              <td>20:15:55 27 5月</td>
+              <td>20:15:55 27 5月</td>
+              <td>20:15:56 27 5月</td>
+              <td>729 ms</td>
+              <td>0</td>
+              <td>729 ms</td>
+              <td>729 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>135<br>(incl. 135 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-13-53.156.html">
+              <td>20:13:52 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>20:13:53 27 5月</td>
+              <td>719 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>10</td>
+              <td>0</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-13-01.246.html">
+              <td>20:13:01 27 5月</td>
+              <td>20:13:01 27 5月</td>
+              <td>20:13:01 27 5月</td>
+              <td>26 ms</td>
+              <td>0</td>
+              <td>26 ms</td>
+              <td>26 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>6<br>(incl. 6 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-13-01.182.html">
+              <td>20:13:00 27 5月</td>
+              <td>20:13:00 27 5月</td>
+              <td>20:13:01 27 5月</td>
+              <td>1 s 77 ms</td>
+              <td>0</td>
+              <td>1 s 77 ms</td>
+              <td>1 s 77 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>201<br>(incl. 17 changed in VFS)<br>(incl. 8 with nothing to write)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-12-59.852.html">
+              <td>20:12:57 27 5月</td>
+              <td>20:12:59 27 5月</td>
+              <td>20:12:59 27 5月</td>
+              <td>2 s 320 ms</td>
+              <td>1 ms</td>
+              <td>382 ms</td>
+              <td>382 ms</td>
+              <td>441</td>
+              <td>0</td>
+              <td>185</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-10-08.046.html">
+              <td>20:10:07 27 5月</td>
+              <td>20:10:07 27 5月</td>
+              <td>20:10:08 27 5月</td>
+              <td>26 ms</td>
+              <td>0</td>
+              <td>26 ms</td>
+              <td>26 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>2<br>(incl. 2 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-10-07.975.html">
+              <td>20:10:07 27 5月</td>
+              <td>20:10:07 27 5月</td>
+              <td>20:10:07 27 5月</td>
+              <td>956 ms</td>
+              <td>0</td>
+              <td>956 ms</td>
+              <td>956 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>22<br>(incl. 11 changed in VFS)<br>(incl. 8 with nothing to write)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-10-06.990.html">
+              <td>20:10:05 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>20:10:06 27 5月</td>
+              <td>1 s 825 ms</td>
+              <td>4 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>75</td>
+              <td>0</td>
+              <td>11</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-20-03-19.851.html">
+              <td>20:03:18 27 5月</td>
+              <td>20:03:18 27 5月</td>
+              <td>20:03:19 27 5月</td>
+              <td>969 ms</td>
+              <td>0</td>
+              <td>969 ms</td>
+              <td>969 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>19<br>(incl. 12 changed in VFS)<br>(incl. 8 with nothing to write)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-20-03-18.714.html">
+              <td>20:03:17 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>20:03:18 27 5月</td>
+              <td>1 s 255 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>92</td>
+              <td>0</td>
+              <td>7</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-58-35.106.html">
+              <td>19:58:33 27 5月</td>
+              <td>19:58:33 27 5月</td>
+              <td>19:58:35 27 5月</td>
+              <td>1 s 392 ms</td>
+              <td>0</td>
+              <td>1 s 392 ms</td>
+              <td>1 s 392 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>38<br>(incl. 19 changed in VFS)<br>(incl. 8 with nothing to write)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-19-58-33.532.html">
+              <td>19:58:32 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>19:58:33 27 5月</td>
+              <td>1 s 340 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>77</td>
+              <td>0</td>
+              <td>19</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-53-18.274.html">
+              <td>19:53:17 27 5月</td>
+              <td>19:53:17 27 5月</td>
+              <td>19:53:18 27 5月</td>
+              <td>885 ms</td>
+              <td>0</td>
+              <td>885 ms</td>
+              <td>885 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>35<br>(incl. 12 changed in VFS)<br>(incl. 8 with nothing to write)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-19-53-17.176.html">
+              <td>19:53:15 27 5月</td>
+              <td>19:53:17 27 5月</td>
+              <td>19:53:17 27 5月</td>
+              <td>1 s 378 ms</td>
+              <td>1 ms</td>
+              <td>30 ms</td>
+              <td>30 ms</td>
+              <td>114</td>
+              <td>0</td>
+              <td>23</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-48-27.330.html">
+              <td>19:48:26 27 5月</td>
+              <td>19:48:26 27 5月</td>
+              <td>19:48:27 27 5月</td>
+              <td>652 ms</td>
+              <td>0</td>
+              <td>652 ms</td>
+              <td>652 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>14<br>(incl. 11 changed in VFS)<br>(incl. 8 with nothing to write)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-19-48-26.191.html">
+              <td>19:48:24 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>19:48:26 27 5月</td>
+              <td>1 s 222 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>56</td>
+              <td>0</td>
+              <td>3</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-43-42.822.html">
+              <td>19:43:41 27 5月</td>
+              <td>19:43:41 27 5月</td>
+              <td>19:43:42 27 5月</td>
+              <td>1 s 24 ms</td>
+              <td>0</td>
+              <td>1 s 24 ms</td>
+              <td>1 s 24 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>20<br>(incl. 2 changed in VFS)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-19-43-41.547.html">
+              <td>19:43:40 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>19:43:41 27 5月</td>
+              <td>1 s 198 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>120</td>
+              <td>0</td>
+              <td>18</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-39-26.506.html">
+              <td>19:39:25 27 5月</td>
+              <td>19:39:25 27 5月</td>
+              <td>19:39:26 27 5月</td>
+              <td>1 s 136 ms</td>
+              <td>0</td>
+              <td>1 s 136 ms</td>
+              <td>1 s 136 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>28<br>(incl. 17 changed in VFS)<br>(incl. 8 with nothing to write)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-19-39-25.151.html">
+              <td>19:39:23 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>19:39:25 27 5月</td>
+              <td>1 s 422 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>87</td>
+              <td>0</td>
+              <td>11</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-35-35.655.html">
+              <td>19:35:34 27 5月</td>
+              <td>19:35:34 27 5月</td>
+              <td>19:35:35 27 5月</td>
+              <td>927 ms</td>
+              <td>0</td>
+              <td>927 ms</td>
+              <td>927 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>14<br>(incl. 9 changed in VFS)<br>(incl. 7 with nothing to write)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-19-35-34.584.html">
+              <td>19:35:33 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>19:35:34 27 5月</td>
+              <td>1 s 317 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>74</td>
+              <td>0</td>
+              <td>5</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-30-02.603.html">
+              <td>19:30:02 27 5月</td>
+              <td>19:30:02 27 5月</td>
+              <td>19:30:02 27 5月</td>
+              <td>103 ms</td>
+              <td>0</td>
+              <td>103 ms</td>
+              <td>103 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>27<br>(incl. 27 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-29-21.037.html">
+              <td>19:29:20 27 5月</td>
+              <td>19:29:20 27 5月</td>
+              <td>19:29:21 27 5月</td>
+              <td>24 ms</td>
+              <td>0</td>
+              <td>24 ms</td>
+              <td>24 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>1<br>(incl. 1 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-29-20.975.html">
+              <td>19:29:19 27 5月</td>
+              <td>19:29:19 27 5月</td>
+              <td>19:29:20 27 5月</td>
+              <td>1 s 188 ms</td>
+              <td>0</td>
+              <td>1 s 188 ms</td>
+              <td>1 s 188 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>82<br>(incl. 81 changed in VFS)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-19-29-19.721.html">
+              <td>19:29:17 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>19:29:19 27 5月</td>
+              <td>2 s 105 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>5123</td>
+              <td>0</td>
+              <td>2</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>full on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-29-03.287.html">
+              <td>19:29:03 27 5月</td>
+              <td>19:29:03 27 5月</td>
+              <td>19:29:03 27 5月</td>
+              <td>26 ms</td>
+              <td>0</td>
+              <td>26 ms</td>
+              <td>26 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>3<br>(incl. 4 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-29-03.259.html">
+              <td>19:29:02 27 5月</td>
+              <td>19:29:02 27 5月</td>
+              <td>19:29:03 27 5月</td>
+              <td>615 ms</td>
+              <td>0</td>
+              <td>615 ms</td>
+              <td>615 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>427<br>(incl. 428 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-28-48.627.html">
+              <td>19:28:48 27 5月</td>
+              <td>19:28:48 27 5月</td>
+              <td>19:28:48 27 5月</td>
+              <td>44 ms</td>
+              <td>0</td>
+              <td>44 ms</td>
+              <td>44 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>13</td>
+              <td>1</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-19-28-48.579.html">
+              <td>19:28:47 27 5月</td>
+              <td>19:28:48 27 5月</td>
+              <td>19:28:48 27 5月</td>
+              <td>684 ms</td>
+              <td>&lt; 1 ms</td>
+              <td>31 ms</td>
+              <td>31 ms</td>
+              <td>5063</td>
+              <td>0</td>
+              <td>35</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>1</td>
+              <td>full on index restart</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-28-03.129.html">
+              <td>19:28:02 27 5月</td>
+              <td>19:28:02 27 5月</td>
+              <td>19:28:03 27 5月</td>
+              <td>222 ms</td>
+              <td>0</td>
+              <td>222 ms</td>
+              <td>222 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>23<br>(incl. 23 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-26-38.565.html">
+              <td>19:26:38 27 5月</td>
+              <td>19:26:38 27 5月</td>
+              <td>19:26:38 27 5月</td>
+              <td>352 ms</td>
+              <td>0</td>
+              <td>352 ms</td>
+              <td>352 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>9<br>(incl. 8 changed in VFS)<br>(incl. 7 with nothing to write)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-19-26-38.001.html">
+              <td>19:26:37 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>19:26:37 27 5月</td>
+              <td>900 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>11</td>
+              <td>0</td>
+              <td>1</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-21-43.048.html">
+              <td>19:21:43 27 5月</td>
+              <td>19:21:43 27 5月</td>
+              <td>19:21:43 27 5月</td>
+              <td>&lt; 1 ms</td>
+              <td>0</td>
+              <td>&lt; 1 ms</td>
+              <td>&lt; 1 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>0</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-21-43.020.html">
+              <td>19:21:42 27 5月</td>
+              <td>19:21:42 27 5月</td>
+              <td>19:21:43 27 5月</td>
+              <td>766 ms</td>
+              <td>0</td>
+              <td>766 ms</td>
+              <td>766 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>32<br>(incl. 32 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-21-21.237.html">
+              <td>19:21:20 27 5月</td>
+              <td>19:21:20 27 5月</td>
+              <td>19:21:21 27 5月</td>
+              <td>398 ms</td>
+              <td>0</td>
+              <td>398 ms</td>
+              <td>398 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>8<br>(incl. 7 changed in VFS)<br>(incl. 7 with nothing to write)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-19-21-20.563.html">
+              <td>19:21:19 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>19:21:20 27 5月</td>
+              <td>852 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>29</td>
+              <td>0</td>
+              <td>1</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-07-10.958.html">
+              <td>19:07:10 27 5月</td>
+              <td>19:07:10 27 5月</td>
+              <td>19:07:10 27 5月</td>
+              <td>147 ms</td>
+              <td>0</td>
+              <td>147 ms</td>
+              <td>147 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>27<br>(incl. 27 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-07-03.742.html">
+              <td>19:07:02 27 5月</td>
+              <td>19:07:02 27 5月</td>
+              <td>19:07:03 27 5月</td>
+              <td>938 ms</td>
+              <td>0</td>
+              <td>938 ms</td>
+              <td>938 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>14<br>(incl. 8 changed in VFS)<br>(incl. 7 with nothing to write)</td>
+              <td>0</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-19-07-02.528.html">
+              <td>19:06:50 27 5月</td>
+              <td class="not-applicable-data">Didn't start</td>
+              <td>19:07:02 27 5月</td>
+              <td>12 s 266 ms</td>
+              <td>1 ms</td>
+              <td>0</td>
+              <td>0</td>
+              <td>70</td>
+              <td>0</td>
+              <td>6</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>partial on project open</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-00-17.218.html">
+              <td>19:00:17 27 5月</td>
+              <td>19:00:17 27 5月</td>
+              <td>19:00:17 27 5月</td>
+              <td>55 ms</td>
+              <td>0</td>
+              <td>55 ms</td>
+              <td>55 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>9<br>(incl. 9 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-00-13.945.html">
+              <td>19:00:13 27 5月</td>
+              <td>19:00:13 27 5月</td>
+              <td>19:00:13 27 5月</td>
+              <td>27 ms</td>
+              <td>0</td>
+              <td>27 ms</td>
+              <td>27 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>1<br>(incl. 2 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-19-00-13.916.html">
+              <td>19:00:13 27 5月</td>
+              <td>19:00:13 27 5月</td>
+              <td>19:00:13 27 5月</td>
+              <td>225 ms</td>
+              <td>0</td>
+              <td>225 ms</td>
+              <td>225 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>216<br>(incl. 217 changed in VFS)</td>
+              <td>None</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row" href="diagnostic-2026-05-27-18-57-31.924.html">
+              <td>18:57:29 27 5月</td>
+              <td>18:57:29 27 5月</td>
+              <td>18:57:31 27 5月</td>
+              <td>2 s 870 ms</td>
+              <td>0</td>
+              <td>2 s 870 ms</td>
+              <td>2 s 870 ms</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>30</td>
+              <td>2481<br>(incl. 6 changed in VFS)</td>
+              <td>0, 1</td>
+              <td class="not-applicable-data">N/A</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-18-57-28.697.html">
+              <td>18:57:28 27 5月</td>
+              <td>18:57:28 27 5月</td>
+              <td>18:57:28 27 5月</td>
+              <td>38 ms</td>
+              <td>&lt; 1 ms</td>
+              <td>38 ms</td>
+              <td>37 ms</td>
+              <td>27</td>
+              <td>0</td>
+              <td>27</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>1</td>
+              <td>partial</td>
+            </tr>
+            <tr class="linkable-table-row scanning-table-row" href="diagnostic-2026-05-27-18-57-28.446.html">
+              <td>18:57:26 27 5月</td>
+              <td>18:57:27 27 5月</td>
+              <td>18:57:28 27 5月</td>
+              <td>2 s 315 ms</td>
+              <td>2 ms</td>
+              <td>1 s 160 ms</td>
+              <td>1 s 160 ms</td>
+              <td>4413</td>
+              <td>0</td>
+              <td>2475</td>
+              <td class="not-applicable-data">N/A</td>
+              <td class="not-applicable-data">N/A</td>
+              <td>0</td>
+              <td>full on project open</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <table class="table-with-margin activity-table metrics-table">
+          <thead>
+            <tr>
+              <th colspan="2">Metrics</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>indexingTimeWithoutPauses</td>
+              <td>27 s 764 ms</td>
+            </tr>
+            <tr>
+              <td>scanningTimeWithoutPauses</td>
+              <td>48 s 131 ms</td>
+            </tr>
+            <tr>
+              <td>pausedTimeInIndexingOrScanning</td>
+              <td>35 ms</td>
+            </tr>
+            <tr>
+              <td>dumbModeTimeWithPauses</td>
+              <td>29 s 467 ms</td>
+            </tr>
+            <tr>
+              <td>numberOfScannedFiles</td>
+              <td>63525</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles</td>
+              <td>5024</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFilesWritingIndexValue</td>
+              <td>4940</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFilesWithNothingToWrite</td>
+              <td>84</td>
+            </tr>
+            <tr>
+              <td>numberOfFilesIndexedByExtensions</td>
+              <td>30</td>
+            </tr>
+            <tr>
+              <td>numberOfFilesIndexedWithoutExtensions</td>
+              <td>4994</td>
+            </tr>
+            <tr>
+              <td>numberOfRunsOfScannning</td>
+              <td>26</td>
+            </tr>
+            <tr>
+              <td>numberOfRunsOfIndexing</td>
+              <td>108</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#CLASS</td>
+              <td>3099</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#HTML</td>
+              <td>623</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#JSON</td>
+              <td>9425</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#Groovy</td>
+              <td>125</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#XML</td>
+              <td>683</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#kotlin_builtins</td>
+              <td>225</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#TypeScript</td>
+              <td>22047</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#Markdown</td>
+              <td>839</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#JavaScript</td>
+              <td>82</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#RNG Compact</td>
+              <td>5361</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#Kotlin</td>
+              <td>6974</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#DTD</td>
+              <td>14228</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#JSON-lines</td>
+              <td>29472</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#PLAIN_TEXT</td>
+              <td>6761</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#Properties</td>
+              <td>35</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#CSV/TSV</td>
+              <td>13227</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#textmate</td>
+              <td>57532</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#SVG</td>
+              <td>8727</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#CSS</td>
+              <td>712</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#Flow</td>
+              <td>32547</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#YAML</td>
+              <td>758</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#kotlin_module</td>
+              <td>42</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#Manifest</td>
+              <td>1923</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#Shell Script</td>
+              <td>2483</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#PATCH</td>
+              <td>14125</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#AUTO_DETECTED</td>
+              <td>0</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#UNKNOWN</td>
+              <td>0</td>
+            </tr>
+            <tr>
+              <td>processingSpeedAvg#ARCHIVE</td>
+              <td>469640</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#CLASS</td>
+              <td>21</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#HTML</td>
+              <td>27</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#JSON</td>
+              <td>27</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#Groovy</td>
+              <td>14</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#XML</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#kotlin_builtins</td>
+              <td>25</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#TypeScript</td>
+              <td>2537</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#Markdown</td>
+              <td>96</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#JavaScript</td>
+              <td>9</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#RNG Compact</td>
+              <td>617</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#Kotlin</td>
+              <td>25</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#DTD</td>
+              <td>1637</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#JSON-lines</td>
+              <td>3538</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#PLAIN_TEXT</td>
+              <td>0</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#Properties</td>
+              <td>4</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#CSV/TSV</td>
+              <td>1084</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#textmate</td>
+              <td>2</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#SVG</td>
+              <td>609</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#CSS</td>
+              <td>81</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#Flow</td>
+              <td>3746</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#YAML</td>
+              <td>179</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#kotlin_module</td>
+              <td>3</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#Manifest</td>
+              <td>221</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#Shell Script</td>
+              <td>285</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#PATCH</td>
+              <td>1625</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#AUTO_DETECTED</td>
+              <td>0</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#UNKNOWN</td>
+              <td>0</td>
+            </tr>
+            <tr>
+              <td>processingSpeedWorst#ARCHIVE</td>
+              <td>95244</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#XML</td>
+              <td>688</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#HTML</td>
+              <td>623</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#JSON</td>
+              <td>15819</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#Groovy</td>
+              <td>125</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#JavaScript</td>
+              <td>13849</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#TypeScript</td>
+              <td>22047</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#Markdown</td>
+              <td>839</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#RELAX-NG</td>
+              <td>5361</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#kotlin</td>
+              <td>6974</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#DTD</td>
+              <td>14228</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#JSON Lines</td>
+              <td>29472</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#TEXT</td>
+              <td>8249</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#Properties</td>
+              <td>35</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#textmate</td>
+              <td>57532</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#SVG</td>
+              <td>8727</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#CSS</td>
+              <td>712</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#Flow JS</td>
+              <td>32547</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#ECMAScript 6</td>
+              <td>32547</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#yaml</td>
+              <td>758</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#Manifest</td>
+              <td>1923</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageAvg#Shell Script</td>
+              <td>2483</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#XML</td>
+              <td>27</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#HTML</td>
+              <td>27</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#JSON</td>
+              <td>27</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#Groovy</td>
+              <td>14</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#JavaScript</td>
+              <td>1594</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#TypeScript</td>
+              <td>2537</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#Markdown</td>
+              <td>96</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#RELAX-NG</td>
+              <td>617</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#kotlin</td>
+              <td>25</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#DTD</td>
+              <td>1637</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#JSON Lines</td>
+              <td>3538</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#TEXT</td>
+              <td>0</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#Properties</td>
+              <td>4</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#textmate</td>
+              <td>2</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#SVG</td>
+              <td>609</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#CSS</td>
+              <td>81</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#Flow JS</td>
+              <td>3746</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#ECMAScript 6</td>
+              <td>3746</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#yaml</td>
+              <td>179</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#Manifest</td>
+              <td>221</td>
+            </tr>
+            <tr>
+              <td>processingSpeedOfBaseLanguageWorst#Shell Script</td>
+              <td>285</td>
+            </tr>
+            <tr>
+              <td>processingTime#CLASS</td>
+              <td>3 s 11 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#HTML</td>
+              <td>14 s 602 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#JSON</td>
+              <td>2 s 267 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#Groovy</td>
+              <td>295 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#XML</td>
+              <td>2 s 964 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#kotlin_builtins</td>
+              <td>237 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#TypeScript</td>
+              <td>153 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#Markdown</td>
+              <td>122 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#JavaScript</td>
+              <td>97 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#RNG Compact</td>
+              <td>91 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#Kotlin</td>
+              <td>168 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#DTD</td>
+              <td>42 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#JSON-lines</td>
+              <td>1 s 61 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#PLAIN_TEXT</td>
+              <td>556 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#Properties</td>
+              <td>8 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#CSV/TSV</td>
+              <td>166 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#textmate</td>
+              <td>923 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#SVG</td>
+              <td>48 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#CSS</td>
+              <td>5 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#Flow</td>
+              <td>4 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#YAML</td>
+              <td>19 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#kotlin_module</td>
+              <td>112 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#Manifest</td>
+              <td>0 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#Shell Script</td>
+              <td>0 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#PATCH</td>
+              <td>0 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#AUTO_DETECTED</td>
+              <td>120 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#UNKNOWN</td>
+              <td>170 ms</td>
+            </tr>
+            <tr>
+              <td>processingTime#ARCHIVE</td>
+              <td>93 ms</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#CLASS</td>
+              <td>1605</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#HTML</td>
+              <td>272</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#JSON</td>
+              <td>630</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#Groovy</td>
+              <td>26</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#XML</td>
+              <td>232</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#kotlin_builtins</td>
+              <td>8</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#TypeScript</td>
+              <td>115</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#Markdown</td>
+              <td>6</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#JavaScript</td>
+              <td>2</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#RNG Compact</td>
+              <td>98</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#Kotlin</td>
+              <td>159</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#DTD</td>
+              <td>62</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#JSON-lines</td>
+              <td>77</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#PLAIN_TEXT</td>
+              <td>515</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#Properties</td>
+              <td>7</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#CSV/TSV</td>
+              <td>63</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#textmate</td>
+              <td>121</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#SVG</td>
+              <td>45</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#CSS</td>
+              <td>2</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#Flow</td>
+              <td>11</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#YAML</td>
+              <td>8</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#kotlin_module</td>
+              <td>20</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#Manifest</td>
+              <td>5</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#Shell Script</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#PATCH</td>
+              <td>4</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#AUTO_DETECTED</td>
+              <td>447</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#UNKNOWN</td>
+              <td>298</td>
+            </tr>
+            <tr>
+              <td>numberOfIndexedFiles#ARCHIVE</td>
+              <td>84</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <table class="table-with-margin activity-table">
+          <thead>
+            <tr>
+              <th colspan="9">Shared indexes</th>
+            </tr>
+            <tr>
+              <th>Time</th>
+              <th>Kind</th>
+              <th>Name</th>
+              <th>Size</th>
+              <th>Download time</th>
+              <th>Download speed</th>
+              <th>Status</th>
+              <th>ID</th>
+              <th>Generation time</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div>
+        <table class="table-with-margin activity-table">
+          <thead>
+            <tr>
+              <th colspan="5">Scanning to push properties of changed files</th>
+            </tr>
+            <tr>
+              <th>Time</th>
+              <th>Reason</th>
+              <th>Full duration</th>
+              <th>Is cancelled</th>
+              <th>Number</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>20:37:22 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:37:07 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:36:52 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>&lt; 1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:36:36 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>2 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:36:21 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>2 ms</td>
+              <td>fully finished</td>
+              <td>4</td>
+            </tr>
+            <tr>
+              <td>20:35:21 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>2 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:35:06 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:34:16 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>19 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:33:56 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:33:41 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>&lt; 1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:33:26 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:33:11 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:32:56 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:31:36 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>18 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:31:25 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>5 ms</td>
+              <td>fully finished</td>
+              <td>7</td>
+            </tr>
+            <tr>
+              <td>20:29:39 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:29:24 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>2 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:28:21 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>11 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:27:59 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:27:44 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>2</td>
+            </tr>
+            <tr>
+              <td>20:27:14 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>2 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:26:59 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>2 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:26:06 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>14 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:25:45 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>2 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:25:30 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:25:15 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>&lt; 1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:25:00 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:24:45 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:24:04 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>38 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:23:50 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:23:35 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>2</td>
+            </tr>
+            <tr>
+              <td>20:22:50 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:22:35 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>4 ms</td>
+              <td>fully finished</td>
+              <td>6</td>
+            </tr>
+            <tr>
+              <td>20:20:57 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>5 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:19:40 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>17 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:19:18 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:18:03 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>2 ms</td>
+              <td>fully finished</td>
+              <td>3</td>
+            </tr>
+            <tr>
+              <td>20:17:03 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:16:48 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>20:15:55 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>43 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>19:30:02 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>2 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>19:29:20 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>5 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>19:29:02 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>14 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>19:28:47 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>12 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>19:21:42 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>12 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>19:00:17 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>&lt; 1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>19:00:13 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>48 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>18:57:31 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>&lt; 1 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+            <tr>
+              <td>18:57:29 27 5月</td>
+              <td>Push on VFS changes</td>
+              <td>10 ms</td>
+              <td>fully finished</td>
+              <td>1</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </body>
+</html>

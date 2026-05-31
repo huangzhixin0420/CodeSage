@@ -1,0 +1,73 @@
+# CodeSage 规则配置文件
+# 定义自动化的规则和触发器
+
+rules:
+  # 自动重试失败任务
+  - id: "auto_retry_on_failure"
+    name: "Failure Auto Retry"
+    description: "技能执行失败时自动重试"
+    priority: 5
+    enabled: true
+    trigger:
+      type: "OnEvent"
+      eventType: "SKILL_FAILED"
+    conditions:
+      - field: "skill.retryCount"
+        operator: "LESS_THAN"
+        value: 3
+    actions:
+      - actionType: "RETRY_TASK"
+        delayMs: 1000
+
+  # 长任务警告通知
+  - id: "long_task_warning"
+    name: "Long Task Warning"
+    description: "任务超过5分钟时发送通知"
+    priority: 8
+    enabled: true
+    trigger:
+      type: "OnCondition"
+      condition:
+        field: "context.task.durationMs"
+        operator: "GREATER_THAN"
+        value: 300000
+    actions:
+      - actionType: "SEND_NOTIFICATION"
+        title: "任务执行时间过长"
+        message: "任务 {context.task.description} 已执行 {context.task.durationMs}ms"
+
+  # 代码变更自动分析
+  - id: "file_change_analysis"
+    name: "File Change Analysis"
+    description: "文件变更后自动分析"
+    priority: 3
+    enabled: false
+    trigger:
+      type: "OnEvent"
+      eventType: "FILE_CHANGED"
+    conditions:
+      - field: "context.file.extension"
+        operator: "IN_LIST"
+        value: "kt,java,py,js,ts"
+    actions:
+      - actionType: "RUN_SKILL"
+        skillId: "builtin_code_search"
+        parameters:
+          pattern: "// TODO|// FIXME|// HACK"
+          filePattern: "*.{extension}"
+
+  # 项目打开时加载规则
+  - id: "project_open_setup"
+    name: "Project Open Setup"
+    description: "项目打开时初始化环境"
+    priority: 10
+    enabled: true
+    trigger:
+      type: "OnEvent"
+      eventType: "PROJECT_OPENED"
+    actions:
+      - actionType: "SEND_MESSAGE"
+        message: "欢迎使用CodeSage AI助手！"
+      - actionType: "SEND_NOTIFICATION"
+        title: "CodeSage"
+        message: "已连接到项目 {context.projectPath}"

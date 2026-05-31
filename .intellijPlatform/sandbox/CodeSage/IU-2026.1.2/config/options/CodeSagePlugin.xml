@@ -1,0 +1,23 @@
+<application>
+  <component name="PluginConfig">
+    <providers>
+      <ProviderConfig>
+        <id>6e97366a-e619-4666-9148-9c7acb584c55</id>
+        <name>MiniMax</name>
+        <providerType>minimax</providerType>
+        <baseUrl>https://api.minimaxi.com</baseUrl>
+        <models>
+          <option value="MiniMax-M2" />
+          <option value="MiniMax-M2.1" />
+          <option value="MiniMax-M2.1-highspeed" />
+          <option value="MiniMax-M2.5" />
+          <option value="MiniMax-M2.5-highspeed" />
+          <option value="MiniMax-M2.7" />
+          <option value="MiniMax-M2.7-highspeed" />
+        </models>
+      </ProviderConfig>
+    </providers>
+    <defaultProviderId>6e97366a-e619-4666-9148-9c7acb584c55</defaultProviderId>
+    <defaultModel>MiniMax-M2.7</defaultModel>
+  </component>
+</application>

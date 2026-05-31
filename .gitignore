@@ -1,0 +1,30 @@
+# Build outputs
+build/
+out/
+*.class
+*.jar
+*.war
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+*~
+
+# Gradle
+.gradle/
+gradle/wrapper/gradle-wrapper.jar
+
+# Local config
+local.properties
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

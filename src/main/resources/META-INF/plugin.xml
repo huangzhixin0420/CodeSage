@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<idea-plugin>
+    <id>com.codesage.plugin</id>
+    <name>CodeSage</name>
+    <vendor>CodeSage Team</vendor>
+    <description
+    ><![CDATA[
+        AI-powered coding assistant for IntelliJ IDEA.<br/>
+        Supports multiple models (MiniMax, Kimi), skill system, and MCP protocol.
+    ]]></description>
+    <version>2026.1.2</version>
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <!-- Application Level Services -->
+        <applicationService
+            serviceImplementation="com.codesage.shared.config.PluginConfig"
+        />
+        <applicationService
+            serviceImplementation="com.codesage.plugin.CodeSageAppService"
+        />
+
+        <!-- Project Level Services -->
+        <projectService
+            serviceImplementation="com.codesage.plugin.CodeSageProjectService"
+        />
+
+        <!-- Settings Page -->
+        <applicationConfigurable
+            parentId="tools"
+            instance="com.codesage.ide.settings.PluginSettingsConfigurable"
+            id="com.codesage.ide.settings.PluginSettingsConfigurable"
+            displayName="CodeSage"
+        />
+        <applicationConfigurable
+            parentId="com.codesage.ide.settings.PluginSettingsConfigurable"
+            instance="com.codesage.ide.settings.ProviderSettingsConfigurable"
+            id="com.codesage.ide.settings.ProviderSettingsConfigurable"
+            displayName="Providers &amp; General"
+        />
+        <applicationConfigurable
+            parentId="com.codesage.ide.settings.PluginSettingsConfigurable"
+            instance="com.codesage.ide.settings.BudgetSettingsConfigurable"
+            id="com.codesage.ide.settings.BudgetSettingsConfigurable"
+            displayName="Budget &amp; Rounds"
+        />
+
+        <!-- Tool Window -->
+        <toolWindow
+            id="CodeSage"
+            anchor="right"
+            factoryClass="com.codesage.ide.toolwindow.AgentToolWindowFactory"
+            icon="/icons/codesage.svg"
+        />
+
+        <!-- Post Startup Activity -->
+        <postStartupActivity
+            implementation="com.codesage.plugin.CodeSageStartupActivity"
+        />
+    </extensions>
+
+    <actions>
+        <group id="CodeSage.MainMenu" text="CodeSage">
+            <add-to-group group-id="MainMenu" anchor="last" />
+        </group>
+
+        <action
+            id="CodeSage.OpenWindow"
+            class="com.codesage.ide.actions.OpenAgentWindowAction"
+            text="打开 AI Assistant"
+            description="打开CodeSage AI助手窗口"
+        >
+            <add-to-group group-id="ToolsMenu" anchor="last" />
+            <keyboard-shortcut
+                keymap="$default"
+                first-keystroke="ctrl shift S"
+            />
+        </action>
+
+        <action
+            id="CodeSage.AnalyzeSelection"
+            class="com.codesage.ide.actions.AnalyzeSelectionAction"
+            text="AI 分析代码"
+            description="使用AI分析选中的代码"
+        >
+            <add-to-group group-id="EditorPopupMenu" anchor="last" />
+            <keyboard-shortcut
+                keymap="$default"
+                first-keystroke="ctrl shift A"
+            />
+        </action>
+    </actions>
+</idea-plugin>
