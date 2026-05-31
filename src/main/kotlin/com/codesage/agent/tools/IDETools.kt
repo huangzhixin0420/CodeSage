@@ -11,6 +11,7 @@ import com.intellij.openapi.project.guessProjectDir
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.util.Computable
+import com.intellij.util.ThrowableRunnable
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
@@ -203,15 +204,20 @@ class IDETools(private val project: Project?) {
 
     private fun writeVirtualFile(virtualFile: VirtualFile, content: String) {
         if (project != null) {
-            WriteCommandAction.runWriteCommandAction(project) {
-                val document = FileDocumentManager.getInstance().getDocument(virtualFile)
-                if (document != null) {
-                    document.setText(content)
-                    FileDocumentManager.getInstance().saveDocument(document)
-                } else {
-                    virtualFile.setBinaryContent(content.toByteArray(StandardCharsets.UTF_8))
-                }
-            }
+            WriteCommandAction.writeCommandAction(project)
+                .withName("Write File")
+                .withGroupId("CodeSage")
+                .run(object : ThrowableRunnable<Throwable> {
+                    override fun run() {
+                        val document = FileDocumentManager.getInstance().getDocument(virtualFile)
+                        if (document != null) {
+                            document.setText(content)
+                            FileDocumentManager.getInstance().saveDocument(document)
+                        } else {
+                            virtualFile.setBinaryContent(content.toByteArray(StandardCharsets.UTF_8))
+                        }
+                    }
+                })
         } else {
             virtualFile.setBinaryContent(content.toByteArray(StandardCharsets.UTF_8))
         }
@@ -812,9 +818,14 @@ class IDETools(private val project: Project?) {
 
             val virtualFile = LocalFileSystem.getInstance().findFileByPath(resolvedPath)
             if (project != null && virtualFile != null) {
-                WriteCommandAction.runWriteCommandAction(project) {
-                    virtualFile.delete(this)
-                }
+                WriteCommandAction.writeCommandAction(project)
+                    .withName("Delete File")
+                    .withGroupId("CodeSage")
+                    .run(object : ThrowableRunnable<Throwable> {
+                        override fun run() {
+                            virtualFile.delete(this)
+                        }
+                    })
             } else {
                 file.deleteRecursively()
             }

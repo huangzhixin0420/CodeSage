@@ -28,3 +28,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# IntelliJ Platform sandbox (generated)
+.intellijPlatform/sandbox/
