@@ -127,9 +127,12 @@ abstract class OpenAICompatibleAdapter(
         }
     }
 
+    protected open val userAgent: String = "CodeSage/1.0"
+
     override fun getHeaders(): Map<String, String> = mapOf(
         "Authorization" to "Bearer $apiKey",
-        "Content-Type" to "application/json"
+        "Content-Type" to "application/json",
+        "User-Agent" to userAgent
     )
 
     override fun getChatEndpoint(): String = "$baseUrl$chatEndpointPath"

@@ -404,19 +404,14 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
             }
         }
 
-        fun refreshCombo(combo: ComboBox<String>, currentSelection: String?) {
-            combo.removeAllItems()
-            allModels.forEach { combo.addItem(it) }
-            if (currentSelection != null && allModels.contains(currentSelection)) {
-                combo.selectedItem = currentSelection
-            } else if (allModels.isNotEmpty()) {
-                combo.selectedIndex = 0
-            }
+        val currentSelection = defaultModelCombo.selectedItem as? String
+        defaultModelCombo.removeAllItems()
+        allModels.forEach { defaultModelCombo.addItem(it) }
+        if (currentSelection != null && allModels.contains(currentSelection)) {
+            defaultModelCombo.selectedItem = currentSelection
+        } else if (allModels.isNotEmpty()) {
+            defaultModelCombo.selectedIndex = 0
         }
-
-        refreshCombo(defaultModelCombo, defaultModelCombo.selectedItem as? String)
-        refreshCombo(codingModelCombo, codingModelCombo.selectedItem as? String)
-        refreshCombo(reasoningModelCombo, reasoningModelCombo.selectedItem as? String)
     }
 
     private fun extractModelFromDisplay(display: String): String = display.substringBeforeLast(" (").trim()
@@ -560,10 +555,12 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         baseUrl: String,
         models: List<String>
     ): OpenAICompatibleAdapter {
+        val isKimiCoding = baseUrl.contains("kimi.com/coding", ignoreCase = true)
         return object : OpenAICompatibleAdapter(apiKey, baseUrl) {
             override val providerName: String = name.lowercase().replace(" ", "_")
             override val supportedModels: List<String> = models
             override val chatEndpointPath: String = "/v1/chat/completions"
+            override val userAgent: String = if (isKimiCoding) "claude-code/0.1.0" else super.userAgent
         }
     }
 
@@ -573,8 +570,6 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         saveCurrentEditToData()
         val config = PluginConfig.getInstance()
         if (tempDefaultModel != config.defaultModel) return true
-        if (tempCodingModel != config.codingModel) return true
-        if (tempReasoningModel != config.reasoningModel) return true
         if (tempDefaultProviderId != config.defaultProviderId) return true
         if (tempEnableStreaming != config.enableStreaming) return true
         val validEditData = providerData.filter { it.provider.isValid() }
@@ -618,15 +613,6 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
             validProviderData.find { it.provider.models.contains(tempDefaultModel) }?.provider?.id ?: ""
         config.defaultModel = tempDefaultModel
         config.defaultProviderId = tempDefaultProviderId
-
-        // 专用模式模型
-        val codingDisplay = codingModelCombo.selectedItem as? String ?: ""
-        tempCodingModel = extractModelFromDisplay(codingDisplay)
-        config.codingModel = tempCodingModel
-
-        val reasoningDisplay = reasoningModelCombo.selectedItem as? String ?: ""
-        tempReasoningModel = extractModelFromDisplay(reasoningDisplay)
-        config.reasoningModel = tempReasoningModel
 
         config.enableStreaming = streamingCheckBox.isSelected
 
@@ -674,8 +660,6 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         }.toMutableList()
         tempDefaultProviderId = config.defaultProviderId
         tempDefaultModel = config.defaultModel
-        tempCodingModel = config.codingModel
-        tempReasoningModel = config.reasoningModel
         tempEnableStreaming = config.enableStreaming
         listModel.removeAll()
         listModel.add(providerData)
@@ -683,8 +667,6 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         refreshModelCombos()
         val display = findDisplayForModel(tempDefaultModel)
         if (display != null) defaultModelCombo.selectedItem = display
-        findDisplayForModel(tempCodingModel)?.let { codingModelCombo.selectedItem = it }
-        findDisplayForModel(tempReasoningModel)?.let { reasoningModelCombo.selectedItem = it }
         val listeners = providerList.listSelectionListeners
         listeners.forEach { providerList.removeListSelectionListener(it) }
         if (listModel.size > 0) {

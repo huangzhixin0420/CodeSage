@@ -71,10 +71,12 @@ class ModelRegistry {
         baseUrl: String,
         models: List<String>
     ): com.codesage.model.adapter.OpenAICompatibleAdapter {
+        val isKimiCoding = baseUrl.contains("kimi.com/coding", ignoreCase = true)
         val adapter = object : com.codesage.model.adapter.OpenAICompatibleAdapter(apiKey, baseUrl) {
             override val providerName: String = name.lowercase().replace(" ", "_")
             override val supportedModels: List<String> = models
             override val chatEndpointPath: String = "/v1/chat/completions"
+            override val userAgent: String = if (isKimiCoding) "claude-code/0.1.0" else super.userAgent
         }
         register(adapter)
         return adapter
