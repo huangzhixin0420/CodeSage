@@ -26,15 +26,17 @@ object BuildToolHandlers {
             return@FunctionalToolHandler ToolResult.Error("pom.xml not found in $workingDir")
         }
 
-        val cmd = mutableListOf("mvn", "-B")
-        profiles?.let { cmd.addAll(listOf("-P", it)) }
+        val args = mutableListOf<String>()
+        args.add("-B")
+        profiles?.let { args.addAll(listOf("-P", it)) }
         properties?.forEach { (k, v) ->
             if (v is JsonPrimitive) {
-                cmd.addAll(listOf("-D$k=${v.content}"))
+                args.addAll(listOf("-D$k=${v.content}"))
             }
         }
-        cmd.addAll(goals.split(" ").filter { it.isNotBlank() })
+        args.addAll(goals.split(" ").filter { it.isNotBlank() })
 
+        val cmd = BuildCommandResolver.mavenCommand(workingDir, args)
         executeBuildCommand(cmd, workingDir, "Maven")
     }
 
@@ -45,7 +47,6 @@ object BuildToolHandlers {
             ?: return@FunctionalToolHandler ToolResult.Error("Missing 'tasks' parameter")
         val extraArgs = args["args"]?.jsonPrimitive?.content
 
-        val hasWrapper = File(workingDir, "gradlew").exists()
         val hasBuildGradle = File(workingDir, "build.gradle").exists()
                 || File(workingDir, "build.gradle.kts").exists()
 
@@ -53,10 +54,10 @@ object BuildToolHandlers {
             return@FunctionalToolHandler ToolResult.Error("build.gradle / build.gradle.kts not found in $workingDir")
         }
 
-        val cmd = mutableListOf(if (hasWrapper) "./gradlew" else "gradle")
-        cmd.addAll(tasks.split(" ").filter { it.isNotBlank() })
-        extraArgs?.let { cmd.addAll(it.split(" ").filter { a -> a.isNotBlank() }) }
+        val args = tasks.split(" ").filter { it.isNotBlank() }.toMutableList()
+        extraArgs?.let { args.addAll(it.split(" ").filter { a -> a.isNotBlank() }) }
 
+        val cmd = BuildCommandResolver.gradleCommand(workingDir, args)
         executeBuildCommand(cmd, workingDir, "Gradle")
     }
 

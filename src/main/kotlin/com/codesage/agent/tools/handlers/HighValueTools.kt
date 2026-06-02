@@ -111,9 +111,13 @@ class RunLinterTool : UnifiedTool(
         val fixArg = if (fix) " --fix" else ""
 
         val (cmd, toolName) = when {
-            File(dir, "pom.xml").exists() -> listOf("mvn", "-B", "checkstyle:check$fixArg") to "Maven checkstyle"
+            File(dir, "pom.xml").exists() ->
+                com.codesage.agent.tools.handlers.BuildCommandResolver
+                    .mavenCommand(dir, listOf("-B", "checkstyle:check$fixArg")) to "Maven checkstyle"
+
             File(dir, "build.gradle").exists() || File(dir, "build.gradle.kts").exists() ->
-                listOf("gradle", "check$fixArg") to "Gradle check"
+                com.codesage.agent.tools.handlers.BuildCommandResolver
+                    .gradleCommand(dir, listOf("check$fixArg")) to "Gradle check"
 
             File(dir, "package.json").exists() -> {
                 val npmCmd = if (fix) "lint:fix" else "lint"

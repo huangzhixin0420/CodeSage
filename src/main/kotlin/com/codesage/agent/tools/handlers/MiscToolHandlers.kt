@@ -405,23 +405,25 @@ object DependencyToolHandlers {
             }
 
             val cmd = when {
-                isMaven -> when (action) {
-                    "tree" -> listOf("mvn", "-B", "dependency:tree")
-                    "outdated" -> listOf("mvn", "-B", "versions:display-dependency-updates")
-                    "conflicts" -> listOf("mvn", "-B", "dependency:tree", "-Dverbose")
-                    else -> return@FunctionalToolHandler ToolResult.Error("Unknown action: $action")
-                }
+                isMaven -> com.codesage.agent.tools.handlers.BuildCommandResolver
+                    .mavenCommand(
+                        workingDir, when (action) {
+                            "tree" -> listOf("-B", "dependency:tree")
+                            "outdated" -> listOf("-B", "versions:display-dependency-updates")
+                            "conflicts" -> listOf("-B", "dependency:tree", "-Dverbose")
+                            else -> return@FunctionalToolHandler ToolResult.Error("Unknown action: $action")
+                        }
+                    )
 
-                else -> {
-                    val hasWrapper = File(workingDir, "gradlew").exists()
-                    val gradle = if (hasWrapper) "./gradlew" else "gradle"
-                    when (action) {
-                        "tree" -> listOf(gradle, "dependencies")
-                        "outdated" -> listOf(gradle, "dependencyUpdates")
-                        "conflicts" -> listOf(gradle, "dependencies", "--configuration", "runtimeClasspath")
-                        else -> return@FunctionalToolHandler ToolResult.Error("Unknown action: $action")
-                    }
-                }
+                else -> com.codesage.agent.tools.handlers.BuildCommandResolver
+                    .gradleCommand(
+                        workingDir, when (action) {
+                            "tree" -> listOf("dependencies")
+                            "outdated" -> listOf("dependencyUpdates")
+                            "conflicts" -> listOf("dependencies", "--configuration", "runtimeClasspath")
+                            else -> return@FunctionalToolHandler ToolResult.Error("Unknown action: $action")
+                        }
+                    )
             }
 
             try {
