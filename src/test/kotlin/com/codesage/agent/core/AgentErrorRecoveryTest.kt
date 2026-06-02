@@ -260,4 +260,88 @@ class AgentErrorRecoveryTest {
         assertEquals(3, recovery.getRetryCount(FailoverReason.EMPTY_RESPONSE, "model-a"))
         assertEquals(1, recovery.getRetryCount(FailoverReason.EMPTY_RESPONSE, "model-b"))
     }
+
+    // ===== 修复：Abort 消息带上根因 + UNKNOWN 走 fallback =====
+
+    @Test
+    fun `Abort message should include original error details for diagnosis`() {
+        // 场景：不能被任何 pattern 匹配的异常被分类为 UNKNOWN，retry 耗尽后
+        // Abort 消息应包含原始异常的类名 + 消息，让上层 / 用户能看到根因
+        // （不再只是 "超过最大重试次数"）。
+        // 这里用一个不会被认出的 RuntimeException 子类。
+        class UnrecognizedUpstreamError(message: String) : RuntimeException(message)
+
+        val originalError = UnrecognizedUpstreamError("upstream returned weird payload XYZ")
+        val classified = recovery.classify(originalError, model = "test-model")
+        assertEquals(FailoverReason.UNKNOWN, classified.reason)
+        val agent = AgentCore()
+
+        // UNKNOWN max retry = 2，2 次后第三次应该 abort
+        repeat(2) {
+            recovery.recover(agent, classified, fallbackModels = emptyList())
+        }
+        val action = recovery.recover(agent, classified, fallbackModels = emptyList())
+        assertTrue(action is RecoveryAction.Abort)
+        val msg = (action as RecoveryAction.Abort).message
+        assertTrue(
+            msg.contains("UnrecognizedUpstreamError"),
+            "Abort message should include original exception class name, got: $msg"
+        )
+        assertTrue(
+            msg.contains("upstream returned weird payload"),
+            "Abort message should include original exception message, got: $msg"
+        )
+        assertTrue(
+            msg.contains("根因") || msg.contains("original"),
+            "Abort message should explicitly mark this as root cause, got: $msg"
+        )
+    }
+
+    @Test
+    fun `UNKNOWN error should fall back to a different model when fallback is available`() {
+        // 场景：原始错误不能分类（UNKNOWN），但有 fallback model 可用
+        // 期望：不要重复用同一个 model，而是切到 fallback
+        val originalError = RuntimeException("Some unrecognized upstream error")
+        val classified = recovery.classify(originalError, model = "primary-model")
+        assertEquals(FailoverReason.UNKNOWN, classified.reason)
+        val agent = AgentCore()
+
+        val action = recovery.recover(agent, classified, fallbackModels = listOf("fallback-model"))
+        assertTrue(
+            action is RecoveryAction.RetryWithModel,
+            "UNKNOWN should switch to fallback when available, got: $action"
+        )
+        val retry = action as RecoveryAction.RetryWithModel
+        assertEquals("fallback-model", retry.model)
+    }
+
+    @Test
+    fun `UNKNOWN error should SimpleRetry when no fallback model is available`() {
+        // 反例：无 fallback 时回到 SimpleRetry（保持向后兼容）
+        val originalError = RuntimeException("Unrecognized")
+        val classified = recovery.classify(originalError, model = "primary-model")
+        val agent = AgentCore()
+
+        val action = recovery.recover(agent, classified, fallbackModels = emptyList())
+        assertTrue(
+            action is RecoveryAction.SimpleRetry,
+            "UNKNOWN without fallback should SimpleRetry, got: $action"
+        )
+    }
+
+    @Test
+    fun `UNKNOWN fallback to same model should fall back to SimpleRetry`() {
+        // 边界：fallback 列表里第一个仍然是当前 model（防御）—— 不应该无限跳同个 model
+        val originalError = RuntimeException("X")
+        val classified = recovery.classify(originalError, model = "primary-model")
+        val agent = AgentCore()
+
+        val action = recovery.recover(
+            agent,
+            classified,
+            fallbackModels = listOf("primary-model", "other-model")
+        )
+        // 第一个 fallback 就是当前 model，应当跳过走到 SimpleRetry
+        assertTrue(action is RecoveryAction.SimpleRetry, "got: $action")
+    }
 }

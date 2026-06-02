@@ -290,8 +290,20 @@ class AgentErrorRecovery {
 
         // 检查是否超过最大重试次数
         if (currentRetries >= maxRetry) {
-            logger.warn("Max retries exceeded for ${classified.reason} on model ${classified.modelName}, aborting")
-            return RecoveryAction.Abort("${classified.reason} 超过最大重试次数 ($maxRetry)")
+            // 附上原始异常详情（类名 + 消息），让上层能看到根因
+            val originalMsg = classified.originalError?.let { e ->
+                val name = e.javaClass.simpleName
+                val msg = e.message?.take(200) ?: "(no message)"
+                "$name: $msg"
+            } ?: "(no original error captured)"
+            logger.warn(
+                "Max retries exceeded for ${classified.reason} on model ${classified.modelName}, " +
+                        "aborting. Original error: $originalMsg",
+                classified.originalError
+            )
+            return RecoveryAction.Abort(
+                "${classified.reason} 超过最大重试次数 ($maxRetry)，根因: $originalMsg"
+            )
         }
 
         // 增加重试计数（同时更新 LRU 访问顺序）
@@ -368,8 +380,22 @@ class AgentErrorRecovery {
 
             FailoverReason.UNKNOWN -> {
                 val delayMs = calculateBackoff(currentRetries)
-                logger.warn("Unknown error encountered, attempting simple retry: ${classified.originalError.message}")
-                RecoveryAction.SimpleRetry(delayMs)
+                val fallback = effectiveFallbackModels.firstOrNull()
+                if (fallback != null && fallback != classified.modelName) {
+                    // 原始错误原因不明，猜可能是当前 model 有问题
+                    // 尝试切换到 fallback（跳到下一个 model，而不是 retry 同一个）
+                    logger.warn(
+                        "Unknown error on model=${classified.modelName}, " +
+                                "falling back to model=$fallback: ${classified.originalError?.message}"
+                    )
+                    RecoveryAction.RetryWithModel(fallback, delayMs)
+                } else {
+                    logger.warn(
+                        "Unknown error encountered, attempting simple retry: " +
+                                "${classified.originalError?.message}"
+                    )
+                    RecoveryAction.SimpleRetry(delayMs)
+                }
             }
         }
 
