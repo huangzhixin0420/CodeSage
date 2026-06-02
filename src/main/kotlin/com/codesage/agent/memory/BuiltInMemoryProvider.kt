@@ -43,6 +43,24 @@ class BuiltInMemoryProvider : MemoryProvider {
     // 协程作用域（用于后台预取）
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    init {
+        // 兜底：主动加载 org.sqlite.JDBC 并注册到 DriverManager。
+        // 在 IDE 插件环境中，DriverManager 的平台类加载器可能看不到插件类加载器加载的
+        // sqlite-jdbc，导致 DriverManager.getConnection("jdbc:sqlite:...") 抛出
+        // "No suitable driver"。主路径仍然走下面的 `org.sqlite.JDBC().connect()`，
+        // 但通过显式 Class.forName 兼有 ServiceLoader 备份能力，进程内任何地方
+        // 使用 DriverManager.getConnection("jdbc:sqlite:...") 都能拿到驱动。
+        try {
+            Class.forName("org.sqlite.JDBC")
+            // DriverManager.registerDriver 的 idempotent 检查在 sqlite-jdbc 3.45+ 已提供
+            // (driver.isRegistered())，这里仅作为 defenisve 保险。
+        } catch (e: ClassNotFoundException) {
+            // 驱动不在 classpath（仅出现在纯单元测试场景），不中断构建
+        } catch (e: Exception) {
+            // 其他原因（linkage error 等）同样不中断
+        }
+    }
+
     override fun isAvailable(): Boolean = true
 
     override fun initialize(sessionId: String, homeDir: String, platform: String) {

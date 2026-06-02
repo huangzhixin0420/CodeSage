@@ -9,6 +9,7 @@ import com.codesage.agent.planner.Task
 import com.codesage.agent.planner.TaskPlanner
 import com.codesage.agent.tools.SkillToolAdapter
 import com.codesage.agent.tools.ToolExecutor
+import com.codesage.agent.tools.ToolProvider
 import com.codesage.agent.tools.ToolRegistry
 import com.codesage.model.dto.*
 import com.codesage.model.gateway.ModelGateway
@@ -51,8 +52,18 @@ data class AgentSession(
     fun displayName(): String = name.ifEmpty { "新会话 ${formatTime(createdAt)}" }
 
     private fun formatTime(timestamp: Long): String {
-        val sdf = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
-        return sdf.format(java.util.Date(timestamp))
+        // T0.7 修复：使用 java.time.DateTimeFormatter (线程安全) 替代 SimpleDateFormat (非线程安全)
+        // 原实现会出现在 getSessions() / getCurrentSession() 被多线程调用时输出错乱的风险
+        return SESSION_DISPLAY_FORMATTER.format(
+            java.time.Instant.ofEpochMilli(timestamp).atZone(java.time.ZoneId.systemDefault())
+        )
+    }
+
+    companion object {
+        // T0.7 修复：使用线程安全的 DateTimeFormatter 作为共享实例
+        // DateTimeFormatter 是 immutable + thread-safe，可以作为 companion object 常量复用
+        private val SESSION_DISPLAY_FORMATTER =
+            java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm", java.util.Locale.getDefault())
     }
 }
 
@@ -94,12 +105,25 @@ sealed class AgentResult {
  * 负责AI对话循环、任务执行、工具调用和多会话管理。
  * 核心对话循环已委托给 [EnhancedAgentLoop]，本类保持向后兼容的公共 API。
  */
-class AgentCore(
+open class AgentCore(
     private val gateway: ModelGateway = ModelGateway.getInstance(),
     private val taskPlanner: TaskPlanner = TaskPlanner(),
     private val project: Project? = null,
     skillToolAdapter: SkillToolAdapter? = null,
-    confirmationCallback: ToolGuardrails.ConfirmationCallback? = null
+    confirmationCallback: ToolGuardrails.ConfirmationCallback? = null,
+    /**
+     * 可选的外部注入工具注册表。
+     * 主要用于子 Agent：由父 Agent 的 [SubAgentExecutor] 根据 toolset
+     * 过滤后传入，避免子 Agent 拿到完整工具集。
+     * 为 null 时使用 [ToolRegistry.createDefault] 创建默认注册表。
+     */
+    toolRegistryOverride: ToolRegistry? = null,
+    /**
+     * 子 Agent 递归深度。
+     * 0 = 顶层 Agent；>0 表示这是第 N 层子 Agent。
+     * 用于防止 [delegate_task] 无限递归。
+     */
+    private val subAgentDepth: Int = 0
 ) {
     private val logger = Logger.getLogger<AgentCore>()
 
@@ -113,8 +137,19 @@ class AgentCore(
 
     private val sessions = java.util.concurrent.ConcurrentHashMap<String, SessionInfo>()
 
-    @Volatile
-    private var currentSessionId: String? = null
+    /**
+     * 当前会话 ID。
+     *
+     * 使用 [java.util.concurrent.atomic.AtomicReference] 而非 `@Volatile var` 的原因：
+     * 1. 读-改-写操作（如 [getOrCreateSession] 的"先读 currentId，再决定是否创建"）需要复合原子性
+     * 2. 多个 chat/chatStream/chatWithTools 调用可能在不同线程并发触发（EDT、协程派发器、IDEA readAction）
+     * 3. AtomicReference 的 `get()/set()/compareAndSet()` 提供比 @Volatile 写入更强的 happens-before 保证
+     *
+     * 注意：sessions map 本身是 ConcurrentHashMap，两者配合使用保证：
+     * - map 内的某个 session 一定对应 currentSessionId 的某个有效值
+     * - currentSessionId 一定指向 map 内真实存在的 session（除非刚被删除处于极短竞态窗口）
+     */
+    private val currentSessionId = java.util.concurrent.atomic.AtomicReference<String?>(null)
     private var currentModel: String = ""
 
     /**
@@ -137,12 +172,22 @@ class AgentCore(
     private var systemPrompt: String = AgentConfig.DEFAULT_SYSTEM_PROMPT
     private var currentBudgetConfig: TaskBudget.BudgetConfig? = null
 
+    // 可观测性（T7.2：提前初始化供 ToolExecutor 使用）
+    private val tracer: ExecutionTracer = ExecutionTracer()
+
     // 工具系统
-    private val toolRegistry: ToolRegistry = ToolRegistry.createDefault()
+    // 注意：override 优先于 createDefault()，供子 Agent 按 toolset 过滤使用。
+    // initialize() 仍会向其注册 memory tools / skills / 插件贡献的 tools。
+    private val toolRegistry: ToolRegistry = toolRegistryOverride ?: ToolRegistry.createDefault(project)
     private val guardrails: ToolGuardrails? = project?.let {
         ToolGuardrails(projectRoot = it.basePath, confirmationCallback = confirmationCallback)
     }
-    private val toolExecutor: ToolExecutor = ToolExecutor(project, guardrails)
+    private val toolExecutor: ToolExecutor = ToolExecutor(
+        project = project,
+        guardrails = guardrails,
+        toolRegistry = toolRegistry,
+        tracer = tracer  // T7.2：传入 tracer 以追踪 tool 调用
+    )
     private val skillToolAdapter: SkillToolAdapter? = skillToolAdapter
 
     // 错误恢复
@@ -156,11 +201,13 @@ class AgentCore(
     private val memoryNudger: MemoryNudger = MemoryNudger()
 
     // 子 Agent 执行器
+    // 深度从构造参数传入，用于在 SubAgentExecutor 内做递归限制检查
     private val subAgentExecutor: SubAgentExecutor = SubAgentExecutor(
         parentAgent = this,
         gateway = gateway,
         project = project,
-        skillToolAdapter = skillToolAdapter
+        skillToolAdapter = skillToolAdapter,
+        depth = subAgentDepth
     )
 
     // Prompt 工程
@@ -172,7 +219,6 @@ class AgentCore(
     // 可观测性
     private val structuredLogger: StructuredLogger = StructuredLogger()
     private val metrics: MetricsCollector = MetricsCollector()
-    private val tracer: ExecutionTracer = ExecutionTracer()
 
     // 性能优化
     private val responseCache: ResponseCache = ResponseCache()
@@ -241,6 +287,28 @@ class AgentCore(
         memoryManager.getAllToolSchemas().forEach { toolRegistry.register(it) }
         logger.info("Registered ${memoryManager.getAllToolSchemas().size} memory tools")
 
+        // 加载外部插件贡献的 ToolHandler
+        var externalToolCount = 0
+        try {
+            val toolProviders = ToolProvider.EP_NAME.extensionList
+            toolProviders.forEach { provider ->
+                try {
+                    val handlers = provider.getToolHandlers()
+                    handlers.forEach { toolRegistry.register(it) }
+                    externalToolCount += handlers.size
+                    logger.info("Loaded ${handlers.size} tools from provider: ${provider.providerName}")
+                } catch (e: Exception) {
+                    logger.error("Failed to load tools from provider: ${provider.providerName}", e)
+                }
+            }
+            if (externalToolCount > 0) {
+                logger.info("Total external tools loaded: $externalToolCount")
+            }
+        } catch (e: IllegalArgumentException) {
+            // 测试环境中扩展点不可用，安全跳过
+            logger.debug("ToolProvider extension point not available (test environment), skipping external tools")
+        }
+
         // 初始化对话持久化
         sessionRestore = SessionRestore(conversationPersistence, this)
 
@@ -295,31 +363,19 @@ class AgentCore(
 
     /**
      * 根据消息内容自动推断 ChatMode。
-     * 用户手动切换 mode 时优先尊重用户选择；仅在 GENERAL 模式下自动推断。
+     *
+     * T1.5 修复：保留方法用于向后兼容，但现在仅作为**建议**。
+     * 真正的路由逻辑在 [ChatModeRouter] 中，且 `chat/chatStream/chatWithTools` 已支持
+     * `userExplicit: ChatMode?` 形参。`detectChatMode` 的实现也委托给 router。
+     *
+     * @deprecated 请改用 [ChatModeRouter.suggestChatMode]
      */
-    fun detectChatMode(message: String): ChatMode {
-        val lower = message.lowercase()
-        val codingKeywords = listOf(
-            "code", "function", "class", "debug", "refactor", "bug", "compile",
-            "写代码", "代码", "函数", "类", "调试", "重构", "编译", "报错",
-            "implement", "algorithm", "sort", "递归", "leetcode"
-        )
-        val reasoningKeywords = listOf(
-            "analyze", "reason", "prove", "calculate", "推导", "证明", "分析",
-            "推理", "逻辑", "math", "mathematics", "complex", "optimize",
-            "compare", "difference", "优缺点", "为什么", "what if"
-        )
-        val visionKeywords = listOf(
-            "image", "picture", "screenshot", "截图", "图片", "照片",
-            "photo", "diagram", "chart", "可视化", "看图", "describe this"
-        )
-        return when {
-            visionKeywords.any { lower.contains(it) } -> ChatMode.VISION
-            codingKeywords.any { lower.contains(it) } -> ChatMode.CODING
-            reasoningKeywords.any { lower.contains(it) } -> ChatMode.REASONING
-            else -> ChatMode.GENERAL
-        }
-    }
+    @Deprecated(
+        message = "Use ChatModeRouter.suggestChatMode() or ChatModeRouter.resolve() — " +
+                "detectChatMode is now only a suggestion, not a forced decision.",
+        replaceWith = ReplaceWith("ChatModeRouter.suggestChatMode(message)", "com.codesage.agent.core.ChatModeRouter")
+    )
+    fun detectChatMode(message: String): ChatMode = ChatModeRouter.suggestChatMode(message)
 
     /**
      * 配置钩子（用于扩展和自定义行为）
@@ -332,28 +388,54 @@ class AgentCore(
 
     /**
      * 创建新会话
+     *
+     * 线程安全：使用 [createAndRegisterSession] 内部的 atomic 注册保证并发调用产生不同的 session。
+     * 调用方仍可通过返回值拿到会话引用。
      */
     fun createSession(): AgentSession {
+        return createAndRegisterSession().session
+    }
+
+    /**
+     * 原子地创建并注册一个新会话。
+     *
+     * 关键不变量：
+     * 1. 每个 session id 只会创建一次 [SessionInfo]（使用 [ConcurrentHashMap.put] 原子检测）
+     * 2. [currentSessionId] 只会指向 [sessions] 中真实存在的 key
+     * 3. 即使多个线程同时调用，也只会产生一个 "胜利者" 真正完成 [memoryManager.initializeAll] 等副作用
+     *
+     * session id 加入随机后缀，避免 `System.currentTimeMillis()` 在同一毫秒内被两个并发调用撞 id。
+     */
+    private fun createAndRegisterSession(): SessionInfo {
         val traceCtx = tracer.startTrace("create_session")
         val session = AgentSession(
-            id = "session_${System.currentTimeMillis()}",
+            id = "session_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().take(8)}",
             name = "",
             createdAt = System.currentTimeMillis()
         )
         val contextManager = ContextManager(memoryProvider = memoryManager.getBuiltInProvider())
         contextManager.newSession(listOf(Message.systemMessage(systemPrompt)), newSessionId = session.id)
 
-        sessions[session.id] = SessionInfo(session, contextManager)
-        currentSessionId = session.id
+        // 原子注册：如果同 id 已存在（理论上极低概率，但随机后缀使得碰撞几乎不可能），
+        // 则放弃我们刚创建的 SessionInfo，复用 map 中已有的。
+        val candidate = SessionInfo(session, contextManager)
+        val winner = sessions.putIfAbsent(session.id, candidate)
+        if (winner != null) {
+            logger.warn("Session id collision detected for ${session.id}, reusing existing session")
+            traceCtx.end()
+            return winner
+        }
 
-        // 初始化记忆系统
+        // 我们是第一个注册此 id 的线程，执行完整副作用
+        currentSessionId.set(session.id)
+
         val homeDir = File(System.getProperty("user.home"), ".codesage").absolutePath
         memoryManager.initializeAll(session.id, homeDir)
         memoryNudger.reset()
 
         metrics.incrementCounter("sessions_created")
         traceCtx.end()
-        return session
+        return candidate
     }
 
     /**
@@ -361,7 +443,7 @@ class AgentCore(
      */
     fun switchSession(sessionId: String): Boolean {
         if (sessions.containsKey(sessionId)) {
-            currentSessionId = sessionId
+            currentSessionId.set(sessionId)
             memoryManager.onSessionSwitch(sessionId)
             return true
         }
@@ -370,12 +452,18 @@ class AgentCore(
 
     /**
      * 删除会话
+     *
+     * 线程安全：使用 [AtomicReference.compareAndSet] 避免"删除后被另一线程恢复"的竞态。
+     * 即：仅当我们仍是 currentSessionId 的持有者时，才把 currentSessionId 切到下一个可用会话。
      */
     fun deleteSession(sessionId: String) {
         sessions.remove(sessionId)
-        if (currentSessionId == sessionId) {
-            currentSessionId = sessions.keys.firstOrNull()
+        // CAS 循环：仅当我们仍指向被删除的 session 时，才切换到下一个
+        while (currentSessionId.compareAndSet(sessionId, sessions.keys.firstOrNull())) {
+            // 成功：要么切到了新 session，要么切到了 null（map 为空）
+            return
         }
+        // 另一线程已经先一步切换了 currentSessionId，无需操作
     }
 
     /**
@@ -384,7 +472,7 @@ class AgentCore(
     fun shutdown() {
         agentScope.cancel()
         sessions.clear()
-        currentSessionId = null
+        currentSessionId.set(null)
         currentLoop.getAndSet(null)?.interrupt()
         logger.info("AgentCore shutdown completed")
     }
@@ -400,7 +488,7 @@ class AgentCore(
      * 保存当前会话（仅当包含用户消息时才保存）
      */
     fun saveCurrentSession() {
-        val sessionInfo = currentSessionId?.let { sessions[it] } ?: return
+        val sessionInfo = currentSessionId.get()?.let { sessions[it] } ?: return
         val context = sessionInfo.contextManager.getContext()
         val hasUserMessage = context.any { it.role == Role.USER }
         if (hasUserMessage) {
@@ -454,20 +542,30 @@ class AgentCore(
      * 获取当前会话
      */
     fun getCurrentSession(): AgentSession? {
-        return currentSessionId?.let { sessions[it]?.session }
+        return currentSessionId.get()?.let { sessions[it]?.session }
     }
 
     /**
      * 获取当前会话的历史消息
      */
     fun getCurrentHistory(): List<Message> {
-        return currentSessionId?.let { sessions[it]?.contextManager?.getContext() } ?: emptyList()
+        return currentSessionId.get()?.let { sessions[it]?.contextManager?.getContext() } ?: emptyList()
     }
 
     /**
      * 发送消息并获取回复（非流式，不带工具）
+     *
+     * T1.5 修复：增加 `userExplicit: ChatMode?` 形参。
+     * - `null` = 用户未显式选择 → 后端用 `ChatModeRouter.suggestChatMode` 推断
+     * - 非空 = 严格使用用户值
+     *
+     * 老调用方仍可只传 `mode: ChatMode = ChatMode.GENERAL`（默认不强制，等价于"用户选了 GENERAL"）。
      */
-    suspend fun chat(userMessage: String, mode: ChatMode = ChatMode.GENERAL): AgentResult {
+    suspend fun chat(
+        userMessage: String,
+        mode: ChatMode = ChatMode.GENERAL,
+        userExplicit: Boolean = true
+    ): AgentResult {
         val sessionInfo = getOrCreateSession()
         val session = sessionInfo.session
         val contextManager = sessionInfo.contextManager
@@ -479,8 +577,13 @@ class AgentCore(
             contextManager.addMessage(Message.userMessage(userMessage))
             maybeAutoName(session, userMessage)
 
+            val routing = ChatModeRouter.resolve(
+                userExplicit = if (userExplicit) mode else null,
+                message = userMessage
+            )
+
             val request = ChatRequest(
-                model = resolveModelForMode(mode),
+                model = resolveModelForMode(routing.effective),
                 messages = contextManager.getContext(),
                 temperature = 0.7,
                 stream = false
@@ -518,8 +621,14 @@ class AgentCore(
 
     /**
      * 流式聊天（纯文本，不带工具调用）
+     *
+     * T1.5 修复：增加 `userExplicit: Boolean` 形参。语义与 [chat] 一致。
      */
-    fun chatStream(userMessage: String, mode: ChatMode = ChatMode.GENERAL): Flow<String> {
+    fun chatStream(
+        userMessage: String,
+        mode: ChatMode = ChatMode.GENERAL,
+        userExplicit: Boolean = true
+    ): Flow<String> {
         val sessionInfo = getOrCreateSession()
         val session = sessionInfo.session
         val contextManager = sessionInfo.contextManager
@@ -532,8 +641,13 @@ class AgentCore(
                 contextManager.addMessage(Message.userMessage(userMessage))
                 maybeAutoName(session, userMessage)
 
+                val routing = ChatModeRouter.resolve(
+                    userExplicit = if (userExplicit) mode else null,
+                    message = userMessage
+                )
+
                 val request = ChatRequest(
-                    model = resolveModelForMode(mode),
+                    model = resolveModelForMode(routing.effective),
                     messages = contextManager.getContext(),
                     temperature = 0.7,
                     stream = true
@@ -569,8 +683,15 @@ class AgentCore(
      * - Hook 体系支持
      * - 追踪和指标收集
      * - ChatMode 模型路由
+     *
+     * T1.5 修复：增加 `userExplicit: Boolean` 形参。语义与 [chat] / [chatStream] 一致。
+     * 当 `userExplicit=false` 时，额外 emit 一个 `AgentStreamEvent.ModeSuggestion` 事件供 UI 展示。
      */
-    fun chatWithTools(userMessage: String, mode: ChatMode = ChatMode.GENERAL): Flow<AgentStreamEvent> {
+    fun chatWithTools(
+        userMessage: String,
+        mode: ChatMode = ChatMode.GENERAL,
+        userExplicit: Boolean = true
+    ): Flow<AgentStreamEvent> {
         val sessionInfo = getOrCreateSession()
         val session = sessionInfo.session
         val contextManager = sessionInfo.contextManager
@@ -580,6 +701,12 @@ class AgentCore(
         session.lastActivityAt = System.currentTimeMillis()
 
         metrics.incrementCounter("chat_requests")
+
+        // T1.5 修复：用 router 决策
+        val routing = ChatModeRouter.resolve(
+            userExplicit = if (userExplicit) mode else null,
+            message = userMessage
+        )
 
         // 从配置读取并创建任务级预算（优先使用 AgentConfig 中的配置，否则从 PluginConfig 读取）
         val budgetConfig = currentBudgetConfig ?: PluginConfig.getInstance().let { pluginConfig ->
@@ -615,8 +742,8 @@ class AgentCore(
             budget = taskBudget
         )
 
-        val effectiveModel = resolveModelForMode(mode)
-        traceCtx.event("loop_started", mapOf("model" to effectiveModel, "mode" to mode.name))
+        val effectiveModel = resolveModelForMode(routing.effective)
+        traceCtx.event("loop_started", mapOf("model" to effectiveModel, "mode" to routing.effective.name))
 
         val startTime = System.currentTimeMillis()
         val flow = loop.run(
@@ -633,6 +760,17 @@ class AgentCore(
             currentLoop.set(loop)
             var eventCount = 0
             try {
+                // T1.5 修复：当用户未显式选择 mode 时，先 emit 一个 ModeSuggestion 事件
+                // 让 UI 知道后端对 mode 做了什么决策，提升透明性。
+                if (!routing.userExplicit) {
+                    emit(
+                        AgentStreamEvent.ModeSuggestion(
+                            effective = routing.effective,
+                            suggestion = routing.suggestion,
+                            userExplicit = false
+                        )
+                    )
+                }
                 flow.collect { event ->
                     eventCount++
                     emit(event)
@@ -696,7 +834,7 @@ class AgentCore(
             return null
         }
 
-        val sessionInfo = currentSessionId?.let { sessions[it] } ?: run {
+        val sessionInfo = currentSessionId.get()?.let { sessions[it] } ?: run {
             logger.warn("No active session to continue")
             return null
         }
@@ -789,7 +927,7 @@ class AgentCore(
      * 处理工具调用结果（保留用于外部手动调用）
      */
     suspend fun handleToolResult(toolCallId: String, result: String): AgentResult {
-        val sessionInfo = currentSessionId?.let { sessions[it] }
+        val sessionInfo = currentSessionId.get()?.let { sessions[it] }
             ?: return AgentResult.Failure(
                 "No active session",
                 AgentSession(id = "invalid")
@@ -908,6 +1046,7 @@ class AgentCore(
                 is AgentStreamEvent.PlanRejected -> result.appendLine("[计划已拒绝: ${event.planId} - ${event.reason}]")
                 is AgentStreamEvent.ContextCompressed -> result.appendLine("[上下文压缩: ${event.originalTokens} → ${event.compressedTokens} tokens]")
                 is AgentStreamEvent.SessionMigrated -> result.appendLine("[会话迁移: ${event.oldSessionId} → ${event.newSessionId}]")
+                is AgentStreamEvent.ModeSuggestion -> result.appendLine("[ChatMode建议: ${event.effective} (userExplicit=${event.userExplicit})]")
                 AgentStreamEvent.Done -> {}
             }
         }
@@ -933,10 +1072,33 @@ class AgentCore(
     fun getCurrentModel(): String = currentModel
 
     /**
+     * 获取当前 system prompt。
+     *
+     * 子 Agent 用此作为自己 prompt 的基础（再叠加 sub-agent 专用 section），
+     * 让子 Agent 继承父 Agent 的项目上下文、角色、工具说明等。
+     */
+    fun getSystemPrompt(): String = systemPrompt
+
+    /**
+     * 获取当前工具注册表中已注册的工具数量。
+     *
+     * 主要用于测试验证 [toolRegistryOverride] / memory tools / 插件 tools
+     * 是否被正确注册。
+     */
+    fun getToolRegistrySizeForTest(): Int = toolRegistry.getAllTools().size
+
+    /**
+     * 获取当前工具注册表中所有已注册工具的名字列表。
+     *
+     * 主要用于测试验证；调试场景也可使用。
+     */
+    fun getToolNamesForTest(): List<String> = toolRegistry.getAllTools().map { it.name }
+
+    /**
      * 压缩当前会话上下文（用于 CONTEXT_TOO_LONG 错误恢复）
      */
     fun compressContext(): Boolean {
-        return currentSessionId?.let { id ->
+        return currentSessionId.get()?.let { id ->
             sessions[id]?.contextManager?.compressContext()
         } ?: false
     }
@@ -946,7 +1108,7 @@ class AgentCore(
      * 生成新 session ID，迁移项目信息、用户偏好、重要记忆和历史消息
      */
     fun migrateSessionAfterCompression(): Pair<String, String>? {
-        val oldSessionId = currentSessionId ?: return null
+        val oldSessionId = currentSessionId.get() ?: return null
         val oldSessionInfo = sessions[oldSessionId] ?: return null
         val oldContext = oldSessionInfo.contextManager.getContext()
 
@@ -967,7 +1129,7 @@ class AgentCore(
         newContextManager.addMessages(nonSystemMessages)
 
         sessions[newSession.id] = SessionInfo(newSession, newContextManager)
-        currentSessionId = newSession.id
+        currentSessionId.set(newSession.id)
 
         // 初始化新 session 的记忆系统
         val homeDir = File(System.getProperty("user.home"), ".codesage").absolutePath
@@ -987,7 +1149,7 @@ class AgentCore(
      * 清空当前会话
      */
     fun clearSession() {
-        currentSessionId?.let { id ->
+        currentSessionId.get()?.let { id ->
             sessions[id]?.contextManager?.newSession(listOf(Message.systemMessage(systemPrompt)), newSessionId = id)
             sessions[id]?.session?.lastActivityAt = System.currentTimeMillis()
             // 保存清空后的状态
@@ -1018,7 +1180,7 @@ class AgentCore(
         val result = sessionRestore.restore(options)
         // 将最近恢复的会话设为当前会话
         if (result.restoredSessions.isNotEmpty()) {
-            currentSessionId = result.restoredSessions.maxByOrNull { it.lastActivityAt }?.id
+            currentSessionId.set(result.restoredSessions.maxByOrNull { it.lastActivityAt }?.id)
         }
         return result
     }
@@ -1130,15 +1292,30 @@ class AgentCore(
         }
     }
 
+    /**
+     * 获取或创建当前会话信息。
+     *
+     * 线程安全说明（修复 CodeReview #1）：
+     * - 旧实现存在竞态：两个线程同时进入此方法时，可能都读到 currentSessionId == null，
+     *   各自调用 createSession()，导致创建出两个 session 且后一个覆盖前一个。
+     * - 新实现依赖 [createAndRegisterSession] 内部的 `putIfAbsent` 原子注册保证
+     *   "同 id 只创建一个 SessionInfo"，并通过 currentSessionId 原子读取避免双重创建。
+     *
+     * 不变量：返回的 [SessionInfo] 一定是 [sessions] map 中实际存在的条目，
+     * 且若 [currentSessionId] 指向有效 id，则下次调用优先返回该 id 对应的 SessionInfo。
+     */
     private fun getOrCreateSession(): SessionInfo {
-        val id = currentSessionId
+        val id = currentSessionId.get()
         if (id != null) {
             val existing = sessions[id]
             if (existing != null) {
                 return existing
             }
+            // currentSessionId 指向一个已被删除的 session（例如其他线程 deleteSession），
+            // 跳过它并进入创建路径。
+            logger.debug("currentSessionId $id is stale (deleted), creating new session")
         }
-        return createSession().let { sessions[it.id]!! }
+        return createAndRegisterSession()
     }
 }
 

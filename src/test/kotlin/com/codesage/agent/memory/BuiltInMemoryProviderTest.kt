@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.assertDoesNotThrow
 import java.io.File
 import java.nio.file.Files
 
@@ -270,5 +271,15 @@ class BuiltInMemoryProviderTest {
         )
     }
 
+    // ===== P1 #5 新增：SQLite 驱动加载验证 =====
 
+    @Test
+    fun `org_sqlite_JDBC class should be loadable from classpath`() {
+        // P1 #5 修复：BuiltInMemoryProvider.init 会 Class.forName("org.sqlite.JDBC")
+        // 触发 ServiceLoader 注册；这里验证该类确实在 classpath 中
+        val driverClass = assertDoesNotThrow("org.sqlite.JDBC must be on classpath") {
+            Class.forName("org.sqlite.JDBC")
+        }
+        assertNotNull(driverClass)
+    }
 }
