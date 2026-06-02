@@ -142,6 +142,14 @@ open class SubAgentExecutor(
         // 4. 基于父 prompt 构造子 Agent 的 prompt
         val parentPrompt = parentAgent.getSystemPrompt()
         val subSystemPrompt = generateSubAgentPrompt(taskDescription, toolset, parentPrompt)
+        // 日志：拆分 prompt 各部分字节数。万一未来发现 sub-agent 被 400，
+        // 能一眼看出是 parent prompt 太大还是 task 太大。
+        logger.info(
+            "[SubAgent] prompt size | " +
+                    "parentPrompt=${parentPrompt.length}B, " +
+                    "subAgentSection=${subSystemPrompt.length - parentPrompt.length}B, " +
+                    "subSystemPrompt=${subSystemPrompt.length}B"
+        )
 
         // 5. 创建子 AgentCore（注入过滤后的 registry 和子深度）
         val subAgent = AgentCore(

@@ -283,6 +283,21 @@ class AgentErrorRecovery {
                 originalError = error,
                 modelName = model
             )
+        }.also { classified ->
+            // 每次分类都记一条带全字段的 INFO 日志。下次任何错误（尤其是
+            // UNKNOWN / BAD_REQUEST 这类需要诊断 reason 的）都能直接看到
+            // 完整分类、原始异常类名、message、statusCode，不用再
+            // 追代码看 classifier 里哪个分支触发的。
+            logger.info(
+                "[Recovery.classify] reason=${classified.reason} " +
+                        "retryable=${classified.retryable} " +
+                        "shouldCompress=${classified.shouldCompress} " +
+                        "shouldFallback=${classified.shouldFallback} " +
+                        "statusCode=${classified.statusCode} " +
+                        "model=${classified.modelName} | " +
+                        "originalError=${classified.originalError.javaClass.simpleName}: " +
+                        "${classified.originalError.message?.take(200)}"
+            )
         }
     }
 

@@ -40,7 +40,14 @@ open class ModelGateway(
      * 同步聊天请求
      */
     open suspend fun chat(request: ChatRequest): Result<ChatResponse> = withContext(Dispatchers.IO) {
-        logger.info("[Gateway.chat] Request for model=${request.model}, messages=${request.messages.size}")
+        val startMs = System.currentTimeMillis()
+        logger.info(
+            "[Gateway.chat] → ${request.model} | " +
+                    "messages=${request.messages.size}, " +
+                    "tools=${request.tools?.size ?: 0}, " +
+                    "stream=${request.stream}, " +
+                    "promptChars=${request.messages.sumOf { it.content.length }}"
+        )
         try {
             val adapter = registry.getAdapterForModel(request.model)
             if (adapter == null) {
@@ -50,20 +57,39 @@ open class ModelGateway(
                     ModelNotFoundException("Model not found: ${request.model}")
                 )
             }
-            logger.info("[Gateway.chat] Using adapter: ${adapter.providerName}")
+            logger.info("[Gateway.chat] adapter=${adapter.providerName} endpoint=${adapter.getChatEndpoint()}")
 
             val vendorRequest = adapter.toVendorRequest(request)
-            logger.info("[HTTP] Request to ${adapter.getChatEndpoint()}: ${vendorRequest.take(2000)}")
+            logger.info(
+                "[Gateway.chat] → ${request.model} | " +
+                        "requestSize=${vendorRequest.length}B, " +
+                        "bodyPreview=${vendorRequest.take(500)}"
+            )
 
             val response = executeRequest(adapter, vendorRequest, request.stream)
-            logger.info("[HTTP] Response: ${response.take(2000)}")
+            logger.info(
+                "[Gateway.chat] ← ${request.model} | " +
+                        "status=200, " +
+                        "responseSize=${response.length}B, " +
+                        "durationMs=${System.currentTimeMillis() - startMs}, " +
+                        "bodyPreview=${response.take(500)}"
+            )
 
             Result.success(adapter.fromVendorResponse(response))
         } catch (e: AppException) {
-            logger.error("[HTTP] AppException: ${e.javaClass.name}: ${e.message}")
+            logger.error(
+                "[Gateway.chat] ✗ ${request.model} | " +
+                        "${e.javaClass.name}: ${e.message} | " +
+                        "durationMs=${System.currentTimeMillis() - startMs}"
+            )
             Result.failure(e)
         } catch (e: Exception) {
-            logger.error("[HTTP] Chat request failed: ${e.javaClass.name}: ${e.message}", e)
+            logger.error(
+                "[Gateway.chat] ✗ ${request.model} | " +
+                        "${e.javaClass.name}: ${e.message} | " +
+                        "durationMs=${System.currentTimeMillis() - startMs}",
+                e
+            )
             Result.failure(NetworkException("Chat request failed: ${e.message}"))
         }
     }
@@ -73,6 +99,13 @@ open class ModelGateway(
      * 支持 stream=true + tools 参数，若模型不支持流式则自动回退到非流式并包装为 Flow
      */
     open fun chatStream(request: ChatRequest): Flow<StreamChunk> = flow {
+        val startMs = System.currentTimeMillis()
+        logger.info(
+            "[Gateway.chatStream] → ${request.model} | " +
+                    "messages=${request.messages.size}, " +
+                    "tools=${request.tools?.size ?: 0}, " +
+                    "promptChars=${request.messages.sumOf { it.content.length }}"
+        )
         val adapter = getCurrentAdapter(request.model)
             ?: throw ModelNotFoundException("Model not found: ${request.model}")
 
@@ -123,6 +156,11 @@ open class ModelGateway(
         }
 
         val vendorRequest = adapter.toVendorRequest(request)
+        logger.info(
+            "[Gateway.chatStream] → ${request.model} | " +
+                    "requestSize=${vendorRequest.length}B, " +
+                    "bodyPreview=${vendorRequest.take(500)}"
+        )
 
         val req = Request.Builder()
             .url(adapter.getStreamEndpoint())
@@ -130,53 +168,83 @@ open class ModelGateway(
             .post(vendorRequest.toRequestBody(jsonMediaType))
             .build()
 
-        httpClient.newCall(req).execute().use { response ->
-            if (!response.isSuccessful) {
-                // 重要：必须读出 body！LLM API 返 4xx/5xx 时的 body 通常是 JSON
-                // {"error":{"message":"tools[0].function.name is required","type":"..."}}，
-                // 不读 body 调试时只能看到 "HTTP 400: " 干入栈。
-                val errorBody = response.body?.string()?.take(2000) ?: "(empty body)"
-                logger.error(
-                    "[HTTP] Stream error response ${response.code} for model=${request.model}: " +
-                            "body=$errorBody, requestSize=${vendorRequest.length} bytes"
-                )
-                throw NetworkException("HTTP ${response.code} (requestSize=${vendorRequest.length}B): $errorBody")
-            }
+        var chunkCount = 0
+        var bytesRead = 0L
+        var lastUsage: Usage? = null
+        var lastFinishReason: String? = null
 
-            val body = response.body ?: throw NetworkException("Empty response body in stream")
-            body.source().let { source ->
-                var consecutiveNullChunks = 0
-                val maxConsecutiveNullChunks = 1000
-                var emittedAnyChunk = false
+        try {
+            httpClient.newCall(req).execute().use { response ->
+                if (!response.isSuccessful) {
+                    // 重要：必须读出 body！LLM API 返 4xx/5xx 时的 body 通常是 JSON
+                    // {"error":{"message":"tools[0].function.name is required","type":"..."}}，
+                    // 不读 body 调试时只能看到 "HTTP 400: " 干入栈。
+                    val errorBody = response.body?.string()?.take(2000) ?: "(empty body)"
+                    logger.error(
+                        "[Gateway.chatStream] ✗ ${request.model} | " +
+                                "status=${response.code} requestSize=${vendorRequest.length}B " +
+                                "durationMs=${System.currentTimeMillis() - startMs} | " +
+                                "body=$errorBody"
+                    )
+                    throw NetworkException("HTTP ${response.code} (requestSize=${vendorRequest.length}B): $errorBody")
+                }
 
-                while (true) {
-                    val line = source.readUtf8Line() ?: break
-                    if (line.isBlank()) {
-                        consecutiveNullChunks = 0
-                        continue
-                    }
+                val body = response.body ?: throw NetworkException("Empty response body in stream")
+                body.source().let { source ->
+                    var consecutiveNullChunks = 0
+                    val maxConsecutiveNullChunks = 1000
+                    var emittedAnyChunk = false
 
-                    val chunk = adapter.parseStreamChunk(line)
-                    if (chunk != null) {
-                        consecutiveNullChunks = 0
-                        emittedAnyChunk = true
-                        emit(chunk)
-                        if (chunk.done) break
-                    } else {
-                        consecutiveNullChunks++
-                        if (consecutiveNullChunks > maxConsecutiveNullChunks) {
-                            throw NetworkException(
-                                "Stream parsing failed: too many consecutive unparseable lines"
-                            )
+                    while (true) {
+                        val line = source.readUtf8Line() ?: break
+                        bytesRead += line.length + 1  // 近似估算
+                        if (line.isBlank()) {
+                            consecutiveNullChunks = 0
+                            continue
+                        }
+
+                        val chunk = adapter.parseStreamChunk(line)
+                        if (chunk != null) {
+                            consecutiveNullChunks = 0
+                            emittedAnyChunk = true
+                            chunkCount++
+                            if (chunk.usage != null) lastUsage = chunk.usage
+                            if (chunk.finishReason != null) lastFinishReason = chunk.finishReason
+                            emit(chunk)
+                            if (chunk.done) break
+                        } else {
+                            consecutiveNullChunks++
+                            if (consecutiveNullChunks > maxConsecutiveNullChunks) {
+                                throw NetworkException(
+                                    "Stream parsing failed: too many consecutive unparseable lines"
+                                )
+                            }
                         }
                     }
-                }
 
-                // 兜底：如果整个响应体没有 emit 任何 chunk，至少 emit done
-                if (!emittedAnyChunk) {
-                    emit(StreamChunk(id = "", delta = "", done = true, usage = null))
+                    // 兜底：如果整个响应体没有 emit 任何 chunk，至少 emit done
+                    if (!emittedAnyChunk) {
+                        emit(StreamChunk(id = "", delta = "", done = true, usage = null))
+                    }
                 }
             }
+            // 流式成功后汇总统计
+            logger.info(
+                "[Gateway.chatStream] ← ${request.model} | " +
+                        "status=200 chunks=$chunkCount " +
+                        "bytes~${bytesRead} " +
+                        "finishReason=$lastFinishReason " +
+                        "usage=${lastUsage?.totalTokens ?: "?"}tok " +
+                        "durationMs=${System.currentTimeMillis() - startMs}"
+            )
+        } catch (e: Exception) {
+            logger.error(
+                "[Gateway.chatStream] ✗ ${request.model} | " +
+                        "${e.javaClass.simpleName}: ${e.message?.take(200)} | " +
+                        "chunksBeforeFail=$chunkCount durationMs=${System.currentTimeMillis() - startMs}",
+                e
+            )
+            throw e
         }
     }.flowOn(Dispatchers.IO)
 
