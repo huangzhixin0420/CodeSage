@@ -29,9 +29,16 @@ class MiniMaxAdapter(
 
     override val chatEndpointPath: String = "/v1/chat/completions"
 
-    override fun supportsFunctionCalling(): Boolean = true
-
-    override fun supportsVision(): Boolean = false
+    // T1.1 修复：使用 ModelCapabilities 集中声明能力
+    override val capabilities: com.codesage.model.dto.ModelCapabilities =
+        com.codesage.model.dto.ModelCapabilities(
+            streaming = true,
+            functionCalling = true,
+            vision = false,
+            toolStreaming = true,
+            maxContextTokens = 128_000,
+            maxOutputTokens = 8_192
+        )
 
     /**
      * MiniMax 兼容性处理：

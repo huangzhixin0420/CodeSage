@@ -11,6 +11,24 @@
     <version>2026.1.2</version>
     <depends>com.intellij.modules.platform</depends>
 
+    <extensionPoints>
+        <extensionPoint
+            name="skillProvider"
+            interface="com.codesage.skill.SkillProvider"
+            dynamic="true"
+        />
+        <extensionPoint
+            name="toolProvider"
+            interface="com.codesage.agent.tools.ToolProvider"
+            dynamic="true"
+        />
+        <extensionPoint
+            name="agentHook"
+            interface="com.codesage.agent.core.AgentHooks"
+            dynamic="true"
+        />
+    </extensionPoints>
+
     <extensions defaultExtensionNs="com.intellij">
         <!-- Application Level Services -->
         <applicationService

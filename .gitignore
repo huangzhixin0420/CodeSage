@@ -31,3 +31,4 @@ Thumbs.db
 
 # IntelliJ Platform sandbox (generated)
 .intellijPlatform/sandbox/
+.intellijPlatform/self-update.lock

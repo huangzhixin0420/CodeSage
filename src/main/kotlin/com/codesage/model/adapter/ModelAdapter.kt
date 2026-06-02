@@ -18,19 +18,31 @@ interface ModelAdapter {
     val supportedModels: List<String>
 
     /**
+     * T1.1 修复：模型能力声明
+     *
+     * 所有 ModelAdapter 实现必须提供完整的能力描述。
+     * 原来散落在 supportsStreaming/supportsFunctionCalling/supportsVision 三个方法里的
+     * 信息集中到 immutable 数据类里，便于智能路由和 UI 展示。
+     *
+     * 默认实现为最小能力集（仅流式）。推荐子类覆盖。
+     */
+    val capabilities: ModelCapabilities
+        get() = ModelCapabilities()
+
+    /**
      * 是否支持流式输出
      */
-    fun supportsStreaming(): Boolean
+    fun supportsStreaming(): Boolean = capabilities.streaming
 
     /**
      * 是否支持函数调用
      */
-    fun supportsFunctionCalling(): Boolean
+    fun supportsFunctionCalling(): Boolean = capabilities.functionCalling
 
     /**
      * 是否支持视觉能力 (多模态)
      */
-    fun supportsVision(): Boolean
+    fun supportsVision(): Boolean = capabilities.vision
 
     /**
      * 将统一请求转换为厂商特定请求
@@ -54,9 +66,9 @@ interface ModelAdapter {
         id = modelId,
         provider = providerName,
         displayName = modelId,
-        supportsStreaming = supportsStreaming(),
-        supportsFunctionCalling = supportsFunctionCalling(),
-        supportsVision = supportsVision()
+        supportsStreaming = capabilities.streaming,
+        supportsFunctionCalling = capabilities.functionCalling,
+        supportsVision = capabilities.vision
     )
 
     /**

@@ -367,10 +367,18 @@ object BuiltInSkills {
         CodeSearchSkill()
     )
 
-    fun getAll(): List<Skill> = skills
+    private val aiSkills = listOf(
+        CodeExplanationSkill(),
+        RefactoringSuggestionSkill(),
+        TestGenerationSkill(),
+        CodeReviewSkill(),
+        DependencyAnalysisSkill()
+    )
+
+    fun getAll(): List<Skill> = skills + aiSkills
 
     fun registerAll(registry: com.codesage.skill.registry.SkillRegistry) {
-        skills.forEach { registry.register(it) }
-        logger.info("Registered ${skills.size} built-in skills")
+        getAll().forEach { registry.register(it) }
+        logger.info("Registered ${getAll().size} built-in skills")
     }
 }

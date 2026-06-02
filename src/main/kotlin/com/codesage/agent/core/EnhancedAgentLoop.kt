@@ -578,6 +578,9 @@ class EnhancedAgentLoop(
 
         // 每个任务结束后重置错误恢复计数器，避免影响后续任务
         errorRecovery.resetAllCounters()
+
+        // T0.2 修复：释放 EventBatchEmitter 资源，避免协程泄漏
+        batchEmitter.shutdown()
     }
 
     /**
@@ -585,6 +588,8 @@ class EnhancedAgentLoop(
      */
     fun interrupt() {
         interrupted = true
+        // T0.2 修复：同时关阖 emitter 避免其内部协程泄漏
+        batchEmitter.shutdown()
         logger.info("Conversation loop interrupt signal sent")
     }
 

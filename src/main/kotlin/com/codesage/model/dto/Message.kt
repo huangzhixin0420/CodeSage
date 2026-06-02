@@ -25,13 +25,37 @@ data class ToolCall(
 
 /**
  * 工具定义
+ *
+ * T6.4 扩展：加 category 和 tags 字段，便于按类别检索。
+ *
+ * 注意：category 默认为 ToolCategory.GENERAL，不强制业务方填写。
+ * 已有 50+ 工具的 metadata 升级时只需要简单声明 category。
  */
 @Serializable
 data class Tool(
     val name: String,
     val description: String,
-    val parameters: ToolParameters
+    val parameters: ToolParameters,
+    val category: ToolCategory = ToolCategory.GENERAL,
+    val tags: Set<String> = emptySet()
 )
+
+/**
+ * 工具类别
+ *
+ * 用于 [ToolRegistry.findByCategory] 和 UI 分类展示。
+ */
+@Serializable
+enum class ToolCategory {
+    FILE_OPERATION,   // 文件读写/搜索/编辑
+    CODE_ANALYSIS,   // 代码洞察/分析
+    GIT,              // Git 操作
+    BUILD,            // Maven/Gradle/npm
+    TEST,             // 测试执行/生成
+    SEARCH,           // 网络搜索/API 调用
+    SYSTEM,           // 系统命令/工具
+    GENERAL           // 其它/默认
+}
 
 /**
  * 工具参数定义
@@ -67,9 +91,10 @@ data class Message(
     companion object {
         fun userMessage(content: String) = Message(role = Role.USER, content = content)
         fun systemMessage(content: String) = Message(role = Role.SYSTEM, content = content)
-        fun assistantMessage(content: String, toolCalls: List<ToolCall>? = null) = 
+        fun assistantMessage(content: String, toolCalls: List<ToolCall>? = null) =
             Message(role = Role.ASSISTANT, content = content, toolCalls = toolCalls)
-        fun toolMessage(content: String, toolCallId: String) = 
+
+        fun toolMessage(content: String, toolCallId: String) =
             Message(role = Role.TOOL, content = content, toolCallId = toolCallId)
     }
 }

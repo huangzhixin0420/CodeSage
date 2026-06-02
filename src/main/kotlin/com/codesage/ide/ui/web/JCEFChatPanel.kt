@@ -40,9 +40,18 @@ class JCEFChatPanel(
     private var currentCollectJob: kotlinx.coroutines.Job? = null
 
     private var currentTurnId: String? = null
+
+    /**
+     * T1.5 修复：当前用户选中的 ChatMode。
+     *
+     * 初始为 `null` = 用户从未选过 → backend 会走 `ChatModeRouter.suggestChatMode` 推测。
+     * 后续通过 `switch_chat_mode` JS 消息更新。
+     */
+    private var currentChatMode: ChatMode? = null
     private var messageCallback: ((String) -> Unit)? = null
     private var stopCallback: (() -> Unit)? = null
     private var switchModelCallback: ((String) -> Unit)? = null
+    private var switchChatModeCallback: ((ChatMode) -> Unit)? = null
     private var sessionActionHandler: ((String, Map<String, Any>) -> Unit)? = null
     private var continueBudgetCallback: ((Int) -> Flow<AgentStreamEvent>)? = null
 
@@ -213,11 +222,19 @@ class JCEFChatPanel(
                 "send_message" -> {
                     val content = json.jsonObject["content"]?.jsonPrimitive?.content ?: ""
                     val clientTurnId = json.jsonObject["turnId"]?.jsonPrimitive?.content
+                    // T1.5 修复：可从消息体中携带 chatMode（可选）。
+                    // 如果 JS 发送了 chatMode 字段，优先使用该值，否则使用 currentChatMode。
+                    val messageChatMode = json.jsonObject["chatMode"]?.jsonPrimitive?.content
+                        ?.let { ChatMode.fromString(it) }
+                        ?: currentChatMode
+                    if (messageChatMode != null) {
+                        currentChatMode = messageChatMode
+                    }
                     if (!clientTurnId.isNullOrBlank()) {
                         currentTurnId = clientTurnId
-                        logger.info("[JS→Kotlin] send_message callback invoked, content length=${content.length}, clientTurnId=$clientTurnId")
+                        logger.info("[JS→Kotlin] send_message callback invoked, content length=${content.length}, clientTurnId=$clientTurnId, chatMode=$currentChatMode")
                     } else {
-                        logger.info("[JS→Kotlin] send_message callback invoked, content length=${content.length}, no clientTurnId")
+                        logger.info("[JS→Kotlin] send_message callback invoked, content length=${content.length}, no clientTurnId, chatMode=$currentChatMode")
                     }
                     if (messageCallback == null) {
                         logger.error("[JS→Kotlin] messageCallback is null! Cannot process message.")
@@ -277,6 +294,16 @@ class JCEFChatPanel(
                     if (model.isNotBlank()) {
                         logger.info("[JS→Kotlin] switch_model to $model")
                         switchModelCallback?.invoke(model)
+                    }
+                }
+
+                "switch_chat_mode" -> {
+                    val modeStr = json.jsonObject["mode"]?.jsonPrimitive?.content ?: ""
+                    val mode = ChatMode.fromString(modeStr)
+                    if (modeStr.isNotBlank() && mode != null) {
+                        currentChatMode = mode
+                        logger.info("[JS→Kotlin] switch_chat_mode to $mode")
+                        switchChatModeCallback?.invoke(mode)
                     }
                 }
 
@@ -520,10 +547,12 @@ class JCEFChatPanel(
         onSendMessage: (String) -> Flow<AgentStreamEvent>,
         onStop: () -> Unit,
         onSwitchModel: ((String) -> Unit)? = null,
+        onSwitchChatMode: ((ChatMode) -> Unit)? = null,
         onSessionAction: ((String, Map<String, Any>) -> Unit)? = null,
         onContinueBudget: ((Int) -> Flow<AgentStreamEvent>)? = null
     ) {
         this.switchModelCallback = onSwitchModel
+        this.switchChatModeCallback = onSwitchChatMode
         this.sessionActionHandler = onSessionAction
         this.continueBudgetCallback = onContinueBudget
         this.scope = scope
@@ -595,6 +624,19 @@ class JCEFChatPanel(
                                         "type" to "text_delta",
                                         "turnId" to turnId,
                                         "delta" to event.delta
+                                    )
+                                )
+                            }
+
+                            // T1.5 修复：转发 ChatMode 建议事件给 UI
+                            is AgentStreamEvent.ModeSuggestion -> {
+                                sendToJS(
+                                    mapOf(
+                                        "type" to "mode_suggestion",
+                                        "turnId" to turnId,
+                                        "effective" to event.effective.name,
+                                        "suggestion" to event.suggestion.name,
+                                        "userExplicit" to event.userExplicit
                                     )
                                 )
                             }
@@ -917,6 +959,20 @@ class JCEFChatPanel(
 
     fun clear() {
         sendToJS(mapOf("type" to "clear"))
+    }
+
+    /**
+     * T1.5 修复：获取当前选中的 ChatMode
+     *
+     * 返回 `null` 表示用户从未显式选择过任何 mode，后端会走 `ChatModeRouter.suggestChatMode` 推测。
+     */
+    fun getCurrentChatMode(): ChatMode? = currentChatMode
+
+    /**
+     * T1.5 修复：手动设置 ChatMode（供 UI 初始化或测试使用）
+     */
+    fun setCurrentChatMode(mode: ChatMode?) {
+        currentChatMode = mode
     }
 
     fun sendSessions(sessions: List<Map<String, Any>>) {

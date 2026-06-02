@@ -8,11 +8,14 @@ import com.codesage.mcp.transport.TransportType
 import com.codesage.shared.config.PluginConfig
 import com.codesage.shared.config.ProviderTypes
 import com.codesage.shared.utils.Logger
+import com.codesage.skill.SkillProvider
 import com.codesage.skill.builtin.BuiltInSkills
+import com.codesage.skill.discovery.DeclarativeSkillLoader
 import com.codesage.skill.executor.SkillExecutor
 import com.codesage.skill.registry.SkillRegistry
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
+import com.intellij.openapi.extensions.ExtensionPointName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -111,7 +114,34 @@ class CodeSageAppService {
     private fun initializeSkillSystem() {
         logger.info("Initializing skill system...")
         BuiltInSkills.registerAll(skillRegistry)
-        logger.info("Registered ${skillRegistry.count()} skills")
+
+        // 加载声明式技能配置
+        val declarativeLoader = DeclarativeSkillLoader(skillRegistry)
+        val declarativeCount = declarativeLoader.loadDefaultConfigs()
+
+        // 加载外部插件贡献的 Skill
+        var externalSkillCount = 0
+        try {
+            val skillProviders = SkillProvider.EP_NAME.extensionList
+            skillProviders.forEach { provider ->
+                try {
+                    val skills = provider.getSkills()
+                    skills.forEach { skillRegistry.register(it) }
+                    externalSkillCount += skills.size
+                    logger.info("Loaded ${skills.size} skills from provider: ${provider.providerName}")
+                } catch (e: Exception) {
+                    logger.error("Failed to load skills from provider: ${provider.providerName}", e)
+                }
+            }
+        } catch (e: IllegalArgumentException) {
+            // 测试环境中扩展点不可用，安全跳过
+            logger.debug("SkillProvider extension point not available (test environment), skipping external skills")
+        }
+
+        logger.info(
+            "Skill system initialized: ${skillRegistry.getAll().size} total " +
+                    "($declarativeCount declarative, $externalSkillCount external)"
+        )
     }
 
     private fun initializeMCPServers() {

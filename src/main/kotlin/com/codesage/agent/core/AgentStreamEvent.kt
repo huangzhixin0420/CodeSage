@@ -169,6 +169,19 @@ sealed class AgentStreamEvent {
     ) : AgentStreamEvent()
 
     /**
+     * T1.5 修复：ChatMode 自动建议
+     *
+     * 当用户未显式选择 mode 时，backend 通过 `ChatModeRouter.suggestChatMode` 推断出建议值，
+     * 并以本事件 emit。UI 收到后可在 UI 上弹出轻提示（如 "已自动切换为编程模式"），
+     * 让用户对 mode 选择有知情权。
+     */
+    data class ModeSuggestion(
+        val effective: ChatMode,
+        val suggestion: ChatMode,
+        val userExplicit: Boolean
+    ) : AgentStreamEvent()
+
+    /**
      * 会话已迁移（如从旧会话恢复或切换）
      */
     data class SessionMigrated(

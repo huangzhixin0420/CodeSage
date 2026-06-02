@@ -14,19 +14,24 @@ import java.util.concurrent.ConcurrentHashMap
  * MCP服务器管理器
  * 管理多个MCP服务器连接
  */
-class MCPServerManager(
+open class MCPServerManager(
     private val skillRegistry: SkillRegistry = SkillRegistry.getInstance()
 ) {
     private val logger = Logger.getLogger<MCPServerManager>()
 
     private val servers = ConcurrentHashMap<String, MCPClient>()
+
+    // T2.2 修复：保存 server config 以便健康监控重连
+    private val serverConfigs = ConcurrentHashMap<String, MCPServerConfig>()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     /**
      * 添加MCP服务器
      */
-    suspend fun addServer(config: MCPServerConfig): MCPServerStatus {
+    open suspend fun addServer(config: MCPServerConfig): MCPServerStatus {
         logger.info("Adding MCP server: ${config.name}")
+        // T2.2 修复：保存 config 以便重连
+        serverConfigs[config.id] = config
 
         val client = MCPClient(config)
         val connection = client.connect()
@@ -90,19 +95,24 @@ class MCPServerManager(
     /**
      * 获取服务器工具列表
      */
-    suspend fun listTools(serverId: String): List<McpTool> {
+    open suspend fun listTools(serverId: String): List<McpTool> {
         return servers[serverId]?.listTools() ?: emptyList()
     }
 
     /**
      * 获取所有服务器状态
      */
-    fun getAllServerStatuses(): Map<String, MCPServerStatus> {
+    open fun getAllServerStatuses(): Map<String, MCPServerStatus> {
         return servers.mapValues { (_, client) ->
             if (client.isConnected()) MCPServerStatus.CONNECTED
             else MCPServerStatus.DISCONNECTED
         }
     }
+
+    /**
+     * T2.2 修复：获取 server config（用于健康监控重连）
+     */
+    open fun serverConfigOf(serverId: String): MCPServerConfig? = serverConfigs[serverId]
 
     /**
      * 断开所有连接

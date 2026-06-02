@@ -189,10 +189,38 @@ class PSIAnalyzer(private val project: Project) {
             null
         }
         val doc = extractDocComment(psiClass as? PsiElement)
+        // T5.2 修复：尝试用类型安全的 PSI API 替代反射
+        // 但在测试 classpath 中 PsiClass 不可用，所以仍然用反射作为 fallback。
         val superTypes = try {
-            val extendsList = psiClass.javaClass.getMethod("getExtendsListTypes").invoke(psiClass)
-            val implementsList = psiClass.javaClass.getMethod("getImplementsListTypes").invoke(psiClass)
-            emptyList<String>() // 简化处理
+            val psiClassApi = try {
+                Class.forName("com.intellij.psi.PsiClass")
+            } catch (e: ClassNotFoundException) {
+                null
+            }
+            if (psiClassApi != null && psiClassApi.isInstance(psiClass)) {
+                // 使用反射调用 supers() / getQualifiedName() / getName()
+                val supersMethod = psiClassApi.getMethod("getSupers")
+                val rawSupers = supersMethod.invoke(psiClass) as? List<*> ?: emptyList<Any?>()
+                val getQnMethod = try {
+                    Class.forName("com.intellij.psi.PsiElement").getMethod("getQualifiedName")
+                } catch (e: Exception) {
+                    null
+                }
+                val getNameMethod = try {
+                    Class.forName("com.intellij.psi.PsiNamedElement").getMethod("getName")
+                } catch (e: Exception) {
+                    null
+                }
+                rawSupers.mapNotNull { sp ->
+                    if (sp == null) null
+                    else {
+                        val qn = getQnMethod?.let { runCatching { it.invoke(sp) as? String }.getOrNull() }
+                        qn ?: getNameMethod?.let { runCatching { it.invoke(sp) as? String }.getOrNull() }
+                    }
+                }
+            } else {
+                emptyList()
+            }
         } catch (e: Exception) {
             emptyList()
         }
@@ -210,13 +238,8 @@ class PSIAnalyzer(private val project: Project) {
     }
 
     private fun inferSymbolType(element: PsiElement): SymbolType {
-        val className = element.javaClass.simpleName
-        return when {
-            className.contains("Class") && !className.contains("Method") -> SymbolType.CLASS
-            className.contains("Method") || className.contains("Function") -> SymbolType.METHOD
-            className.contains("Field") || className.contains("Property") -> SymbolType.FIELD
-            else -> SymbolType.PROPERTY
-        }
+        // T5.1 修复：用类型安全的 ElementClassifier 替代字符串匹配
+        return ElementClassifier.classify(element) ?: SymbolType.PROPERTY
     }
 
     private fun getLineNumber(element: PsiElement): Int {

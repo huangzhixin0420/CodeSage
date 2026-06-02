@@ -227,23 +227,27 @@ class MCPClient(
             is TransportType.WebSocket -> WebSocketTransport(config)
         }
 
-        connection = MCPConnection(config, transport)
-        val success = connection!!.connect()
+        // T0.6 修复：提取到本地 val 避免重复 connection!!，代码更清晰且避免 IDE 警告
+        val newConnection = MCPConnection(config, transport)
+        connection = newConnection
+
+        val success = newConnection.connect()
         if (!success) {
             logger.error("Transport connection failed for ${config.name}")
-            return null
-        }
-
-        // Perform initialize handshake
-        val initialized = connection!!.initialize()
-        if (!initialized) {
-            logger.error("Initialize handshake failed for ${config.name}")
-            connection!!.disconnect()
             connection = null
             return null
         }
 
-        return connection
+        // Perform initialize handshake
+        val initialized = newConnection.initialize()
+        if (!initialized) {
+            logger.error("Initialize handshake failed for ${config.name}")
+            newConnection.disconnect()
+            connection = null
+            return null
+        }
+
+        return newConnection
     }
 
     suspend fun disconnect() {

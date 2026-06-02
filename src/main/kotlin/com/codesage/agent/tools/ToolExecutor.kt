@@ -2,6 +2,7 @@ package com.codesage.agent.tools
 
 import com.codesage.analysis.CodeInsightExecutor
 import com.codesage.model.dto.ToolCall
+import com.codesage.observability.ExecutionTracer
 import com.codesage.shared.utils.Logger
 import com.codesage.tools.guardrails.*
 import com.intellij.openapi.project.Project
@@ -14,16 +15,24 @@ import java.util.concurrent.TimeoutException
  * 工具执行器
  * 负责根据 AI 返回的 ToolCall 调用对应的 IDE 工具
  * 集成 Guardrails（权限控制、输出截断）
+ *
+ * 执行路由优先级：
+ * 1. ToolRegistry 中注册的 ToolHandler（推荐，支持动态扩展）
+ * 2. 硬编码 fallback 路由（遗留代码洞察工具）
  */
 class ToolExecutor(
     private val project: Project?,
     private val guardrails: ToolGuardrails? = null,
     private val rateLimiter: ToolRateLimiter? = null,
-    private val auditLog: ToolAuditLog? = null
+    private val auditLog: ToolAuditLog? = null,
+    private val toolRegistry: ToolRegistry? = null,
+    private val tracer: ExecutionTracer? = null,
+    private val traceContext: ExecutionTracer.TraceContext? = null
 ) {
     private val logger = Logger.getLogger<ToolExecutor>()
     private val json = Json { ignoreUnknownKeys = true }
 
+    // 遗留工具实例（仅用于 fallback）
     private val ideTools = IDETools(project)
     private val extendedTools = ExtendedTools(project)
     private val codeInsightExecutor = CodeInsightExecutor(project)
@@ -31,10 +40,29 @@ class ToolExecutor(
     /**
      * 执行单个工具调用（带重试）
      * @return 工具执行结果的 JSON 字符串
+     *
+     * T7.2 修复：工具调用追踪关联
+     * - 如果提供了 tracer + traceContext，每次工具执行创建 child span
+     * - span 记录：tool name, args (摘要), duration, success/error
+     * - span 完成后写入 EventHistory 供 Observability 面板展示
      */
     suspend fun execute(toolCall: ToolCall): String {
         logger.info("Executing tool: ${toolCall.name} with args: ${toolCall.arguments}")
         val startTime = System.currentTimeMillis()
+
+        // T7.2：开始 child span
+        val spanId = if (tracer != null && traceContext != null) {
+            tracer.addSpan(
+                traceId = traceContext.traceId,
+                parentSpanId = traceContext.currentSpanId,
+                name = "tool.${toolCall.name}",
+                attributes = mapOf(
+                    "tool.id" to toolCall.id,
+                    "tool.name" to toolCall.name,
+                    "args.size" to toolCall.arguments.length.toString()
+                )
+            )
+        } else null
 
         // 1. 频率限制检查（不重试）
         val rateLimitResult = rateLimiter?.check(toolCall.name)
@@ -107,9 +135,32 @@ class ToolExecutor(
                 rateLimiter?.recordSuccess(toolCall.name)
             }
 
+            // T7.2：结束 span (success)
+            if (spanId != null && traceContext != null) {
+                tracer?.endSpan(
+                    traceId = traceContext.traceId,
+                    spanId = spanId,
+                    status = ExecutionTracer.TraceStatus.OK
+                )
+                tracer?.addEvent(
+                    traceId = traceContext.traceId,
+                    spanId = spanId,
+                    eventName = "tool.completed",
+                    attributes = mapOf("duration_ms" to duration.toString())
+                )
+            }
+
             logger.info("[ToolExecutor] ${toolCall.name} completed, result length=${formatted.length}, duration=${duration}ms")
             formatted
         } catch (e: ToolExecutionBlocked) {
+            // T7.2：结束 span (cancelled)
+            if (spanId != null && traceContext != null) {
+                tracer?.endSpan(
+                    traceId = traceContext.traceId,
+                    spanId = spanId,
+                    status = ExecutionTracer.TraceStatus.CANCELLED
+                )
+            }
             throw e
         } catch (e: Exception) {
             val duration = System.currentTimeMillis() - startTime
@@ -123,6 +174,14 @@ class ToolExecutor(
                 resultStatus = "error",
                 durationMs = duration
             )
+            // T7.2：结束 span (error)
+            if (spanId != null && traceContext != null) {
+                tracer?.endSpan(
+                    traceId = traceContext.traceId,
+                    spanId = spanId,
+                    status = ExecutionTracer.TraceStatus.ERROR
+                )
+            }
             formatResult(ToolResult.Error("Execution failed: ${e.message}"))
         }
     }
@@ -157,46 +216,16 @@ class ToolExecutor(
 
     /**
      * 单次工具执行（无重试）
+     *
+     * T6.1 修复：移除硬编码 when 路由。所有工具都应该通过 ToolRegistry 注册为 handler。
+     * 如果遇到未注册的工具名，返回错误（不再走 fallback to 硬编码路径）。
      */
     private suspend fun executeToolOnce(toolCall: ToolCall, args: JsonObject): ToolResult {
-        return when (toolCall.name) {
-            "read_file" -> ideTools.readFile(args)
-            "write_file" -> ideTools.writeFile(args)
-            "list_directory" -> ideTools.listDirectory(args)
-            "search_code" -> ideTools.searchCode(args)
-            "run_command" -> ideTools.runCommand(args)
-            "get_project_structure" -> ideTools.getProjectStructure(args)
-            "find_file" -> ideTools.findFile(args)
-            "grep_code" -> ideTools.grepCode(args)
-            "get_file_info" -> ideTools.getFileInfo(args)
-            "read_multiple_files" -> ideTools.readMultipleFiles(args)
-            "edit_file" -> ideTools.editFile(args)
-            "delete_file" -> ideTools.deleteFile(args)
-            "copy_file" -> ideTools.copyFile(args)
-            "move_file" -> ideTools.moveFile(args)
-            // Git 工具
-            "git_status" -> extendedTools.gitStatus(args)
-            "git_diff" -> extendedTools.gitDiff(args)
-            "git_log" -> extendedTools.gitLog(args)
-            "git_branch" -> extendedTools.gitBranch(args)
-            // Shell / HTTP / 数据处理工具
-            "exec_shell" -> extendedTools.execShell(args)
-            "http_request" -> extendedTools.httpRequest(args)
-            "parse_json" -> extendedTools.parseJson(args)
-            "encode_base64" -> extendedTools.encodeBase64(args)
-            "decode_base64" -> extendedTools.decodeBase64(args)
-            "format_json" -> extendedTools.formatJson(args)
-            "hash_md5" -> extendedTools.hashMd5(args)
-            "hash_sha256" -> extendedTools.hashSha256(args)
-            // 代码洞察工具（真实 PSI 实现）
-            "analyze_symbol" -> codeInsightExecutor.analyzeSymbol(args)
-            "find_usages" -> codeInsightExecutor.findUsages(args)
-            "get_inheritance_chain" -> codeInsightExecutor.getInheritanceChain(args)
-            "semantic_search" -> codeInsightExecutor.semanticSearch(args)
-            "get_file_summary" -> codeInsightExecutor.getFileSummary(args)
-            "get_project_stats" -> codeInsightExecutor.getProjectStats(args)
-            else -> ToolResult.Error("Unknown tool: ${toolCall.name}")
-        }
+        val handler = toolRegistry?.getHandler(toolCall.name)
+            ?: return ToolResult.Error("Unknown tool: ${toolCall.name}. Tool must be registered via ToolRegistry.register() before use.")
+
+        logger.debug("[ToolExecutor] Routing '${toolCall.name}' to ToolHandler")
+        return handler.execute(args)
     }
 
     /**

@@ -1,0 +1,92 @@
+# CodeSage CI Pipeline
+# 验证：编译 + 单元测试 + 插件打包
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# 避免多个并发任务竞争 sandbox 资源
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 阶段 1: 编译 + 单元测试
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-home-cache-cleanup: true
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Compile Kotlin
+        run: ./gradlew compileKotlin --no-daemon
+
+      - name: Compile test Kotlin
+        run: ./gradlew compileTestKotlin --no-daemon
+
+      - name: Run unit tests
+        run: ./gradlew test --no-daemon
+        env:
+          # IntelliJ 测试 sandbox 在 headless 环境下需要这些 flag
+          GRADLE_OPTS: -Dfile.encoding=UTF-8 -XX:+HeapDumpOnOutOfMemoryError
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            build/reports/tests/test/**
+            build/test-results/test/**
+
+  # 阶段 2: 打包插件（仅 main 分支）
+  package:
+    name: Build Plugin
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-home-cache-cleanup: true
+
+      - name: Build plugin zip
+        run: ./gradlew buildPlugin --no-daemon
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codesage-plugin
+          path: build/distributions/*.zip

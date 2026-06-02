@@ -1,0 +1,81 @@
+{
+  "version": "1",
+  "entries": [
+    {
+      "id": "filesystem",
+      "name": "File System MCP Server",
+      "description": "Provides file system read/write/search tools. Requires a directory argument to bound the scope.",
+      "category": "FILE_OPERATION",
+      "tags": ["fs", "files", "official"],
+      "homepage": "https://github.com/modelcontextprotocol/servers",
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]
+      }
+    },
+    {
+      "id": "git",
+      "name": "Git MCP Server",
+      "description": "Exposes git operations (status, diff, log, commit, branch) as MCP tools.",
+      "category": "GIT",
+      "tags": ["git", "vcs", "official"],
+      "homepage": "https://github.com/modelcontextprotocol/servers",
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-git", "--repository", "."]
+      }
+    },
+    {
+      "id": "github",
+      "name": "GitHub MCP Server",
+      "description": "Access GitHub repositories, issues, PRs, and actions via MCP. Requires GITHUB_TOKEN env var.",
+      "category": "SEARCH",
+      "tags": ["github", "remote", "official"],
+      "homepage": "https://github.com/modelcontextprotocol/servers",
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "env": {}
+      }
+    },
+    {
+      "id": "fetch",
+      "name": "Fetch MCP Server",
+      "description": "Web content fetching and conversion to markdown. Useful for documentation lookup.",
+      "category": "SEARCH",
+      "tags": ["web", "fetch", "official"],
+      "transport": {
+        "type": "stdio",
+        "command": "uvx",
+        "args": ["mcp-server-fetch"]
+      }
+    },
+    {
+      "id": "sqlite",
+      "name": "SQLite MCP Server",
+      "description": "Query and modify SQLite databases via MCP. Useful for project-level data inspection.",
+      "category": "DATA",
+      "tags": ["sql", "database", "official"],
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "mcp-server-sqlite", "--db-path", "./data.db"]
+      }
+    },
+    {
+      "id": "playwright",
+      "name": "Playwright MCP Server",
+      "description": "Browser automation via Playwright. Useful for E2E testing and web scraping.",
+      "category": "TEST",
+      "tags": ["browser", "e2e", "official"],
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@playwright/mcp"]
+      }
+    }
+  ]
+}

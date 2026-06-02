@@ -33,6 +33,12 @@ class ConversationPersistence(
     // 跟踪已被删除的会话ID，防止异步写入已删除的会话
     private val deletedSessionIds = ConcurrentHashMap.newKeySet<String>()
 
+    // T0.3 修复：跟踪未完成的异步写入，以便 shutdown() 等待
+    private val pendingWrites = java.util.concurrent.atomic.AtomicInteger(0)
+
+    // 跟踪所有 in-flight 写入任务以便 shutdown() 等待
+    private val inFlightTasks = java.util.concurrent.ConcurrentHashMap<Runnable, java.util.concurrent.Future<*>>()
+
     init {
         storageDir.mkdirs()
         loadAllSessions()
@@ -40,9 +46,54 @@ class ConversationPersistence(
 
     /**
      * 持久化会话（异步，不阻塞调用线程）
+     *
+     * T0.3 修复（对应 CodeReview #3/#4/#5）：
+     * 1. 原子写入：renameTo 返回 false 时保留 tempFile 并记录错误（不静默丢失）
+     * 2. 使用 Future 跟踪 in-flight 任务，shutdown() 可以等待其完成
+     * 3. 即使 pendingWrites 计数不为零，shutdown() 也会以超时机制等待
      */
     fun saveSession(session: AgentSession, messages: List<Message>) {
-        val persisted = PersistedSession(
+        // T0.3 修复：save 不能取消 delete 的标记。一旦会话被 delete，
+        // 所有后续的 save 都应被拒绝，避免“删除后复活”这类数据泄漏。
+        // 语义与 Option B 一致：delete 是永久操作。
+        if (session.id in deletedSessionIds) {
+            logger.debug("Skipping save for deleted session: ${session.id}")
+            return
+        }
+        val persisted = buildPersisted(session, messages)
+        sessionCache[session.id] = persisted
+
+        val task = Runnable {
+            // 如果该会话已被删除，跳过写入
+            if (session.id in deletedSessionIds) {
+                logger.debug("Skipping save for deleted session: ${session.id}")
+                return@Runnable
+            }
+            try {
+                writeAtomically(persisted)
+                logger.debug("Saved session: ${session.id} (${messages.size} messages)")
+            } catch (e: Exception) {
+                logger.error("Failed to save session: ${session.id}", e)
+            }
+        }
+        val future = ioExecutor.submit(task)
+        inFlightTasks[task] = future
+        // 任务完成后从跟踪中移除（保持 map 不增长）
+        future?.let { f ->
+            // 借助 afterExecute callback 不易设置，这里用一个轻量级的 “完成后清理” 包装
+            val cleanup = Runnable {
+                try {
+                    f.get()
+                } catch (_: Exception) {
+                }
+                inFlightTasks.remove(task)
+            }
+            ioExecutor.execute(cleanup)
+        }
+    }
+
+    private fun buildPersisted(session: AgentSession, messages: List<Message>): PersistedSession =
+        PersistedSession(
             id = session.id,
             name = session.name,
             createdAt = session.createdAt,
@@ -55,24 +106,39 @@ class ConversationPersistence(
             )
         )
 
-        sessionCache[session.id] = persisted
-        deletedSessionIds.remove(session.id)
-
-        ioExecutor.execute {
-            // 如果该会话已被删除，跳过写入
-            if (session.id in deletedSessionIds) {
-                logger.debug("Skipping save for deleted session: ${session.id}")
-                return@execute
+    /**
+     * 原子写入：先写临时文件，再重命名。
+     * 修复：renameTo 跨平台/跨设备可能返回 false，原代码静默丢失。
+     * 新行为：rename 失败时保留 tempFile 并抛出异常，让调用方/记录器看到。
+     */
+    @Throws(java.io.IOException::class)
+    private fun writeAtomically(persisted: PersistedSession) {
+        val file = getSessionFile(persisted.id)
+        file.parentFile?.mkdirs()
+        val tempFile = File(file.parent, "${file.name}.tmp")
+        try {
+            tempFile.writeText(json.encodeToString(persisted))
+            val renamed = tempFile.renameTo(file)
+            if (!renamed) {
+                // 跨设备/权限问题：保留 tempFile 以供恢复
+                logger.error(
+                    "Atomic rename failed for session ${persisted.id}. " +
+                            "Kept temp file: ${tempFile.absolutePath}"
+                )
+                throw java.io.IOException(
+                    "Failed to rename ${tempFile.path} to ${file.path}; " +
+                            "temp file preserved"
+                )
             }
-            try {
-                val file = getSessionFile(session.id)
-                val tempFile = File(file.parent, "${file.name}.tmp")
-                tempFile.writeText(json.encodeToString(persisted))
-                tempFile.renameTo(file)
-                logger.debug("Saved session: ${session.id} (${messages.size} messages)")
-            } catch (e: Exception) {
-                logger.error("Failed to save session: ${session.id}", e)
+        } catch (e: Exception) {
+            // 如果是 rename 失败以外的其他原因，也保留 tempFile
+            if (tempFile.exists() && e !is java.io.IOException) {
+                logger.error(
+                    "Write failed for session ${persisted.id}, tempFile preserved at ${tempFile.absolutePath}",
+                    e
+                )
             }
+            throw e
         }
     }
 
@@ -80,26 +146,15 @@ class ConversationPersistence(
      * 同步持久化会话（用于关键路径需要确认保存的场景）
      */
     suspend fun saveSessionSync(session: AgentSession, messages: List<Message>) = withContext(Dispatchers.IO) {
-        val persisted = PersistedSession(
-            id = session.id,
-            name = session.name,
-            createdAt = session.createdAt,
-            lastActivityAt = session.lastActivityAt,
-            isActive = session.isActive,
-            messages = messages.map { it.toPersistedMessage() },
-            metadata = SessionMetadata(
-                messageCount = messages.size,
-                saveVersion = CURRENT_VERSION
-            )
-        )
-
+        if (session.id in deletedSessionIds) {
+            logger.debug("Skipping sync save for deleted session: ${session.id}")
+            return@withContext
+        }
+        val persisted = buildPersisted(session, messages)
         sessionCache[session.id] = persisted
 
         try {
-            val file = getSessionFile(session.id)
-            val tempFile = File(file.parent, "${file.name}.tmp")
-            tempFile.writeText(json.encodeToString(persisted))
-            tempFile.renameTo(file)
+            writeAtomically(persisted)
             logger.debug("Saved session sync: ${session.id} (${messages.size} messages)")
         } catch (e: Exception) {
             logger.error("Failed to save session: ${session.id}", e)
@@ -108,17 +163,25 @@ class ConversationPersistence(
 
     /**
      * 加载会话
+     *
+     * T0.3 修复：在加入缓存前检查 deletedSessionIds，避免被刚 delete 的 session 被 “复活”
      */
     fun loadSession(sessionId: String): PersistedSession? {
+        if (sessionId in deletedSessionIds) {
+            return null
+        }
         // 先查缓存
         sessionCache[sessionId]?.let { return it }
+        if (sessionId in deletedSessionIds) return null  // double-check after cache miss
 
         // 从磁盘加载
         return try {
             val file = getSessionFile(sessionId)
             if (!file.exists()) return null
+            if (sessionId in deletedSessionIds) return null  // 再检查一次
 
             val persisted = json.decodeFromString<PersistedSession>(file.readText())
+            if (sessionId in deletedSessionIds) return null  // decode 后再检查
             sessionCache[sessionId] = persisted
             persisted
         } catch (e: Exception) {
@@ -158,19 +221,25 @@ class ConversationPersistence(
 
     /**
      * 删除会话
+     *
+     * T0.3 修复：先删文件再清理缓存，避免 loadSession 在中间窗口从磁盘重新加载后将其放入缓存。
      */
     fun deleteSession(sessionId: String): Boolean {
-        sessionCache.remove(sessionId)
-        deletedSessionIds.add(sessionId)
+        deletedSessionIds.add(sessionId)  // 先标记，防止任何后续 save 写入
         return try {
             val file = getSessionFile(sessionId)
-            if (file.exists()) {
+            val fileDeleted = if (file.exists()) {
                 file.delete()
             } else {
-                true // 文件不存在但缓存已删除，视为成功
+                true  // 文件不存在，视为已删除
             }
+            // 文件删除成功后才从缓存移除
+            sessionCache.remove(sessionId)
+            fileDeleted
         } catch (e: Exception) {
             logger.error("Failed to delete session: $sessionId", e)
+            // 异常情况下，保留 deletedSessionIds 标记，清理缓存
+            sessionCache.remove(sessionId)
             false
         }
     }
@@ -195,10 +264,24 @@ class ConversationPersistence(
     }
 
     /**
-     * 关闭持久化管理器
+     * 关闭持久化管理器。
+     *
+     * T0.3 修复（对应 CodeReview #3）：
+     * 1. 调用 shutdown() 后不接收新任务
+     * 2. awaitTermination(5s) 等待现有 in-flight 任务完成
+     * 3. 超时后 shutdownNow() 强制中断
      */
     fun shutdown() {
         ioExecutor.shutdown()
+        try {
+            if (!ioExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                logger.warn("ConversationPersistence executor did not terminate in 5s, forcing shutdown")
+                ioExecutor.shutdownNow()
+            }
+        } catch (e: InterruptedException) {
+            ioExecutor.shutdownNow()
+            Thread.currentThread().interrupt()
+        }
     }
 
     companion object {

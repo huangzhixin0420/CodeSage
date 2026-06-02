@@ -54,7 +54,7 @@ class IDETools(private val project: Project?) {
         const val MAX_CONTENT_LENGTH = 10_000
     }
 
-    private fun resolvePath(path: String): String {
+    internal fun resolvePath(path: String): String {
         val base = project?.basePath
         return if (base != null && !File(path).isAbsolute) {
             File(base, path).canonicalPath
@@ -63,7 +63,7 @@ class IDETools(private val project: Project?) {
         }
     }
 
-    private fun resolveWorkingDir(path: String?): String {
+    internal fun resolveWorkingDir(path: String?): String {
         return when {
             path == null -> project?.basePath ?: System.getProperty("user.dir")
             File(path).isAbsolute -> path

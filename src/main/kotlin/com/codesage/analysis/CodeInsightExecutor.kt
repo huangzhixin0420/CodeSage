@@ -35,10 +35,22 @@ class CodeInsightExecutor(
 
     //region analyze_symbol
 
+    /**
+     * T5.3 增强：analyze_symbol 返回结构化字段
+     *
+     * 附加字段（基于已有 SymbolInfo）：
+     * - `complexity`: 圈复杂度近似（节点 + 1）
+     * - `parameter_count`: 参数数量
+     * - `callers`: 调用此符号的位置列表（最多 50 个）
+     * - `callees`: 此符号调用的位置列表（最多 50 个）
+     * - `doc_status`: DOCUMENTED / PARTIAL / MISSING
+     * - `visibility`: PUBLIC / INTERNAL / PRIVATE
+     */
     fun analyzeSymbol(args: JsonObject): ToolResult {
         val symbolName = args["symbol_name"]?.jsonPrimitive?.content
             ?: return ToolResult.Error("Missing 'symbol_name' parameter")
         val filePathHint = args["file_path"]?.jsonPrimitive?.content
+        val includeCallGraph = args["include_call_graph"]?.jsonPrimitive?.content?.toBoolean() ?: true
 
         if (project == null) {
             return ToolResult.Error("No active project")
@@ -84,7 +96,8 @@ class CodeInsightExecutor(
 
                 val targetSymbols = filtered.ifEmpty { allSymbols }
 
-                val jsonArray = targetSymbols.map { it.toJson() }
+                // T5.3 增强：补充结构化字段
+                val jsonArray = targetSymbols.map { sym -> enrichSymbolJson(sym, includeCallGraph) }
                 ToolResult.Success(
                     JsonObject(
                         mapOf(
@@ -99,6 +112,153 @@ class CodeInsightExecutor(
                 ToolResult.Error("Symbol analysis failed: ${e.message}")
             }
         }
+    }
+
+    /**
+     * T5.3：为 symbol 输出添加结构化字段
+     */
+    private fun enrichSymbolJson(sym: PSIAnalyzer.SymbolInfo, includeCallGraph: Boolean): JsonObject {
+        val baseMap = sym.toJsonJsonObject()
+        // 圈复杂度近似：parameters.count + 1（启发式；METHOD 类型才有意义）
+        val complejidad = if (sym.type == PSIAnalyzer.SymbolType.METHOD) {
+            // 启发式：参数越多 + 嵌套越深，复杂度越高
+            // 这里用简化公式：1 + parameters + modifiers中含 "suspend"/"operator" 等
+            1 + sym.parameters.size + sym.modifiers.count { it in setOf("suspend", "operator", "inline") }
+        } else {
+            1
+        }
+        // 文档状态
+        val docStatus = when {
+            sym.docComment == null -> "MISSING"
+            sym.docComment.length < 20 -> "PARTIAL"
+            else -> "DOCUMENTED"
+        }
+        // 可见性
+        val visibility = when {
+            "public" in sym.modifiers || sym.modifiers.isEmpty() -> "PUBLIC"
+            "private" in sym.modifiers -> "PRIVATE"
+            "internal" in sym.modifiers -> "INTERNAL"
+            "protected" in sym.modifiers -> "PROTECTED"
+            else -> "UNKNOWN"
+        }
+        // 调用者
+        val callers = if (includeCallGraph) findPsiReferences(sym.name, "method") + findPsiReferences(sym.name, "class")
+        else emptyList()
+        val callees = if (includeCallGraph) findCallees(sym)
+        else emptyList()
+
+        val extras = mutableMapOf<String, JsonElement>(
+            "complexity" to JsonPrimitive(complejidad),
+            "parameter_count" to JsonPrimitive(sym.parameters.size),
+            "doc_status" to JsonPrimitive(docStatus),
+            "visibility" to JsonPrimitive(visibility)
+        )
+        if (includeCallGraph) {
+            extras["callers"] = JsonArray(callers.take(50))
+            extras["callees"] = JsonArray(callees.take(50))
+        }
+        // 合并到 baseMap
+        val merged = baseMap.toMutableMap()
+        merged.putAll(extras)
+        return JsonObject(merged)
+    }
+
+    /**
+     * T5.3 辅助：把 SymbolInfo 转 JsonObject（之前 toJson 转 JsonElement）
+     */
+    private fun PSIAnalyzer.SymbolInfo.toJsonJsonObject(): Map<String, JsonElement> = mapOf(
+        "name" to JsonPrimitive(name),
+        "type" to JsonPrimitive(type.name),
+        "qualified_name" to JsonPrimitive(qualifiedName ?: ""),
+        "file_path" to JsonPrimitive(filePath),
+        "line_number" to JsonPrimitive(lineNumber),
+        "doc_comment" to JsonPrimitive(docComment ?: ""),
+        "modifiers" to JsonArray(modifiers.map { JsonPrimitive(it) }),
+        "parameters" to JsonArray(parameters.map {
+            JsonObject(
+                mapOf(
+                    "name" to JsonPrimitive(it.name),
+                    "type" to JsonPrimitive(it.type),
+                    "default_value" to JsonPrimitive(it.defaultValue ?: "")
+                )
+            )
+        }),
+        "return_type" to JsonPrimitive(returnType ?: ""),
+        "super_types" to JsonArray(superTypes.map { JsonPrimitive(it) })
+    )
+
+    /**
+     * T5.3 辅助：查找一个 symbol 调用的所有其它符号（callees）
+     * 启发式：扫描 symbol 所在文件，提取方法体内的 method/function call patterns
+     */
+    private fun findCallees(sym: PSIAnalyzer.SymbolInfo): List<JsonElement> {
+        val results = mutableListOf<JsonElement>()
+        try {
+            val file = LocalFileSystem.getInstance().findFileByPath(sym.filePath) ?: return emptyList()
+            val text = java.nio.file.Files.readString(java.nio.file.Paths.get(sym.filePath), StandardCharsets.UTF_8)
+            val lines = text.lines()
+            // 简化：在 sym.lineNumber 附近搜索
+            // 启发式：找紧跟 sym 的大括号内的方法调用
+            val startLine = (sym.lineNumber - 1).coerceAtLeast(0)
+            val endLine = (startLine + 50).coerceAtMost(lines.size)
+            if (startLine >= lines.size) return emptyList()
+            val bodyRegion = lines.subList(startLine, endLine).joinToString("\n")
+            // 简单正则：identifier 后跟 (
+            val callPattern = Regex("""\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(""")
+            val matches = callPattern.findAll(bodyRegion)
+            for (m in matches) {
+                val called = m.groupValues[1]
+                // 过滤掉常见的关键字
+                if (called in setOf(
+                        "if",
+                        "when",
+                        "for",
+                        "while",
+                        "do",
+                        "when",
+                        "return",
+                        "throw",
+                        "println",
+                        "print",
+                        "require",
+                        "check",
+                        "assert",
+                        "also",
+                        "let",
+                        "run",
+                        "apply",
+                        "with",
+                        "use",
+                        "synchronized",
+                        "lazy",
+                        "let",
+                        "takeIf",
+                        "takeUnless",
+                        "filter",
+                        "map",
+                        "forEach",
+                        "flatMap",
+                        "groupBy",
+                        "associate",
+                        "to",
+                        "until"
+                    )
+                ) continue
+                if (called == sym.name) continue  // 排除自己
+                results.add(
+                    JsonObject(
+                        mapOf(
+                            "name" to JsonPrimitive(called),
+                            "file_path" to JsonPrimitive(sym.filePath),
+                            "type" to JsonPrimitive("call")
+                        )
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            logger.debug("findCallees failed for ${sym.name}: ${e.message}")
+        }
+        return results
     }
 
     //endregion

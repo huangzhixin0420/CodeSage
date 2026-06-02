@@ -28,9 +28,20 @@ abstract class OpenAICompatibleAdapter(
     abstract override val supportedModels: List<String>
     abstract val chatEndpointPath: String
 
-    override fun supportsStreaming(): Boolean = true
-    override fun supportsFunctionCalling(): Boolean = true
-    override fun supportsVision(): Boolean = false
+    // T1.1 修复：默认能力。子类可覆盖 capabilities 提供更精确的描述。
+    override val capabilities: ModelCapabilities = ModelCapabilities(
+        streaming = true,
+        functionCalling = true,
+        vision = false,
+        toolStreaming = true,
+        maxContextTokens = 128_000,
+        maxOutputTokens = 4_096
+    )
+
+    // 旧方法保留为默认实现，从 capabilities 派生
+    override fun supportsStreaming(): Boolean = capabilities.streaming
+    override fun supportsFunctionCalling(): Boolean = capabilities.functionCalling
+    override fun supportsVision(): Boolean = capabilities.vision
 
     protected open fun convertMessage(message: Message): VendorMessage {
         return message.toVendorMessage()

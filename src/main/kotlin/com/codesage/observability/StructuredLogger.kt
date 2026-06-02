@@ -5,7 +5,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.text.SimpleDateFormat
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import java.util.*
 import java.util.concurrent.ConcurrentLinkedQueue
 
@@ -21,10 +22,15 @@ class StructuredLogger(
     private val baseLogger = Logger.getLogger<StructuredLogger>()
     private val json = Json { prettyPrint = false }
     private val buffer = ConcurrentLinkedQueue<LogEntry>()
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-    private val timestampFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault()).apply {
-        timeZone = TimeZone.getTimeZone("UTC")
-    }
+
+    // T0.7 修复：用线程安全的 DateTimeFormatter 替换 SimpleDateFormat
+    // 原实现：SimpleDateFormat 非线程安全，而 StructuredLogger 在多线程 flush 时会共享
+    // 这两个实例，理论上会导致日期格式化错乱（虽然实际表现是数字错位不严重）
+    private val dateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.getDefault())
+        .withZone(ZoneOffset.systemDefault())
+    private val timestampFormat: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.getDefault())
+            .withZone(ZoneOffset.UTC)
 
     init {
         logDir.mkdirs()
@@ -58,7 +64,7 @@ class StructuredLogger(
         metadata: Map<String, String> = emptyMap()
     ) {
         val entry = LogEntry(
-            timestamp = timestampFormat.format(Date()),
+            timestamp = timestampFormat.format(java.time.Instant.now()),
             level = level.name,
             component = component,
             event = event,
@@ -170,7 +176,7 @@ class StructuredLogger(
      * 读取日志文件
      */
     fun readLogs(date: Date = Date(), limit: Int = 1000): List<LogEntry> {
-        val file = File(logDir, "${dateFormat.format(date)}.ndjson")
+        val file = File(logDir, "${dateFormat.format(date.toInstant())}.ndjson")
         if (!file.exists()) return emptyList()
 
         return try {
@@ -191,7 +197,7 @@ class StructuredLogger(
     }
 
     private fun getLogFile(): File {
-        return File(logDir, "${dateFormat.format(Date())}.ndjson")
+        return File(logDir, "${dateFormat.format(java.time.Instant.now())}.ndjson")
     }
 
     private fun startFlushTimer() {

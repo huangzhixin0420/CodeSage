@@ -1636,6 +1636,8 @@
         <script>
             // ===== State =====
             let currentMode = "agent";
+            // T1.5 修复：当前用户选中的 ChatMode（null = 用户未选，后端走 suggestion）
+            let currentChatMode = null;
             let isGenerating = false;
             let currentTurnId = null;
             let turns = new Map();
@@ -1946,6 +1948,70 @@
                         JSON.stringify({ type: "switch_model", model: model }),
                     );
                 }
+            }
+
+            // T1.5 修复：响应后端发来的 ChatMode 自动建议
+            // data = { effective, suggestion, userExplicit }
+            // 行为：
+            //   - 如果 userExplicit=true，仅更新 UI 按钮（不修改 currentChatMode）。
+            //   - 如果 userExplicit=false，弹出轻提示 "已自动选择 X 模式" 并更新 UI 按钮。
+            //     （不修改 currentChatMode，这样下次用户选模式时仍可覆盖）
+            function handleModeSuggestion(data) {
+                if (!data || !data.effective) return;
+                const effective = data.effective;
+                const userExplicit = !!data.userExplicit;
+                // 同步更新 UI 按钮的 active 态（仅在 selected 模式不等于 effective 时）
+                document.querySelectorAll(".mode-btn").forEach(function (btn) {
+                    if (btn.dataset.mode === effective) {
+                        btn.classList.add("active");
+                    } else if (!userExplicit) {
+                        // 后端自动推断：仅当后端明确选了不同 mode 时取消其他 active
+                        // 避免覆盖用户手动选择
+                    }
+                });
+                if (!userExplicit) {
+                    // 后端自动建议：弹出轻提示（不覆盖 currentChatMode）
+                    const label = modeLabel(effective);
+                    showToast(
+                        "ℹ️ 已根据消息内容自动选择 " +
+                            label +
+                            " 模式（点击顶部门手动切换）",
+                        4000,
+                    );
+                }
+            }
+
+            function modeLabel(mode) {
+                switch (mode) {
+                    case "GENERAL":
+                        return "通用";
+                    case "CODING":
+                        return "编程";
+                    case "REASONING":
+                        return "推理";
+                    case "VISION":
+                        return "视觉";
+                    default:
+                        return mode;
+                }
+            }
+
+            // 轻提示吐司（不阻塞 UI）
+            function showToast(message, durationMs) {
+                let toast = document.getElementById("codesage-toast");
+                if (!toast) {
+                    toast = document.createElement("div");
+                    toast.id = "codesage-toast";
+                    toast.style.cssText =
+                        "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(40,40,40,0.92);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,0.3);transition:opacity 0.3s;opacity:0;";
+                    document.body.appendChild(toast);
+                }
+                toast.textContent = message;
+                toast.style.opacity = "1";
+                clearTimeout(toast._hideTimer);
+                toast._hideTimer = setTimeout(function () {
+                    toast.style.opacity = "0";
+                }, durationMs || 3000);
             }
 
             document.addEventListener("click", (e) => {
@@ -2380,12 +2446,18 @@
                 input.style.height = "auto";
                 startAITurn();
                 if (window.javaBridge) {
-                    const msg = JSON.stringify({
+                    // T1.5 修复：发送消息时携带 chatMode 选区。
+                    // null 表示用户未选，后端会走 suggestChatMode 推测。
+                    const msgPayload = {
                         type: "send_message",
                         content: text,
                         turnId: currentTurnId,
                         model: currentModel,
-                    });
+                    };
+                    if (currentChatMode) {
+                        msgPayload.chatMode = currentChatMode;
+                    }
+                    const msg = JSON.stringify(msgPayload);
                     try {
                         window.javaBridge.sendMessage(msg);
                     } catch (e) {
@@ -2393,6 +2465,34 @@
                     }
                 } else {
                     onError(currentTurnId, "Java Bridge 未初始化，请刷新页面");
+                }
+            }
+
+            // T1.5 修复：切换 ChatMode 的 JS 函数
+            // 调用后通过 javaBridge.sendMessage 告知后端记下用户选择，
+            // 同时更新 UI 按钮的 active 状态。
+            function switchChatMode(mode) {
+                if (!mode) return;
+                currentChatMode = mode;
+                // 更新 UI 按钮 active 态
+                document.querySelectorAll(".mode-btn").forEach(function (btn) {
+                    if (btn.dataset.mode === mode) {
+                        btn.classList.add("active");
+                    } else {
+                        btn.classList.remove("active");
+                    }
+                });
+                if (window.javaBridge) {
+                    try {
+                        window.javaBridge.sendMessage(
+                            JSON.stringify({
+                                type: "switch_chat_mode",
+                                mode: mode,
+                            }),
+                        );
+                    } catch (e) {
+                        console.error("[switchChatMode] failed:", e);
+                    }
                 }
             }
 
@@ -3157,6 +3257,10 @@
                             break;
                         case "tool_confirmation_needed":
                             eventBus.emit("tool_confirmation_needed", data);
+                            break;
+                        // T1.5 修复：后端发出 ChatMode 自动建议事件
+                        case "mode_suggestion":
+                            handleModeSuggestion(data);
                             break;
                         case "turn_complete":
                             eventBus.emit("turn_complete", data);

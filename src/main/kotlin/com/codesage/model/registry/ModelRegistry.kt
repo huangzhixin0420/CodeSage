@@ -53,6 +53,24 @@ class ModelRegistry {
     fun listProviders(): List<String> = adapters.keys.toList()
 
     /**
+     * T1.1 修复：按能力反查适配器。
+     *
+     * 接受一个能力集合，返回所有声明支持这些能力的适配器。
+     * 用于 T1.4 SmartRouter 的反查逻辑。
+     */
+    fun getAdaptersForCapabilities(required: Set<com.codesage.model.dto.Capability>): List<ModelAdapter> {
+        return adapters.values.filter { adapter ->
+            adapter.capabilities.let { caps -> required.all { caps.hasCapability(it) } }
+        }
+    }
+
+    /**
+     * T1.4 预置：按能力获取首个可用适配器
+     */
+    fun getFirstAdapterForCapabilities(required: Set<com.codesage.model.dto.Capability>): ModelAdapter? =
+        getAdaptersForCapabilities(required).firstOrNull()
+
+    /**
      * 创建MiniMax适配器
      * @param models 用户配置的模型列表，传入后覆盖默认值
      */

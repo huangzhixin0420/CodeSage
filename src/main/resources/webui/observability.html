@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSage Observability</title>
+    <style>
+        :root {
+            --bg: #1e1e1e;
+            --bg-card: #252526;
+            --bg-hover: #2d2d30;
+            --border: #3c3c3c;
+            --text: #cccccc;
+            --text-dim: #858585;
+            --accent: #0e7afe;
+            --success: #4ec9b0;
+            --warn: #dcdcaa;
+            --error: #f48771;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding: 16px;
+            font-size: 13px;
+        }
+        h1 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text);
+        }
+        h2 {
+            font-size: 14px;
+            font-weight: 600;
+            margin: 16px 0 8px 0;
+            color: var(--text);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 4px;
+        }
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .kpi-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 12px;
+        }
+        .kpi-label {
+            font-size: 11px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .kpi-value {
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+        .kpi-sub {
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-top: 2px;
+        }
+        .toolbar {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            align-items: center;
+        }
+        .toolbar button {
+            background: var(--bg-card);
+            color: var(--text);
+            border: 1px solid var(--border);
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .toolbar button:hover { background: var(--bg-hover); }
+        .toolbar input {
+            background: var(--bg-card);
+            color: var(--text);
+            border: 1px solid var(--border);
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            flex: 1;
+        }
+        .section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin-bottom: 16px;
+            overflow: hidden;
+        }
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            background: var(--bg-hover);
+            border-bottom: 1px solid var(--border);
+        }
+        .section-title {
+            font-weight: 600;
+            font-size: 13px;
+        }
+        .section-body {
+            padding: 12px 14px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .empty {
+            color: var(--text-dim);
+            font-style: italic;
+            text-align: center;
+            padding: 24px;
+        }
+        /* Trace tree */
+        .trace-tree { font-family: 'SF Mono', Consolas, monospace; font-size: 12px; }
+        .trace-node { padding: 2px 0; }
+        .trace-node-line { display: flex; align-items: center; gap: 6px; }
+        .trace-toggle { cursor: pointer; user-select: none; width: 12px; color: var(--text-dim); }
+        .trace-name { color: var(--accent); font-weight: 500; }
+        .trace-status { padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 500; }
+        .trace-status.OK { background: var(--success); color: #000; }
+        .trace-status.ERROR { background: var(--error); color: #000; }
+        .trace-status.CANCELLED { background: var(--warn); color: #000; }
+        .trace-duration { color: var(--text-dim); font-size: 11px; }
+        .trace-attrs { color: var(--text-dim); font-size: 11px; margin-left: 18px; }
+        .trace-children { margin-left: 18px; border-left: 1px dashed var(--border); padding-left: 8px; }
+        /* Event list */
+        .event-list { font-family: 'SF Mono', Consolas, monospace; font-size: 11px; }
+        .event-item {
+            display: grid;
+            grid-template-columns: 60px 90px 1fr 100px;
+            gap: 8px;
+            padding: 4px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .event-item:last-child { border-bottom: none; }
+        .event-seq { color: var(--text-dim); }
+        .event-type {
+            color: var(--accent);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .event-payload { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .event-time { color: var(--text-dim); text-align: right; }
+        /* Metrics table */
+        .metrics-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .metrics-table th, .metrics-table td {
+            text-align: left;
+            padding: 4px 8px;
+            border-bottom: 1px solid var(--border);
+        }
+        .metrics-table th { color: var(--text-dim); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+        .metrics-table td.num { text-align: right; font-family: 'SF Mono', Consolas, monospace; }
+    </style>
+</head>
+<body>
+    <h1>📊 CodeSage Observability</h1>
+
+    <div class="kpi-grid" id="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-label">Total Events</div>
+            <div class="kpi-value" id="kpi-events">—</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Total Traces</div>
+            <div class="kpi-value" id="kpi-traces">—</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Counters</div>
+            <div class="kpi-value" id="kpi-counters">—</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Timers</div>
+            <div class="kpi-value" id="kpi-timers">—</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Uptime</div>
+            <div class="kpi-value" id="kpi-uptime">—</div>
+        </div>
+    </div>
+
+    <div class="toolbar">
+        <input type="text" id="session-filter" placeholder="Filter by session id (optional)" />
+        <button onclick="refresh()">🔄 Refresh</button>
+        <button onclick="autoRefresh = !autoRefresh; this.textContent = autoRefresh ? '⏸ Pause' : '▶ Auto'">
+            ▶ Auto
+        </button>
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <span class="section-title">🌳 Trace Tree</span>
+            <span style="color: var(--text-dim); font-size: 11px;" id="trace-count">0 traces</span>
+        </div>
+        <div class="section-body" id="trace-section">
+            <div class="empty">No traces yet. Send a message to start one.</div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <span class="section-title">📋 Recent Events</span>
+            <span style="color: var(--text-dim); font-size: 11px;" id="event-count">0 events</span>
+        </div>
+        <div class="section-body" id="event-section">
+            <div class="empty">No events recorded.</div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-header">
+            <span class="section-title">📈 Metrics</span>
+        </div>
+        <div class="section-body">
+            <h2 style="margin-top: 0; border: none;">Counters</h2>
+            <table class="metrics-table" id="counters-table">
+                <thead><tr><th>Name</th><th style="text-align: right">Value</th></tr></thead>
+                <tbody><tr><td colspan="2" class="empty">No counters</td></tr></tbody>
+            </table>
+            <h2>Timers</h2>
+            <table class="metrics-table" id="timers-table">
+                <thead><tr><th>Name</th><th>Count</th><th>Avg (ms)</th><th>Min</th><th>Max</th><th>Total (ms)</th></tr></thead>
+                <tbody><tr><td colspan="6" class="empty">No timers</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        let autoRefresh = false;
+        let lastSnapshot = null;
+        let expandedTraces = new Set();
+
+        function formatTime(ts) {
+            if (!ts) return '—';
+            const d = new Date(ts);
+            return d.toLocaleTimeString();
+        }
+
+        function formatUptime(ms) {
+            const totalSec = Math.floor(ms / 1000);
+            const h = Math.floor(totalSec / 3600);
+            const m = Math.floor((totalSec % 3600) / 60);
+            const s = totalSec % 60;
+            if (h > 0) return `${h}h ${m}m ${s}s`;
+            if (m > 0) return `${m}m ${s}s`;
+            return `${s}s`;
+        }
+
+        function escapeHtml(s) {
+            if (s == null) return '';
+            return String(s).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        function renderTree(node, depth) {
+            const isExpanded = expandedTraces.has(node.span.id) || depth === 0;
+            const attrs = node.span.attributes;
+            const attrsHtml = Object.keys(attrs).length
+                ? `<div class="trace-attrs">${Object.entries(attrs).map(([k, v]) => `${escapeHtml(k)}=${escapeHtml(v)}`).join(', ')}</div>`
+                : '';
+            const childrenHtml = isExpanded && node.children.length
+                ? `<div class="trace-children">${node.children.map(c => renderTree(c, depth + 1)).join('')}</div>`
+                : '';
+            const toggle = node.children.length
+                ? `<span class="trace-toggle" onclick="toggleTrace('${node.span.id}')">${isExpanded ? '▼' : '▶'}</span>`
+                : '<span class="trace-toggle">·</span>';
+            return `
+                <div class="trace-node">
+                    <div class="trace-node-line">
+                        ${toggle}
+                        <span class="trace-name">${escapeHtml(node.span.name)}</span>
+                        <span class="trace-status ${node.span.status.name}">${node.span.status.name}</span>
+                        ${node.span.durationMs ? `<span class="trace-duration">${node.span.durationMs}ms</span>` : ''}
+                    </div>
+                    ${attrsHtml}
+                    ${childrenHtml}
+                </div>
+            `;
+        }
+
+        window.toggleTrace = function(spanId) {
+            if (expandedTraces.has(spanId)) {
+                expandedTraces.delete(spanId);
+            } else {
+                expandedTraces.add(spanId);
+            }
+            render();
+        };
+
+        function render() {
+            if (!lastSnapshot) return;
+            const snap = lastSnapshot;
+            const summary = lastSnapshot.summary;
+
+            // KPI
+            document.getElementById('kpi-events').textContent = summary ? summary.totalEvents : snap.events.length;
+            document.getElementById('kpi-traces').textContent = summary ? summary.totalTraces : snap.recentTraceIds.length;
+            document.getElementById('kpi-counters').textContent = Object.keys(snap.metrics.counters).length;
+            document.getElementById('kpi-timers').textContent = Object.keys(snap.metrics.timers).length;
+            document.getElementById('kpi-uptime').textContent = formatUptime(summary ? summary.uptimeMs : 0);
+
+            // Trace trees
+            const traceSection = document.getElementById('trace-section');
+            if (snap.recentTraceIds.length === 0) {
+                traceSection.innerHTML = '<div class="empty">No traces yet.</div>';
+            } else {
+                // 仅显示第一个 trace 的树（简化）
+                traceSection.innerHTML = snap.recentTraceIds
+                    .slice(0, 5)
+                    .map(id => `<div style="margin-bottom: 12px;"><div class="trace-name" style="margin-bottom: 4px;">📍 ${escapeHtml(id)}</div><div class="trace-tree">${snap._traceTreeHtml || '<div class="empty">Click Refresh to load tree</div>'}</div></div>`)
+                    .join('');
+                document.getElementById('trace-count').textContent = `${snap.recentTraceIds.length} traces`;
+            }
+
+            // Events
+            const eventSection = document.getElementById('event-section');
+            if (snap.events.length === 0) {
+                eventSection.innerHTML = '<div class="empty">No events recorded.</div>';
+            } else {
+                eventSection.innerHTML = `<div class="event-list">${
+                    snap.events.map(e => `
+                        <div class="event-item">
+                            <span class="event-seq">#${e.seq}</span>
+                            <span class="event-type">${escapeHtml(e.eventType)}</span>
+                            <span class="event-payload">${escapeHtml(e.payload || '')}</span>
+                            <span class="event-time">${formatTime(e.timestamp)}</span>
+                        </div>
+                    `).join('')
+                }</div>`;
+                document.getElementById('event-count').textContent = `${snap.events.length} events`;
+            }
+
+            // Counters
+            const countersBody = document.querySelector('#counters-table tbody');
+            const counterEntries = Object.entries(snap.metrics.counters);
+            countersBody.innerHTML = counterEntries.length === 0
+                ? '<tr><td colspan="2" class="empty">No counters</td></tr>'
+                : counterEntries
+                    .sort((a, b) => a[0].localeCompare(b[0]))
+                    .map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="num">${v}</td></tr>`)
+                    .join('');
+
+            // Timers
+            const timersBody = document.querySelector('#timers-table tbody');
+            const timerEntries = Object.entries(snap.metrics.timers);
+            timersBody.innerHTML = timerEntries.length === 0
+                ? '<tr><td colspan="6" class="empty">No timers</td></tr>'
+                : timerEntries
+                    .sort((a, b) => a[0].localeCompare(b[0]))
+                    .map(([k, v]) => `<tr>
+                        <td>${escapeHtml(k)}</td>
+                        <td class="num">${v.count}</td>
+                        <td class="num">${v.avgMs.toFixed(1)}</td>
+                        <td class="num">${v.minMs}</td>
+                        <td class="num">${v.maxMs}</td>
+                        <td class="num">${v.totalMs}</td>
+                    </tr>`)
+                    .join('');
+        }
+
+        async function refresh() {
+            const sessionId = document.getElementById('session-filter').value || null;
+            if (window.javaBridge && window.javaBridge.sendMessage) {
+                try {
+                    window.javaBridge.sendMessage(JSON.stringify({
+                        type: 'observability.refresh',
+                        sessionId: sessionId
+                    }));
+                } catch (e) {
+                    console.error('refresh failed', e);
+                }
+            }
+        }
+
+        // Handle inbound messages from Kotlin
+        window.onJavaMessage = function(msg) {
+            try {
+                const data = typeof msg === 'string' ? JSON.parse(msg) : msg;
+                if (data.type === 'observability.snapshot') {
+                    lastSnapshot = data.payload;
+                    render();
+                } else if (data.type === 'observability.trace') {
+                    if (!lastSnapshot) lastSnapshot = {};
+                    if (!lastSnapshot._traceTreeHtml) lastSnapshot._traceTreeHtml = '';
+                    lastSnapshot._traceTreeHtml = data.payload.html;
+                    render();
+                }
+            } catch (e) {
+                console.error('onJavaMessage failed', e);
+            }
+        };
+
+        // Auto refresh
+        setInterval(() => { if (autoRefresh) refresh(); }, 3000);
+
+        // Initial load
+        refresh();
+    </script>
+</body>
+</html>

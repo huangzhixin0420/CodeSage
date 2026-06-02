@@ -71,7 +71,9 @@ class AgentErrorRecovery {
     private val logger = Logger.getLogger<AgentErrorRecovery>()
 
     // 重试计数器（按错误类型 + 模型名隔离）
-    private val retryCounters = ConcurrentHashMap<String, AtomicInteger>()
+    // T0.4 修复：原本是 ConcurrentHashMap 无界增长，错误后从未清理。
+    // 现改为有界 LRU，容量 [MAX_RETRY_KEYS]，超过则淘汰最久未使用的条目。
+    private val retryCounters = BoundedConcurrentMap<String, AtomicInteger>(MAX_RETRY_KEYS)
     private val maxRetries = mapOf(
         FailoverReason.EMPTY_RESPONSE to 3,
         FailoverReason.INCOMPLETE_SCRATCHPAD to 2,
@@ -278,7 +280,7 @@ class AgentErrorRecovery {
         fallbackModels: List<String> = DEFAULT_FALLBACK_MODELS
     ): RecoveryAction {
         val counterKey = "${classified.reason.name}:${classified.modelName}"
-        val currentRetries = retryCounters.getOrPut(counterKey) { AtomicInteger(0) }.get()
+        val currentRetries = retryCounters.computeIfAbsent(counterKey) { AtomicInteger(0) }.get()
         val maxRetry = maxRetries[classified.reason] ?: 0
 
         logger.info(
@@ -292,8 +294,8 @@ class AgentErrorRecovery {
             return RecoveryAction.Abort("${classified.reason} 超过最大重试次数 ($maxRetry)")
         }
 
-        // 增加重试计数
-        retryCounters[counterKey]?.incrementAndGet()
+        // 增加重试计数（同时更新 LRU 访问顺序）
+        retryCounters.computeIfAbsent(counterKey) { AtomicInteger(0) }.incrementAndGet()
 
         // 动态获取可用的 fallback 模型（优先使用传入的列表，否则从 Registry 查询）
         val effectiveFallbackModels = fallbackModels.ifEmpty {
@@ -459,6 +461,13 @@ class AgentErrorRecovery {
          * 现改为从 ModelRegistry 动态获取用户实际已配置的可用模型。
          */
         val DEFAULT_FALLBACK_MODELS = emptyList<String>()
+
+        /**
+         * T0.4 修复：retryCounters 的最大容量。
+         * 超过此容量会淘汰最久未使用的 key。
+         * 默认 256 足以容纳 12 种错误类型 × ~20 个模型名字。
+         */
+        const val MAX_RETRY_KEYS = 256
     }
 
     /**

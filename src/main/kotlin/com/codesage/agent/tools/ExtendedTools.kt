@@ -26,7 +26,7 @@ class ExtendedTools(private val project: Project?) {
      */
     var ssrfProtectionEnabled: Boolean = true
 
-    private fun resolveWorkingDir(path: String?): String {
+    internal fun resolveWorkingDir(path: String?): String {
         return when {
             path == null -> project?.basePath ?: System.getProperty("user.dir")
             File(path).isAbsolute -> path

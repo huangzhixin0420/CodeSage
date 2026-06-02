@@ -1,59 +1,231 @@
 # CodeSage 内置技能配置文件
-# 此文件定义了内置技能的元数据，实际技能逻辑在代码中实现
+# 此文件定义了技能的元数据和实现方式，支持内置、命令、HTTP、脚本四种实现类型
 
 skills:
+  # region 文件操作技能
+
   - id: "builtin_file_reader"
     name: "File Reader"
     description: "读取文件内容"
     category: FILE_OPERATION
     tags: ["file", "read", "io"]
     version: "1.0.0"
-    
+    inputSchema:
+      path:
+        type: "string"
+        description: "文件路径"
+        required: true
+      encoding:
+        type: "string"
+        description: "编码，默认UTF-8"
+    outputSchema:
+      content:
+        type: "string"
+        description: "文件内容"
+    implementation:
+      type: "builtin"
+      className: "com.codesage.skill.builtin.FileReaderSkill"
+
   - id: "builtin_file_writer"
     name: "File Writer"
     description: "写入内容到文件"
     category: FILE_OPERATION
     tags: ["file", "write", "io"]
     version: "1.0.0"
-    
+    inputSchema:
+      path:
+        type: "string"
+        description: "文件路径"
+        required: true
+      content:
+        type: "string"
+        description: "要写入的内容"
+        required: true
+    outputSchema:
+      success:
+        type: "boolean"
+    implementation:
+      type: "builtin"
+      className: "com.codesage.skill.builtin.FileWriterSkill"
+
   - id: "builtin_file_search"
     name: "File Search"
     description: "搜索文件和目录"
     category: FILE_OPERATION
     tags: ["file", "search", "glob"]
     version: "1.0.0"
-    
+    inputSchema:
+      pattern:
+        type: "string"
+        description: "文件匹配模式"
+        required: true
+    outputSchema:
+      files:
+        type: "array"
+        description: "匹配的文件列表"
+    implementation:
+      type: "builtin"
+      className: "com.codesage.skill.builtin.FileSearchSkill"
+
+  # endregion
+
+  # region 项目分析技能
+
   - id: "builtin_project_analysis"
     name: "Project Analysis"
     description: "分析项目结构和依赖"
     category: CODE_SEARCH
     tags: ["project", "analysis", "structure"]
     version: "1.0.0"
-    
-  - id: "builtin_git_operation"
-    name: "Git Operation"
-    description: "执行Git操作命令"
-    category: GIT
-    tags: ["git", "version", "control", "vcs"]
+    inputSchema:
+      projectPath:
+        type: "string"
+        description: "项目路径"
+    outputSchema:
+      structure:
+        type: "object"
+    implementation:
+      type: "builtin"
+      className: "com.codesage.skill.builtin.ProjectAnalysisSkill"
+
+  # endregion
+
+  # region AI 辅助编程技能
+
+  - id: "builtin_code_explanation"
+    name: "Code Explanation"
+    description: "解释代码的功能、逻辑和设计意图"
+    category: AI_INTEGRATION
+    tags: ["ai", "explanation", "code", "documentation"]
     version: "1.0.0"
-    
-  - id: "builtin_command_execution"
-    name: "Command Execution"
-    description: "执行系统命令"
-    category: EXECUTION
-    tags: ["shell", "command", "exec", "terminal"]
+    inputSchema:
+      code:
+        type: "string"
+        description: "要解释的代码片段"
+        required: true
+      detail_level:
+        type: "string"
+        description: "详细程度: brief/detailed/deep"
+        enum: ["brief", "detailed", "deep"]
+    outputSchema:
+      explanation:
+        type: "string"
+        description: "代码解释"
+    implementation:
+      type: "builtin"
+      className: "com.codesage.skill.builtin.CodeExplanationSkill"
+
+  - id: "builtin_refactoring_suggestion"
+    name: "Refactoring Suggestion"
+    description: "分析代码并提供重构建议"
+    category: AI_INTEGRATION
+    tags: ["ai", "refactoring", "code-quality", "improvement"]
     version: "1.0.0"
-    
-  - id: "builtin_web_request"
-    name: "Web Request"
-    description: "发送HTTP请求"
-    category: NETWORK
-    tags: ["http", "request", "network", "api", "rest"]
+    inputSchema:
+      code:
+        type: "string"
+        description: "要分析的代码片段"
+        required: true
+      focus_areas:
+        type: "array"
+        description: "重点关注领域"
+    outputSchema:
+      suggestions:
+        type: "array"
+        description: "重构建议列表"
+    implementation:
+      type: "builtin"
+      className: "com.codesage.skill.builtin.RefactoringSuggestionSkill"
+
+  - id: "builtin_test_generation"
+    name: "Test Generation"
+    description: "为给定代码生成单元测试"
+    category: AI_INTEGRATION
+    tags: ["ai", "testing", "unit-test", "code-generation"]
     version: "1.0.0"
-    
-  - id: "builtin_code_search"
-    name: "Code Search"
-    description: "在项目中搜索代码"
+    inputSchema:
+      code:
+        type: "string"
+        description: "要测试的代码"
+        required: true
+      framework:
+        type: "string"
+        description: "测试框架"
+        enum: ["junit", "testng", "pytest", "jest", "auto"]
+    outputSchema:
+      tests:
+        type: "string"
+        description: "生成的测试代码"
+    implementation:
+      type: "builtin"
+      className: "com.codesage.skill.builtin.TestGenerationSkill"
+
+  - id: "builtin_code_review"
+    name: "Code Review"
+    description: "执行代码审查，检查潜在问题和安全漏洞"
+    category: AI_INTEGRATION
+    tags: ["ai", "code-review", "security", "performance", "quality"]
+    version: "1.0.0"
+    inputSchema:
+      code:
+        type: "string"
+        description: "要审查的代码"
+        required: true
+      focus:
+        type: "string"
+        description: "审查重点"
+        enum: ["security", "performance", "style", "all"]
+    outputSchema:
+      issues:
+        type: "array"
+        description: "发现的问题列表"
+    implementation:
+      type: "builtin"
+      className: "com.codesage.skill.builtin.CodeReviewSkill"
+
+  - id: "builtin_dependency_analysis"
+    name: "Dependency Analysis"
+    description: "分析项目依赖关系，检测过时依赖"
     category: CODE_SEARCH
-    tags: ["search", "code", "find", "grep", "regex"]
+    tags: ["dependency", "security", "analysis", "project"]
     version: "1.0.0"
+    inputSchema:
+      project_path:
+        type: "string"
+        description: "项目路径"
+    outputSchema:
+      dependencies:
+        type: "array"
+        description: "依赖列表"
+    implementation:
+      type: "builtin"
+      className: "com.codesage.skill.builtin.DependencyAnalysisSkill"
+
+  # endregion
+
+  # region 声明式外部技能示例（命令型）
+
+  - id: "declarative_tree"
+    name: "Tree Command"
+    description: "以树状结构列出目录内容"
+    category: FILE_OPERATION
+    tags: ["file", "tree", "directory"]
+    version: "1.0.0"
+    inputSchema:
+      path:
+        type: "string"
+        description: "目录路径"
+        required: true
+      depth:
+        type: "integer"
+        description: "最大深度"
+    outputSchema:
+      output:
+        type: "string"
+        description: "命令输出"
+    implementation:
+      type: "external"
+      externalType: "command"
+      command: "tree"
+
+  # endregion

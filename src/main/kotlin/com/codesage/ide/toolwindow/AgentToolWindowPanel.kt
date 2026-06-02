@@ -101,13 +101,25 @@ class AgentToolWindowPanel(
             chatPanel.initialize(
                 scope = scope!!,
                 onSendMessage = { message ->
-                    logger.info("[AgentToolWindowPanel] onSendMessage called, message length=${message.length}")
-                    core.chatWithTools(message)
+                    logger.info("[AgentToolWindowPanel] onSendMessage called, message length=${message.length}, chatMode=${chatPanel.getCurrentChatMode()}")
+                    // T1.5 修复：传用户选中的 chatMode 选区。null = 用户未选 → 后端建议。
+                    val chatMode = chatPanel.getCurrentChatMode()
+                    if (chatMode != null) {
+                        core.chatWithTools(message, mode = chatMode, userExplicit = true)
+                    } else {
+                        core.chatWithTools(message, userExplicit = false)
+                    }
                 },
                 onStop = { core.interrupt() },
                 onSwitchModel = { model ->
                     logger.info("[AgentToolWindowPanel] switch model to $model")
                     core.switchModel(model)
+                },
+                onSwitchChatMode = { mode ->
+                    logger.info("[AgentToolWindowPanel] switch chat mode to $mode")
+                    // T1.5 修复：用户在 UI 上点了 mode 按钮时存到 chatPanel 状态里，
+                    // 下一次发消息时 onSendMessage 会读取并以 userExplicit=true 传递。
+                    chatPanel.setCurrentChatMode(mode)
                 },
                 onSessionAction = { action, params ->
                     logger.info("[AgentToolWindowPanel] session action: $action, params=$params")

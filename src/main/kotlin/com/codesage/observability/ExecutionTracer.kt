@@ -113,6 +113,11 @@ class ExecutionTracer {
     fun getActiveTrace(traceId: String): Trace? = activeTraces[traceId]
 
     /**
+     * 获取所有活跃追踪的 ID 列表
+     */
+    fun listActiveTraceIds(): List<String> = activeTraces.keys.toList()
+
+    /**
      * 获取追踪历史
      */
     fun getTraceHistory(limit: Int = 50): List<Trace> {
