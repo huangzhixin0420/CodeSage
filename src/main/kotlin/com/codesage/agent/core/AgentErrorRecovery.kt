@@ -17,6 +17,7 @@ enum class FailoverReason {
     AUTH_EXPIRED,            // 401
     CONTEXT_TOO_LONG,        // 413 / context limit
     IMAGE_TOO_LARGE,         // 400 image size
+    BAD_REQUEST,             // 400 - 请求被拒为格式错误（重试同 payload 不会好）
     MULTIMODAL_UNSUPPORTED,  // provider 不支持多模态 tool content
     TIMEOUT,                 // 网络超时
     EMPTY_RESPONSE,          // 模型返回空内容
@@ -83,6 +84,7 @@ class AgentErrorRecovery {
         FailoverReason.TIMEOUT to 3,
         FailoverReason.CONTEXT_TOO_LONG to 2,
         FailoverReason.IMAGE_TOO_LARGE to 2,
+        FailoverReason.BAD_REQUEST to 1,  // 同 payload 重试无意义，只试 1 次 fallback
         FailoverReason.MULTIMODAL_UNSUPPORTED to 1,
         FailoverReason.AUTH_EXPIRED to 2,
         FailoverReason.PROVIDER_UNAVAILABLE to 3,
@@ -163,6 +165,23 @@ class AgentErrorRecovery {
                     shouldCompress = true,
                     shouldFallback = true,
                     statusCode = statusCode,
+                    originalError = error,
+                    modelName = model
+                )
+
+            // HTTP 400 Bad Request - 请求被服务端拒为格式错误。
+            // 重点：同 payload 重试不会变好，因为是 payload 本身被拒。
+            // 但不同模型的验证规则不同（OpenAI / Anthropic / Gemini 校验不一样），
+            // 所以可以试 1 次 fallback。如果 fallback 也 400 才 abort。
+            // IMAGE_TOO_LARGE / MULTIMODAL_UNSUPPORTED 在上面以更具体的 message 匹配过
+            // 400 with image/multimodal 不会落到这里。
+            statusCode == 400 ->
+                ClassifiedError(
+                    reason = FailoverReason.BAD_REQUEST,
+                    retryable = true,
+                    shouldCompress = true,  // 压缩可能让 payload 变小后被接受
+                    shouldFallback = true,  // 不同 model 验证规则可能不同
+                    statusCode = 400,
                     originalError = error,
                     modelName = model
                 )
@@ -333,6 +352,32 @@ class AgentErrorRecovery {
 
             FailoverReason.IMAGE_TOO_LARGE ->
                 RecoveryAction.CompressAndRetry()
+
+            FailoverReason.BAD_REQUEST -> {
+                // HTTP 400：同 payload 重试不会变好。但不同 model 验证规则不同，
+                // 试 1 次 fallback（maxRetries=1 保证只走 1 次）。fallback 仍 400 则 Abort。
+                val fallback = effectiveFallbackModels.firstOrNull()
+                if (fallback != null && fallback != classified.modelName) {
+                    logger.warn(
+                        "HTTP 400 on model=${classified.modelName}, " +
+                                "falling back to $fallback. " +
+                                "body=${classified.originalError.message?.take(300)}"
+                    )
+                    RecoveryAction.RetryWithModel(fallback, calculateBackoff(currentRetries))
+                } else if (classified.shouldCompress) {
+                    // 没有 fallback 但可以试压缩后重试（payload 过大是常见 400 原因）
+                    logger.warn(
+                        "HTTP 400 with no fallback available, attempting compress+retry. " +
+                                "body=${classified.originalError.message?.take(300)}"
+                    )
+                    RecoveryAction.CompressAndRetry()
+                } else {
+                    RecoveryAction.Abort(
+                        "HTTP 400 Bad Request 且 fallback/压缩都不可用，" +
+                                "重试无意义。body=${classified.originalError.message?.take(300)}"
+                    )
+                }
+            }
 
             FailoverReason.MULTIMODAL_UNSUPPORTED -> {
                 val fallback = effectiveFallbackModels.firstOrNull()

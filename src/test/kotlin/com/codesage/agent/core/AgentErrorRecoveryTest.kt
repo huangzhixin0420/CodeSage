@@ -344,4 +344,99 @@ class AgentErrorRecoveryTest {
         // 第一个 fallback 就是当前 model，应当跳过走到 SimpleRetry
         assertTrue(action is RecoveryAction.SimpleRetry, "got: $action")
     }
+
+    // ===== 修复：HTTP 400 单独分类为 BAD_REQUEST =====
+
+    @Test
+    fun `HTTP 400 should classify as BAD_REQUEST not UNKNOWN`() {
+        // 场景：LLM API 返回 HTTP 400（Bad Request），原代码会落到 UNKNOWN 分支，
+        // 然后重试 2 次同 payload 都失败。现在 400 单独分类为 BAD_REQUEST，
+        // 可以走 fallback 避免同模型死磕。
+        val error = NetworkException("HTTP 400: {\"error\":\"invalid tool_calls format\"}")
+        val classified = recovery.classify(error, model = "primary-model")
+        assertEquals(
+            FailoverReason.BAD_REQUEST, classified.reason,
+            "HTTP 400 should be BAD_REQUEST, not UNKNOWN (was ${classified.reason})"
+        )
+        assertTrue(classified.shouldFallback, "BAD_REQUEST should try fallback")
+        assertTrue(classified.shouldCompress, "BAD_REQUEST should compress (payload too big is common cause)")
+        assertTrue(classified.retryable, "BAD_REQUEST should be retryable (via fallback)")
+        assertEquals(400, classified.statusCode)
+    }
+
+    @Test
+    fun `BAD_REQUEST with fallback should switch model once then abort`() {
+        // 场景：原 model 返回 400，有 fallback 可用
+        // 期望：切到 fallback（不是同 model 死磕）；同 (reason, model) 计数限制只 1 次
+        val error = NetworkException("HTTP 400: bad param")
+        val classified = recovery.classify(error, model = "primary-model")
+        val agent = AgentCore()
+
+        // 第一次 recover：fallback 跳到 fallback-model
+        val action1 = recovery.recover(agent, classified, fallbackModels = listOf("fallback-model"))
+        assertTrue(
+            action1 is RecoveryAction.RetryWithModel,
+            "first BAD_REQUEST should switch to fallback, got: $action1"
+        )
+        assertEquals("fallback-model", (action1 as RecoveryAction.RetryWithModel).model)
+
+        // counter 只 1 (max=1)，下一次调用同一 reason + primary-model 仍 OK，因为换了 model 后 key 也换了
+        // 但如果是同一 model 第二次（同 key 累加），应该 abort
+        val classifiedPrimary = recovery.classify(error, model = "primary-model")
+        val action2 = recovery.recover(agent, classifiedPrimary, fallbackModels = listOf("fallback-model"))
+        // counter 现在 = 1（上面那次 increment 的），1 >= max=1，所以 abort
+        assertTrue(
+            action2 is RecoveryAction.Abort,
+            "second BAD_REQUEST on same model should abort (max=1 reached), got: $action2"
+        )
+    }
+
+    @Test
+    fun `BAD_REQUEST with no fallback should compress and retry`() {
+        // 没有 fallback 但 shouldCompress=true，应当试 CompressAndRetry
+        val error = NetworkException("HTTP 400: payload too large")
+        val classified = recovery.classify(error, model = "primary-model")
+        val agent = AgentCore()
+
+        val action = recovery.recover(agent, classified, fallbackModels = emptyList())
+        assertTrue(
+            action is RecoveryAction.CompressAndRetry,
+            "BAD_REQUEST with no fallback should CompressAndRetry, got: $action"
+        )
+    }
+
+    @Test
+    fun `400 with image keyword should still classify as IMAGE_TOO_LARGE`() {
+        // 重要：400 with "image" 不能被 BAD_REQUEST 抢走，要走 IMAGE_TOO_LARGE
+        val error = NetworkException("HTTP 400: image too large, max size 5MB")
+        val classified = recovery.classify(error, model = "primary-model")
+        assertEquals(
+            FailoverReason.IMAGE_TOO_LARGE, classified.reason,
+            "400 with 'image' keyword should stay IMAGE_TOO_LARGE, got: ${classified.reason}"
+        )
+    }
+
+    @Test
+    fun `BAD_REQUEST abort message should include body for diagnosis`() {
+        // Abort 消息要带上 400 的 body，让上层 / 用户能看到 LLM 拒的具体原因
+        val error = NetworkException("HTTP 400: {\"error\":\"tools[0].function.name is required\"}")
+        val classified = recovery.classify(error, model = "primary-model")
+        val agent = AgentCore()
+
+        // 第一次 (counter=0) 跳 fallback-model，counter += 1
+        recovery.recover(agent, classified, fallbackModels = listOf("fallback-model"))
+        // 第二次 (counter=1) 同 model 达到 max=1 → abort
+        val classified2 = recovery.classify(error, model = "primary-model")
+        val action = recovery.recover(agent, classified2, fallbackModels = listOf("fallback-model"))
+        assertTrue(action is RecoveryAction.Abort)
+        val msg = (action as RecoveryAction.Abort).message
+        assertTrue(
+            msg.contains("HTTP 400") || msg.contains("Bad Request"),
+            "abort should mention HTTP 400, got: $msg"
+        )
+        assertTrue(
+            msg.contains("function.name") || msg.contains("tools"),
+            "abort should include the 400 body for diagnosis, got: $msg"
+        )
+    }
 }
