@@ -132,7 +132,15 @@ open class ModelGateway(
 
         httpClient.newCall(req).execute().use { response ->
             if (!response.isSuccessful) {
-                throw NetworkException("HTTP ${response.code}: ${response.message}")
+                // 重要：必须读出 body！LLM API 返 4xx/5xx 时的 body 通常是 JSON
+                // {"error":{"message":"tools[0].function.name is required","type":"..."}}，
+                // 不读 body 调试时只能看到 "HTTP 400: " 干入栈。
+                val errorBody = response.body?.string()?.take(2000) ?: "(empty body)"
+                logger.error(
+                    "[HTTP] Stream error response ${response.code} for model=${request.model}: " +
+                            "body=$errorBody, requestSize=${vendorRequest.length} bytes"
+                )
+                throw NetworkException("HTTP ${response.code} (requestSize=${vendorRequest.length}B): $errorBody")
             }
 
             val body = response.body ?: throw NetworkException("Empty response body in stream")
