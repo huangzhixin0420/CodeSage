@@ -88,11 +88,24 @@ class JCEFChatPanel(
             val newBrowser = JBCefBrowser()
             browser = newBrowser
 
-            val htmlContent = loadWebUiHtml()
-            if (htmlContent != null) {
-                newBrowser.loadHTML(htmlContent, "http://codesage.local/index.html")
+            // 提取 webui/* 到本地目录, 后面用 file:// 加载,
+            // 这样 HTML 中所有相对路径 (CSS / JS / ES modules) 都能正确解析
+            val extractedDir = try {
+                WebResourceExtractor.extract()
+            } catch (e: Exception) {
+                logger.error("Failed to extract webui resources, using inline fallback", e)
+                null
+            }
+            if (extractedDir != null) {
+                // 将处理后的 index.html 写到提取目录（抹除内联 CDN URL, 走本地 file://）
+                prepareExtractedIndexHtml(extractedDir)
+                val indexFile = java.io.File(extractedDir, "index.html")
+                val fileUrl = indexFile.toURI().toString()
+                logger.info("[JCEFChatPanel] loading via file:// $fileUrl")
+                newBrowser.loadURL(fileUrl)
             } else {
-                newBrowser.loadHTML(createFallbackHTML())
+                val htmlContent = createFallbackHTML()
+                newBrowser.loadHTML(htmlContent)
             }
 
             jsQuery = JBCefJSQuery.create(newBrowser).apply {
@@ -122,9 +135,33 @@ class JCEFChatPanel(
     }
 
     /**
-     * 加载 webui/index.html(模块化结构)
-     * 与原 chat.html 不同:用 ESM 拆分 + 自托管 vendor
+     * 读取从 classpath 提取出的 index.html，过一遍 ResourceInliner（处理可能的 CDN URL）后写回。
+     * 主要价值在于保持与旧 chat.html 路径的兼容；新 index.html 几乎不需要内联处理，
+     * 因为所有静态资源都已在提取目录中、浏览器通过 file:// 直接拿。
      */
+    private fun prepareExtractedIndexHtml(extractedDir: java.io.File) {
+        val indexFile = java.io.File(extractedDir, "index.html")
+        val original = indexFile.readText(Charsets.UTF_8)
+        val processed = try {
+            ResourceInliner.inlineResources(original)
+        } catch (e: Exception) {
+            logger.warn("ResourceInliner failed, writing raw HTML: ${e.message}")
+            original
+        }
+        if (processed !== original) {
+            indexFile.writeText(processed, Charsets.UTF_8)
+            logger.info("[JCEFChatPanel] index.html post-processed (CDN URLs inlined)")
+        }
+    }
+
+    /**
+     * 加载 webui/index.html(模块化结构)
+     * 与原 chat.html 不同：用 ESM 拆分 + 自托管 vendor
+     *
+     * 注意：此函数仍然保留作为"读取 HTML 文本"的接口，
+     * 但 initializeBrowser 不再使用它（改用 file:// + 提取目录）。
+     */
+    @Suppress("unused")
     private fun loadWebUiHtml(): String? {
         return try {
             javaClass.classLoader.getResourceAsStream("webui/index.html")?.use { stream ->
