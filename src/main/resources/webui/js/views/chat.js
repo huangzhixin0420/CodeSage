@@ -90,6 +90,7 @@ class ChatView {
     this._restoreMode();
     this._initInputResize();
     this._bindModeDropdownClickOutside();
+    this._initInputBoxFocus();
     this._initTheme();
     this._watchSystemTheme();
     this._initSidebar();
@@ -718,6 +719,31 @@ class ChatView {
       if (wrapper.contains(e.target)) return;
       this._closeModeDropdown();
     });
+  }
+
+  /**
+   * 点击 input-box 任意位置都聚焦到 textarea (除了 mode dropdown 和 send 按钮等)
+   * 避免出现“点了输入框但没反应”的踩坑
+   */
+  _initInputBoxFocus() {
+    const box = document.getElementById("input-box");
+    if (!box) return;
+    box.addEventListener("mousedown", (e) => {
+      const target = e.target;
+      // 不抢夺 mode dropdown / send / 拖拽 handle 等交互控件的点击
+      if (
+        target.closest(
+          "button, a, .mode-dropdown, .input-resize-handle, textarea",
+        )
+      )
+        return;
+      // 避免在选区中拖选时被抢焦点
+      if (window.getSelection()?.toString()) return;
+      // 延迟聚焦,防止 mousedown 抢焦点导致 selectstart 取消
+      setTimeout(() => this.messageInput?.focus(), 0);
+    });
+    // 初始自动 focus(延迟 0ms 避开模块加载)
+    setTimeout(() => this.messageInput?.focus(), 0);
   }
 
   _initTheme() {

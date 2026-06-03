@@ -397,7 +397,7 @@
 [data-cs-tooltip]::after {
     content: attr(data-cs-tooltip);
     position: absolute;
-    bottom: calc(100% + 6px);
+    top: calc(100% + 6px);
     left: 50%;
     transform: translateX(-50%);
     background: var(--fg-0);
@@ -410,7 +410,8 @@
     opacity: 0;
     pointer-events: none;
     transition: opacity var(--duration-fast) var(--ease-out);
-    z-index: var(--z-dropdown);
+    z-index: calc(var(--z-sticky) + 10);
+    box-shadow: var(--shadow-md);
 }
 
 [data-cs-tooltip]:hover::after {

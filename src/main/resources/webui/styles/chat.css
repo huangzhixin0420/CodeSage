@@ -123,17 +123,24 @@
 }
 
 .welcome-icon {
-    width: 56px;
-    height: 56px;
-    border-radius: var(--radius-lg);
-    background: var(--accent);
+    width: 88px;
+    height: 88px;
+    border-radius: var(--radius-xl);
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: white;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: white;
-    font-size: 24px;
-    margin-bottom: var(--space-5);
-    box-shadow: 0 8px 24px var(--accent-soft);
+    margin: 0 auto var(--space-4);
+    box-shadow:
+        0 8px 24px rgba(99, 102, 241, 0.35),
+        0 2px 6px rgba(99, 102, 241, 0.25);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.welcome-icon svg {
+    display: block;
 }
 
 .welcome-title {

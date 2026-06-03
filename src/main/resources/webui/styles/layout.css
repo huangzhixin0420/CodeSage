@@ -260,7 +260,7 @@
     border-radius: var(--radius-sm);
     border: none;
     background: transparent;
-    color: var(--fg-2);
+    color: var(--fg-1);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -284,6 +284,19 @@
     color: var(--accent);
 }
 
+/* Dark mode: 给普通 icon-btn 一个可见的背景 + 边框,避免在深色页面上"消失" */
+[data-theme="dark"] .icon-btn {
+    background: var(--bg-2);
+    color: var(--fg-1);
+    border: 1px solid var(--border);
+}
+
+[data-theme="dark"] .icon-btn:hover {
+    background: var(--bg-3);
+    color: var(--fg-0);
+    border-color: var(--accent);
+}
+
 /* Prominent icon button — 用于 + / history，亮白主题下保持可见 */
 .icon-btn-prominent {
     background: var(--bg-1);
@@ -300,9 +313,17 @@
 }
 
 [data-theme="dark"] .icon-btn-prominent {
-    background: var(--bg-2);
-    color: var(--fg-0);
-    border-color: var(--border);
+    background: var(--accent);
+    color: var(--fg-on-accent);
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px var(--accent-soft);
+}
+
+[data-theme="dark"] .icon-btn-prominent:hover {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px var(--accent-soft);
 }
 
 /* ========== History Dropdown ========== */
