@@ -108,7 +108,7 @@ class AnthropicAdapter(
         val messages = mutableListOf<AnthropicMessage>()
         var systemPrompt: String? = null
 
-        for (msg in request.messages) {
+        msgLoop@ for (msg in request.messages) {
             when (msg.role) {
                 Role.SYSTEM -> {
                     // 累积所有 system 消息（Anthropic 只有一个 system 字段）
@@ -169,10 +169,20 @@ class AnthropicAdapter(
                 }
 
                 Role.TOOL -> {
-                    // Tool result 在 Anthropic 中是 user 角色 + tool_result content block
+                    // 厳格校验：toolUseId 必须非空。旧代码 "msg.toolCallId ?: ''" 会发
+                    // 出 tool_use_id="" 给 Anthropic，返 bad_request_error 2013。
+                    // 如果上游出了个“空 id” tool result，这里记 WARN 并跳过，不发。
+                    val toolUseId = msg.toolCallId
+                    if (toolUseId.isNullOrBlank()) {
+                        logger.warn(
+                            "[AnthropicAdapter] Skipping tool_result with empty toolCallId " +
+                                    "(msg.name=${msg.name}, contentLength=${msg.content.length})"
+                        )
+                        continue@msgLoop  // 跳过这个 tool result，不加进 messages
+                    }
                     val contentBlock = buildJsonObject {
                         put("type", "tool_result")
-                        put("tool_use_id", msg.toolCallId ?: "")
+                        put("tool_use_id", toolUseId)
                         put("content", msg.content)
                     }
                     messages.add(

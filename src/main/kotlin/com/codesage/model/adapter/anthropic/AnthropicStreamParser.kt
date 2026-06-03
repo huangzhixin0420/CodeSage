@@ -54,9 +54,20 @@ class AnthropicStreamParser {
                 val block = event.content_block
                 val index = event.index ?: 0
                 if (block?.type == "tool_use") {
-                    // 工具调用开始，记录元数据
-                    val id = block.id ?: "tool_${index}"
-                    val name = block.name ?: ""
+                    val id = block.id
+                    val name = block.name
+                    // 严格校验：Anthropic tool_use 必须有 id + name。
+                    // 旧代码 "id ?: 'tool_$index'" 会自己造占位 id，跢上
+                    // 上后要返给 LLM 返 "tool_use_id: tool_0" 就被
+                    // Anthropic API 拒收 (bad_request_error 2013: tool call id is invalid)。
+                    // 严谨做法：id 或 name 缺失 → 跳过这个 tool_use，
+                    // 避免出现"我们自己造的 id 返给 LLM"这种循环。
+                    if (id.isNullOrBlank() || name.isNullOrBlank()) {
+                        // 清空可能已累的 input，后续不 emit delta
+                        toolMetas.remove(index)
+                        toolInputs.remove(index)
+                        return null
+                    }
                     toolMetas[index] = id to name
                     toolInputs[index] = StringBuilder()
                 }

@@ -319,6 +319,139 @@ class AnthropicAdapterTest {
         assertTrue(chunk!!.done)
     }
 
+    // ===== P0 修复：tool_use id 缺失 → 跳过、不能造占位 id =====
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    fun `parseStreamChunk should NOT emit tool_call when content_block_start has no id`() {
+        // 场景：LLM 异常 / 代理拦截导致 content_block_start 里 id 字段为 null
+        // 旧代码 "id ?: 'tool_\$index'" 会造占位 id 拾发上去，被 Anthropic 拒收
+        // （2013: tool call id is invalid）。新代码应静默跳过。
+        val parser = AnthropicStreamParser()
+
+        val start = """
+            {"type": "content_block_start", "index": 1,
+             "content_block": {"type": "tool_use", "name": "search"}}
+        """.trimIndent()
+        // content_block_start 返回 null（仅记录元数据，不发 chunk）
+        assertNull(parser.parseEvent(start))
+
+        // 即使后续有 input_json_delta，也不应发 tool_call_delta
+        val delta = """
+            {"type": "content_block_delta", "index": 1,
+             "delta": {"type": "input_json_delta", "partial_json": "{\"query\":\"k\"}"}}
+        """.trimIndent()
+        assertNull(parser.parseEvent(delta))
+
+        // content_block_stop 也不应发出占位 id
+        val stop = """{"type": "content_block_stop", "index": 1}"""
+        assertNull(parser.parseEvent(stop), "Should NOT emit a tool_call with fabricated id")
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    fun `parseStreamChunk should NOT emit tool_call when content_block_start has empty id`() {
+        // 边界：id="" （空串）应当同 null 一同被拒
+        val parser = AnthropicStreamParser()
+        val start = """
+            {"type": "content_block_start", "index": 0,
+             "content_block": {"type": "tool_use", "id": "", "name": "x"}}
+        """.trimIndent()
+        assertNull(parser.parseEvent(start))
+        val stop = """{"type": "content_block_stop", "index": 0}"""
+        assertNull(parser.parseEvent(stop))
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    fun `parseStreamChunk should NOT emit tool_call when name is missing`() {
+        // 另一边界：id 有但 name 为空——name 缺失不能走后续执行
+        val parser = AnthropicStreamParser()
+        val start = """
+            {"type": "content_block_start", "index": 0,
+             "content_block": {"type": "tool_use", "id": "toolu_1"}}
+        """.trimIndent()
+        assertNull(parser.parseEvent(start))
+        val stop = """{"type": "content_block_stop", "index": 0}"""
+        assertNull(parser.parseEvent(stop))
+    }
+
+    // ===== P0 修复：tool_result toolCallId 为空 → 跳过、不能发空 tool_use_id =====
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    fun `toVendorRequest should skip tool result with null toolCallId`() {
+        // 场景：上游传了 Role.TOOL 消息但 toolCallId 是 null（旧代码会发
+        // tool_use_id="" 给 Anthropic → 2013 invalid id）。
+        val request = ChatRequest(
+            model = "claude-3-5-sonnet-20241022",
+            messages = listOf(
+                Message(
+                    role = Role.TOOL,
+                    content = "Sunny, 72F",
+                    toolCallId = null  // 主动 null，模拟上流出问题
+                )
+            ),
+            maxTokens = 1024
+        )
+        val body = adapter.toVendorRequest(request)
+        val json = Json.parseToJsonElement(body).jsonObject
+        val messages = json["messages"]!!.jsonArray
+        // 期望：tool result 被跳过，messages 为空
+        assertEquals(
+            0, messages.size, "Tool result with null toolCallId should be SKIPPED, " +
+                    "not sent with empty tool_use_id"
+        )
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    fun `toVendorRequest should skip tool result with empty toolCallId`() {
+        val request = ChatRequest(
+            model = "claude-3-5-sonnet-20241022",
+            messages = listOf(
+                Message(
+                    role = Role.TOOL,
+                    content = "Sunny, 72F",
+                    toolCallId = ""  // 空串同样要拒
+                )
+            ),
+            maxTokens = 1024
+        )
+        val body = adapter.toVendorRequest(request)
+        val json = Json.parseToJsonElement(body).jsonObject
+        val messages = json["messages"]!!.jsonArray
+        assertEquals(0, messages.size)
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    fun `toVendorRequest should skip bad tool result but keep other messages`() {
+        // 一个 SYSTEM / USER / bad-TOOL / 另一个 valid TOOL 的混合
+        // 期望：bad-TOOL 被跳，valid-TOOL 保留，其他都保留
+        val request = ChatRequest(
+            model = "claude-3-5-sonnet-20241022",
+            messages = listOf(
+                Message.systemMessage("You are helpful"),
+                Message.userMessage("Check weather"),
+                Message(role = Role.TOOL, content = "bad", toolCallId = null),
+                Message(role = Role.TOOL, content = "good", toolCallId = "toolu_valid"),
+            ),
+            maxTokens = 1024
+        )
+        val body = adapter.toVendorRequest(request)
+        val json = Json.parseToJsonElement(body).jsonObject
+        val messages = json["messages"]!!.jsonArray
+        // 4 条原始消息：SYSTEM / USER / bad-TOOL / good-TOOL。
+        // SYSTEM 抽出到 systemPrompt 字段，不入 messages 数组。
+        // bad-TOOL 被跳。剩：USER + good-TOOL = 2 条。
+        assertEquals(
+            2, messages.size,
+            "Bad TOOL filtered, valid TOOL kept. " +
+                    "SYSTEM extracted to systemPrompt (not in messages array)."
+        )
+    }
+
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     fun `parseStreamChunk returns null for unknown event types`() {
