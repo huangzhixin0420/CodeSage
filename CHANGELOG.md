@@ -343,6 +343,66 @@ git checkout feature/uiux-redesign
 
 ---
 
+## 📦 0.1.0 发布说明（v0.1.0-uiux-p5）
+
+**代号**: CodeSage UI/UX 重构完整版
+**发布日期**: 2026-06-03
+**Tag**: `v0.1.0-uiux-p5`
+**Git**: `feature/uiux-redesign` @ `67d5e48`
+
+### 🌟 亮点
+
+- **全面重构的 Web UI**:chat.html (3407 行) 拆为 28 个文件 / 10 个 CSS / 15 个 JS,自研 cs-* 组件库
+- **设计 token 体系**:200+ CSS 变量,亮/暗主题 + 跟随系统
+- **配置独立化**:`~/codesage/settings.json` 替代 IDE XML 捆绑,SettingsRepository 提供原子写 / 损坏恢复 / 实时监听
+- **13 类 cs-* 组件**:thinking / tool-call (8 kind) / plan (5 态) / modal / toast / command-palette / sidebar / walkthrough 等
+- **完整 i18n**:zh-CN + en-US 140+ key,运行时切换
+- **14 类微交互**:消息进入 / 思考折叠 / 工具卡片展开 / 主题切换防白闪 / 拖拽反馈 等
+
+### 📊 数据
+
+| 指标 | 重构前 | 0.1.0 |
+|---|---|---|
+| `chat.html` 单文件 | 3407 行 | 拆为多文件 |
+| `JCEFChatPanel.kt` | 1121 行 | 388 行 |
+| Web 组件 | 0 | 13 个自研 |
+| 设计 token | 散落 | 200+ CSS 变量 |
+| 测试用例 | ~600 | 929 |
+| 已知限制(P5) | 5 项 | **0** ✓ |
+
+### ✅ 商业闭环能力
+
+- **API Key 可在 UI 改**:不再依赖 IDE 旧 Configurable 或 PasswordSafe 工具
+- **连通性测试**:一键验证 Provider 配置,带延迟 / HTTP 状态 / 错误信息
+- **配置迁移向导**:新用户从旧 IDE 配置无痛升级
+- **MCP 完整 CRUD**:stdio / http / websocket 三种 transport,inline 确认防误删
+- **多模态就绪**:拖拽图片即发,Kotlin 端解析后适配 GPT-4o / Claude-3 / Gemini 等
+
+### 🚀 升级路径
+
+从旧版本升级 CodeSage:
+
+1. 升级前:旧 `CodeSagePlugin.xml` 中的 providers / 模型 / 预算 都会被自动检测
+2. 启动后 1.5s:自动弹迁移向导(可跳过),点 "迁移" 后所有数据写入 `~/codesage/settings.json`
+3. 旧 XML 保留作 fallback,新设置生效优先级最高
+4. API Key 自动从 PasswordSafe 读取,无需重新输入
+
+### 🐛 已知问题(下个迭代)
+
+- `legacy_migration_run` 完成后 settings.json 写入但旧 PluginConfig 未清理(预留回退窗口)
+- 图片附件走 markdown 引用,极少数模型可能因 base64 长度超限拒绝
+- SubAgent 嵌套 turn 仅 Plan A(无实时子 turn 嵌套渲染),需升级到 Plan B
+
+### 🙏 致谢
+
+- Phase 1-5 的所有参与同事
+- IntelliJ Platform Plugin SDK
+- kotlinx.serialization / OkHttp / marked / highlight.js
+
+— 0.1.0 发布,CodeSage 团队
+
+---
+
 ## 📋 P5.1-P5.5 增量变更（2026-06-03）
 
 ### 新增 Kotlin 文件
