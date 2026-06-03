@@ -13,6 +13,106 @@ import org.junit.jupiter.api.Assertions.*
 
 class EnhancedAgentLoopTest {
 
+    // ===== P1 修复：cleanupOrphanToolResults 行为测试 =====
+
+    @Test
+    fun `cleanupOrphanToolResults drops tool_result without matching tool_use`() {
+        // 场景：上下文里有 tool_result 但没有对应的 tool_use
+        // （LLM 代理提供商返回的孤儿 tool_result，会让下一个 turn 拿到 2013 错）。
+        val loop = EnhancedAgentLoop(
+            gateway = createFakeGateway(),
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+        val method = EnhancedAgentLoop::class.java.declaredMethods
+            .first { it.name == "cleanupOrphanToolResults" }
+        method.isAccessible = true
+
+        val messages = listOf(
+            Message.userMessage("hi"),
+            Message(
+                role = Role.ASSISTANT,
+                content = "",
+                toolCalls = listOf(ToolCall("toolu_abc", "read_file", "{}"))
+            ),
+            Message(role = Role.TOOL, content = "result1", toolCallId = "toolu_abc"),
+            // 孤儿：toolCallId 在 tool_use 中不存在
+            Message(role = Role.TOOL, content = "orphan", toolCallId = "toolu_ghost"),
+        )
+        val (cleaned, orphanCount) = method.invoke(loop, messages, setOf("toolu_abc")) as Pair<List<*>, *>
+        @Suppress("UNCHECKED_CAST")
+        val cleanedList = cleaned as List<Message>
+
+        assertEquals(1, orphanCount, "Should detect 1 orphan")
+        assertEquals(3, cleanedList.size, "Should keep 3 messages (user, assistant, valid tool_result)")
+        assertEquals(Role.TOOL, cleanedList.last().role)
+        assertEquals("toolu_abc", cleanedList.last().toolCallId)
+    }
+
+    @Test
+    fun `cleanupOrphanToolResults keeps all messages when all tool_results have matches`() {
+        val loop = EnhancedAgentLoop(
+            gateway = createFakeGateway(),
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+        val method = EnhancedAgentLoop::class.java.declaredMethods
+            .first { it.name == "cleanupOrphanToolResults" }
+        method.isAccessible = true
+
+        val messages = listOf(
+            Message(
+                role = Role.ASSISTANT,
+                content = "",
+                toolCalls = listOf(
+                    ToolCall("id_1", "tool1", "{}"),
+                    ToolCall("id_2", "tool2", "{}"),
+                )
+            ),
+            Message(role = Role.TOOL, content = "r1", toolCallId = "id_1"),
+            Message(role = Role.TOOL, content = "r2", toolCallId = "id_2"),
+        )
+        val (cleaned, orphanCount) = method.invoke(loop, messages, setOf("id_1", "id_2")) as Pair<List<*>, *>
+        @Suppress("UNCHECKED_CAST")
+        val cleanedList = cleaned as List<Message>
+
+        assertEquals(0, orphanCount)
+        assertEquals(3, cleanedList.size)
+    }
+
+    @Test
+    fun `cleanupOrphanToolResults drops tool_result with null or blank toolCallId`() {
+        // 防御：Role.TOOL 但 toolCallId 是 null/空串 — 同孤儿处理
+        val loop = EnhancedAgentLoop(
+            gateway = createFakeGateway(),
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+        val method = EnhancedAgentLoop::class.java.declaredMethods
+            .first { it.name == "cleanupOrphanToolResults" }
+        method.isAccessible = true
+
+        val messages = listOf(
+            Message(
+                role = Role.ASSISTANT,
+                content = "",
+                toolCalls = listOf(ToolCall("id_1", "t1", "{}"))
+            ),
+            Message(role = Role.TOOL, content = "valid", toolCallId = "id_1"),
+            Message(role = Role.TOOL, content = "orphan_null", toolCallId = null),
+            Message(role = Role.TOOL, content = "orphan_blank", toolCallId = ""),
+        )
+        val (cleaned, orphanCount) = method.invoke(loop, messages, setOf("id_1")) as Pair<List<*>, *>
+        @Suppress("UNCHECKED_CAST")
+        val cleanedList = cleaned as List<Message>
+
+        assertEquals(2, orphanCount, "Null and blank should both be orphans")
+        assertEquals(2, cleanedList.size)
+    }
+
     /**
      * 验证对话在多次工具调用后能正常完成并发送 Done
      */

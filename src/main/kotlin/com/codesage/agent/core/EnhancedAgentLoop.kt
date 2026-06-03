@@ -199,7 +199,25 @@ class EnhancedAgentLoop(
                 }
 
                 val messages = contextManager.getContext()
-                val processedMessages = hooks.preLLMCall(messages)
+                // 清理 orphan tool_result：tool_result 必须有对应的 tool_use。
+                // 上下文来源：用户上轮代理 Claude 的提供商（如 MiniMax、、
+                // 其它中文 LLM 代理 Claude 的提供商）会偶发返回 tool_result id
+                // 与上下文里同名 tool_use id 不一致的请求。API 返 2013
+                // 'tool result\'s tool id (xxx) not found' 后 400。预防：只发
+                // 有匹配的 tool_result。孤儿会被丢 + 记 WARN。
+                val toolUseIds = messages
+                    .flatMap {
+                        it.toolCalls?.mapNotNull { tc -> tc.id.takeIf { id -> id.isNotEmpty() } } ?: emptyList()
+                    }
+                    .toSet()
+                val (cleanedMessages, orphanCount) = cleanupOrphanToolResults(messages, toolUseIds)
+                if (orphanCount > 0) {
+                    logger.warn(
+                        "[Turn $turnNumber] Dropped $orphanCount orphan tool_result message(s) " +
+                                "with toolCallIds not matching any tool_use in the context"
+                    )
+                }
+                val processedMessages = hooks.preLLMCall(cleanedMessages)
 
                 // 根据模型能力决定是否发送 tools
                 val adapter = gateway.getCurrentAdapter(currentModelLocal)
@@ -732,6 +750,39 @@ class EnhancedAgentLoop(
             )
             "{\"success\":false,\"error\":\"SubAgent execution failed: ${e.message}\"}"
         }
+    }
+
+    /**
+     * 清理 orphan tool_result：tool_result 消息的 toolCallId 必须在 assistant
+     * 消息的 toolCalls[].id 集合里出现过，否则丢掉。
+     *
+     * 为什么需要：中文 LLM 代理 Claude 的提供商（MiniMax、智谱、月之暗面等）
+     * 在转 OpenAI/Anthropic 双向格式时偶尔会丢失 tool_call_id 对应关系，导致
+     * 下一个 turn 请求带 "tool result's tool id (X) not found" 400。预防性
+     * 在 EnhancedAgentLoop 请求前清掉孤儿 tool_result，避免触发 API 2013。
+     *
+     * 返回 (cleanedMessages, orphanCount)。cleanedMessages 是丢完后的
+     * 消息列表（顺序、其它消息原封不动）。
+     */
+    private fun cleanupOrphanToolResults(
+        messages: List<Message>,
+        toolUseIds: Set<String>
+    ): Pair<List<Message>, Int> {
+        var orphanCount = 0
+        val result = messages.map { msg ->
+            if (msg.role == Role.TOOL) {
+                val id = msg.toolCallId
+                if (id.isNullOrBlank() || id !in toolUseIds) {
+                    orphanCount++
+                    null
+                } else {
+                    msg
+                }
+            } else {
+                msg
+            }
+        }.filterNotNull()
+        return result to orphanCount
     }
 
     private fun parseArguments(arguments: String): Map<String, Any> {
