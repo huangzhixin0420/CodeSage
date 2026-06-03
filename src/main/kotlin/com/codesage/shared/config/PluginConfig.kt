@@ -434,6 +434,18 @@ class PluginConfig : PersistentStateComponent<PluginConfigState> {
             state.allowContinueOnExhaustion = value
         }
 
+    var promptRole: String
+        get() = state.promptRole
+        set(value) {
+            state.promptRole = value
+        }
+
+    var autoSaveEnabled: Boolean
+        get() = state.autoSaveEnabled
+        set(value) {
+            state.autoSaveEnabled = value
+        }
+
     // ==================== API Key 管理 ====================
 
     /**

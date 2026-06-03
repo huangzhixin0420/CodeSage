@@ -1,0 +1,233 @@
+/**
+ * Markdown content rendering
+ */
+
+.markdown-content h1 {
+    font-size: 1.45em;
+    font-weight: 600;
+    margin: 0.6em 0;
+    color: var(--fg-0);
+    letter-spacing: -0.3px;
+}
+
+.markdown-content h2 {
+    font-size: 1.25em;
+    font-weight: 600;
+    margin: 0.6em 0;
+    color: var(--fg-0);
+    letter-spacing: -0.2px;
+}
+
+.markdown-content h3 {
+    font-size: 1.1em;
+    font-weight: 600;
+    margin: 0.5em 0;
+    color: var(--fg-0);
+}
+
+.markdown-content h4 {
+    font-size: 1em;
+    font-weight: 600;
+    margin: 0.4em 0;
+    color: var(--fg-0);
+}
+
+.markdown-content p {
+    margin: 0.6em 0;
+    line-height: var(--leading-prose);
+}
+
+.markdown-content ul,
+.markdown-content ol {
+    margin: 0.5em 0;
+    padding-left: 1.6em;
+}
+
+.markdown-content li {
+    margin: 0.3em 0;
+}
+
+.markdown-content li > p {
+    margin: 0.2em 0;
+}
+
+.markdown-content code {
+    background: var(--bg-2);
+    padding: 2px 6px;
+    border-radius: 5px;
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    color: var(--accent);
+    font-weight: 500;
+}
+
+.markdown-content pre {
+    margin: var(--space-3) 0;
+    padding: 0;
+    background: var(--code-bg);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.markdown-content pre code {
+    background: none;
+    padding: var(--space-4);
+    color: var(--code-fg);
+    font-weight: 400;
+    display: block;
+    overflow-x: auto;
+    line-height: var(--leading-relaxed);
+    font-size: var(--text-sm);
+}
+
+.markdown-content blockquote {
+    border-left: 3px solid var(--accent);
+    margin: 0.6em 0;
+    padding: var(--space-1) 0 var(--space-1) var(--space-4);
+    color: var(--fg-1);
+    font-style: italic;
+    background: var(--accent-soft);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.markdown-content table {
+    border-collapse: collapse;
+    margin: 0.6em 0;
+    width: 100%;
+    font-size: var(--text-sm);
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+
+.markdown-content th,
+.markdown-content td {
+    border-bottom: 1px solid var(--border);
+    padding: var(--space-2) var(--space-3);
+    text-align: left;
+}
+
+.markdown-content th {
+    background: var(--bg-1);
+    font-weight: 600;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    color: var(--fg-1);
+}
+
+.markdown-content tr:last-child td {
+    border-bottom: none;
+}
+
+.markdown-content tr:nth-child(even) {
+    background: var(--bg-1);
+}
+
+.markdown-content a {
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color var(--duration-fast);
+}
+
+.markdown-content a:hover {
+    border-bottom-color: var(--accent);
+}
+
+.markdown-content hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 1.2em 0;
+}
+
+.markdown-content img {
+    max-width: 100%;
+    border-radius: var(--radius-sm);
+    margin: var(--space-2) 0;
+}
+
+.markdown-content strong {
+    font-weight: 600;
+    color: var(--fg-0);
+}
+
+.markdown-content em {
+    font-style: italic;
+}
+
+/* ========== Diff View ========== */
+.diff-view {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--code-bg);
+    margin: var(--space-2) 0;
+}
+
+.diff-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-2) var(--space-3);
+    background: var(--code-header-bg);
+    color: #a0a0b0;
+    font-size: var(--text-xs);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.diff-summary {
+    font-family: var(--font-sans);
+}
+
+.diff-line {
+    display: flex;
+    padding: 0 var(--space-3);
+    white-space: pre;
+    color: var(--code-fg);
+}
+
+.diff-line:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.diff-line .diff-gutter {
+    flex-shrink: 0;
+    width: 50px;
+    text-align: right;
+    padding-right: var(--space-3);
+    color: rgba(255, 255, 255, 0.3);
+    user-select: none;
+    font-variant-numeric: tabular-nums;
+}
+
+.diff-line .diff-marker {
+    flex-shrink: 0;
+    width: 16px;
+    text-align: center;
+    user-select: none;
+}
+
+.diff-line.add {
+    background: var(--diff-add-line-bg);
+}
+
+.diff-line.add .diff-marker {
+    color: var(--diff-add-fg);
+}
+
+.diff-line.remove {
+    background: var(--diff-remove-line-bg);
+}
+
+.diff-line.remove .diff-marker {
+    color: var(--diff-remove-fg);
+}
+
+.diff-line .diff-text {
+    flex: 1;
+    overflow-x: auto;
+}

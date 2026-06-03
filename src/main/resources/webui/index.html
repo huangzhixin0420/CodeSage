@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>CodeSage Chat</title>
+
+        <!-- Highlight.js themes (light/dark) -->
+        <link
+            rel="stylesheet"
+            href="lib/github.min.css"
+            id="hljs-theme-light"
+        />
+        <link
+            rel="stylesheet"
+            href="lib/github-dark.min.css"
+            id="hljs-theme-dark"
+            disabled
+        />
+
+        <!-- Font Awesome (self-hosted) -->
+        <link rel="stylesheet" href="lib/font-awesome/all.min.css" />
+
+        <!-- Design system: tokens first, then everything else -->
+        <link rel="stylesheet" href="styles/tokens.css" />
+        <link rel="stylesheet" href="styles/base.css" />
+        <link rel="stylesheet" href="styles/animations.css" />
+        <link rel="stylesheet" href="styles/layout.css" />
+        <link rel="stylesheet" href="styles/chat.css" />
+        <link rel="stylesheet" href="styles/input.css" />
+        <link rel="stylesheet" href="styles/markdown.css" />
+        <link rel="stylesheet" href="styles/sidebar.css" />
+        <link rel="stylesheet" href="styles/settings.css" />
+        <link rel="stylesheet" href="styles/polish.css" />
+        <link rel="stylesheet" href="styles/components.css" />
+
+        <!-- Vendor: highlight.js (loaded synchronously so hljs is ready early) -->
+        <script src="lib/highlight.min.js"></script>
+        <script src="lib/languages/kotlin.min.js"></script>
+        <script src="lib/languages/java.min.js"></script>
+        <script src="lib/languages/python.min.js"></script>
+        <script src="lib/languages/javascript.min.js"></script>
+        <script src="lib/languages/typescript.min.js"></script>
+        <script src="lib/languages/go.min.js"></script>
+        <script src="lib/languages/rust.min.js"></script>
+        <script src="lib/languages/xml.min.js"></script>
+        <script src="lib/languages/css.min.js"></script>
+        <script src="lib/languages/json.min.js"></script>
+        <script src="lib/languages/yaml.min.js"></script>
+        <script src="lib/languages/bash.min.js"></script>
+        <script src="lib/languages/sql.min.js"></script>
+    <body data-theme="light">
+        <a href="#messages-container" class="cs-skip-link">跳到主内容</a>
+    <body data-theme="light">
+        <div class="app-container">
+            <div class="main-area">
+                <!-- ========== Header ========== -->
+                <div class="chat-header">
+                    <div class="header-brand">
+                        <div class="brand-icon">
+                            <i class="fas fa-wand-magic-sparkles"></i>
+                        </div>
+                        <div class="brand-title">CodeSage</div>
+                    </div>
+                    <div class="header-actions">
+                        <div class="mode-toggle" id="mode-toggle">
+                            <button
+                                class="mode-btn active"
+                                data-mode="GENERAL"
+                                data-cs-tooltip="通用对话"
+                                onclick="
+                                    CodeSage.chat.switchChatMode('GENERAL')
+                                "
+                            >
+                                通用
+                            </button>
+                            <button
+                                class="mode-btn"
+                                data-mode="CODING"
+                                data-cs-tooltip="代码生成与审查"
+                                onclick="CodeSage.chat.switchChatMode('CODING')"
+                            >
+                                编程
+                            </button>
+                            <button
+                                class="mode-btn"
+                                data-mode="REASONING"
+                                data-cs-tooltip="深度推理与分析"
+                                onclick="
+                                    CodeSage.chat.switchChatMode('REASONING')
+                                "
+                            >
+                                推理
+                            </button>
+                            <button
+                                class="mode-btn"
+                                data-mode="VISION"
+                                data-cs-tooltip="图片理解与多模态"
+                                onclick="CodeSage.chat.switchChatMode('VISION')"
+                            >
+                                视觉
+                            </button>
+                        </div>
+                        <div class="model-selector" id="model-selector">
+                            <button
+                                class="model-select-btn"
+                                id="model-select-btn"
+                                onclick="CodeSage.chat.toggleModelDropdown()"
+                            >
+                                <i class="fas fa-microchip"></i>
+                                <span id="current-model-name">选择模型</span>
+                                <i class="fas fa-chevron-down chevron"></i>
+                            </button>
+                            <div
+                                class="model-dropdown"
+                                id="model-dropdown"
+                            ></div>
+                        </div>
+                        <button
+                            class="icon-btn"
+                            data-cs-tooltip="命令面板 (Cmd+K)"
+                            onclick="CodeSage.openCommandPalette()"
+                        >
+                            <i class="fas fa-terminal"></i>
+                        </button>
+                        <button
+                            class="icon-btn"
+                            data-cs-tooltip="新会话"
+                            onclick="CodeSage.chat.onNewSession()"
+                        >
+                            <i class="fas fa-plus"></i>
+                        </button>
+                        <div class="history-selector" id="history-selector">
+                            <button
+                                class="icon-btn"
+                                id="history-btn"
+                                data-cs-tooltip="历史会话"
+                                onclick="CodeSage.chat.toggleHistoryDropdown()"
+                            >
+                                <i class="fas fa-clock-rotate-left"></i>
+                            </button>
+                            <div
+                                class="history-dropdown"
+                                id="history-dropdown"
+                            ></div>
+                        </div>
+                        <button
+                            class="icon-btn danger"
+                            data-cs-tooltip="清空当前会话"
+                            onclick="CodeSage.chat.clearChat()"
+                        >
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                        <button
+                            class="icon-btn"
+                            data-cs-tooltip="切换主题"
+                            onclick="CodeSage.chat.toggleTheme()"
+                        >
+                            <i class="fas fa-moon" id="theme-icon"></i>
+                        </button>
+                        <button
+                            class="icon-btn"
+                            id="thinking-toggle-btn"
+                            data-cs-tooltip="显示/隐藏思考过程"
+                            onclick="CodeSage.chat.toggleThinkingVisibility()"
+                        >
+                            <i
+                                class="fas fa-brain"
+                                id="thinking-toggle-icon"
+                            ></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- ========== Messages ========== -->
+                <div class="messages-container" id="messages-container">
+                    <div class="welcome-state" id="welcome-state">
+                        <div class="welcome-icon">
+                            <i class="fas fa-code"></i>
+                        </div>
+                        <div class="welcome-title">CodeSage AI 助手</div>
+                        <div class="welcome-subtitle">
+                            我可以帮你编写代码、调试问题、重构项目、生成测试等。支持多轮对话、工具调用、代码生成。
+                        </div>
+                        <div class="quick-prompts">
+                            <button
+                                class="quick-prompt-btn"
+                                onclick="
+                                    CodeSage.chat.sendQuickPrompt(
+                                        '解释这段代码',
+                                    )
+                                "
+                            >
+                                <i class="fas fa-book-open"></i>&nbsp;解释代码
+                            </button>
+                            <button
+                                class="quick-prompt-btn"
+                                onclick="
+                                    CodeSage.chat.sendQuickPrompt(
+                                        '重构这段代码',
+                                    )
+                                "
+                            >
+                                <i class="fas fa-sync-alt"></i>&nbsp;重构代码
+                            </button>
+                            <button
+                                class="quick-prompt-btn"
+                                onclick="
+                                    CodeSage.chat.sendQuickPrompt(
+                                        '生成单元测试',
+                                    )
+                                "
+                            >
+                                <i class="fas fa-vial"></i>&nbsp;生成测试
+                            </button>
+                            <button
+                                class="quick-prompt-btn"
+                                onclick="
+                                    CodeSage.chat.sendQuickPrompt(
+                                        '修复代码中的bug',
+                                    )
+                                "
+                            >
+                                <i class="fas fa-bug"></i>&nbsp;修复 Bug
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ========== Input Area ========== -->
+                <div class="input-area-wrapper">
+                    <div class="mode-bar">
+                        <button
+                            class="mode-pill active"
+                            data-mode="agent"
+                            data-cs-tooltip="Agent 模式:AI 自动规划并使用工具"
+                            onclick="CodeSage.chat.setMode('agent')"
+                        >
+                            Agent
+                        </button>
+                        <button
+                            class="mode-pill"
+                            data-mode="ask"
+                            data-cs-tooltip="Ask 模式:仅对话,不调用工具"
+                            onclick="CodeSage.chat.setMode('ask')"
+                        >
+                            Ask
+                        </button>
+                        <button
+                            class="mode-pill"
+                            data-mode="manual"
+                            data-cs-tooltip="Manual 模式:手动选择工具"
+                            onclick="CodeSage.chat.setMode('manual')"
+                        >
+                            Manual
+                        </button>
+                        <span class="status-text" id="status-label">就绪</span>
+                    </div>
+                    <div class="input-box">
+                        <div
+                            id="file-autocomplete"
+                            class="file-autocomplete"
+                        ></div>
+                        <textarea
+                            id="message-input"
+                            class="input-textarea"
+                            placeholder="输入消息... (Enter / Ctrl+Enter 发送, Shift+Enter 换行, @引用文件, Esc 停止生成)"
+                            rows="1"
+                        ></textarea>
+                        <span class="char-counter" id="char-counter"
+                            >0 / 4000</span
+                        >
+                        <button
+                            id="send-btn"
+                            class="send-btn"
+                            data-cs-tooltip="发送消息 (Enter)"
+                            onclick="CodeSage.chat.sendMessage()"
+                        >
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                        <button
+                            id="stop-btn"
+                            class="stop-btn hidden"
+                            data-cs-tooltip="停止生成 (Esc)"
+                            onclick="CodeSage.chat.stopGeneration()"
+                        >
+                            <i class="fas fa-stop"></i>
+                        </button>
+                    </div>
+                    <div class="input-hint">
+                        <kbd>Enter</kbd> 发送 · <kbd>Shift</kbd> +
+                        <kbd>Enter</kbd> 换行 · <kbd>@</kbd> 引用文件 ·
+                        <kbd>⌘K</kbd> 命令面板 · <kbd>Esc</kbd> 停止
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========== Artifact Sidebar ========== -->
+            <div id="artifact-sidebar">
+                <div class="artifact-sidebar-inner">
+                    <div class="artifact-sidebar-header">
+                        <span class="artifact-sidebar-title">
+                            <i class="fas fa-cube"></i>&nbsp;Artifacts
+                        </span>
+                        <button
+                            class="icon-btn"
+                            data-cs-tooltip="关闭"
+                            onclick="CodeSage.chat.closeArtifactSidebar()"
+                        >
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div class="artifact-list" id="artifact-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings view (sibling of app-container, layered above) -->
+        <div
+            class="cs-settings"
+            id="cs-settings-container"
+            style="display: none"
+        ></div>
+
+        <!-- Toast container -->
+        <div class="cs-toast-container" id="cs-toast-container"></div>
+
+        <!-- App entry: ES modules -->
+        <script type="module" src="js/main.js"></script>
+    </body>
+</html>

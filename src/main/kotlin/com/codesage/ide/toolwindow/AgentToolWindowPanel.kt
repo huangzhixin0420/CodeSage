@@ -100,10 +100,15 @@ class AgentToolWindowPanel(
             logger.info("Initializing chatPanel with callbacks...")
             chatPanel.initialize(
                 scope = scope!!,
-                onSendMessage = { message ->
-                    logger.info("[AgentToolWindowPanel] onSendMessage called, message length=${message.length}, chatMode=${chatPanel.getCurrentChatMode()}")
+                onSendMessage = { message, images ->
+                    logger.info("[AgentToolWindowPanel] onSendMessage called, message length=${message.length}, images=${images.size}, chatMode=${chatPanel.getCurrentChatMode()}")
                     // T1.5 修复：传用户选中的 chatMode 选区。null = 用户未选 → 后端建议。
                     val chatMode = chatPanel.getCurrentChatMode()
+                    // P5.4: 检查当前模型是否支持 vision,不支持则提醒
+                    if (images.isNotEmpty() && !isCurrentModelSupportsVision()) {
+                        logger.warn("[AgentToolWindowPanel] current model does not support vision, ${images.size} image(s) will still be sent as markdown refs but model may not understand them")
+                        // 不报错,继续发送(部分模型即使标记不支持也可能偶然能看图)
+                    }
                     if (chatMode != null) {
                         core.chatWithTools(message, mode = chatMode, userExplicit = true)
                     } else {
@@ -295,6 +300,25 @@ class AgentToolWindowPanel(
             AgentState.STREAMING -> "流式响应..."
             AgentState.WAITING_TOOL -> "等待工具..."
             AgentState.ERROR -> "错误"
+        }
+    }
+
+    /**
+     * 检查当前模型是否支持 vision(图片输入)
+     * P5.4: 用于给用户提示
+     */
+    private fun isCurrentModelSupportsVision(): Boolean {
+        val model = agentCore?.getCurrentModel() ?: return false
+        val modelLower = model.lowercase()
+        return when {
+            "vision" in modelLower -> true
+            "gpt-4o" in modelLower -> true
+            "gpt-4-vision" in modelLower -> true
+            "claude-3" in modelLower -> true
+            "gemini" in modelLower && ("1.5" in modelLower || "2" in modelLower) -> true
+            "kimi-vl" in modelLower -> true
+            "minimax-vl" in modelLower -> true
+            else -> false
         }
     }
 

@@ -1,0 +1,209 @@
+/**
+ * CodeSage Design Tokens
+ * 单一设计真相来源,所有颜色/字体/间距/圆角/阴影都在这里
+ * 命名规范:
+ *   -x-bg-* 背景层级
+ *   -x-fg-* 文本层级
+ *   -x-border-* 边框
+ *   -x-accent-* 品牌色
+ *   -x-state-* 状态色(success/warning/error/info)
+ *   -x-space-N 间距(4,8,12,16,20,24,32,40)
+ *   -x-radius-* 圆角
+ *   -x-shadow-* 阴影
+ *   -x-font-* 字体
+ *   -x-diff-* diff 颜色
+ */
+
+:root {
+    /* === Backgrounds === */
+    --bg-0: #ffffff;
+    --bg-1: #fafafa;
+    --bg-2: #f4f4f5;
+    --bg-3: #e4e4e7;
+    --bg-hover: #ececf1;
+    --bg-input: #f7f7f8;
+    --bg-overlay: rgba(0, 0, 0, 0.4);
+
+    /* === Foreground / Text === */
+    --fg-0: #18181b;
+    --fg-1: #3f3f46;
+    --fg-2: #71717a;
+    --fg-3: #a1a1aa;
+    --fg-on-accent: #ffffff;
+
+    /* === Borders === */
+    --border: #e4e4e7;
+    --border-subtle: #f0f0f0;
+    --border-strong: #d4d4d8;
+
+    /* === Accent (Indigo) === */
+    --accent: #6366f1;
+    --accent-hover: #4f46e5;
+    --accent-active: #4338ca;
+    --accent-soft: rgba(99, 102, 241, 0.10);
+    --accent-fg: #ffffff;
+
+    /* === State Colors === */
+    --success: #10b981;
+    --success-soft: rgba(16, 185, 129, 0.10);
+    --warning: #f59e0b;
+    --warning-soft: rgba(245, 158, 11, 0.10);
+    --error: #ef4444;
+    --error-soft: rgba(239, 68, 68, 0.10);
+    --info: #3b82f6;
+    --info-soft: rgba(59, 130, 246, 0.10);
+
+    /* === User Message === */
+    --user-bubble: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%);
+
+    /* === Code === */
+    --code-bg: #1e1e2e;
+    --code-fg: #cdd6f4;
+    --code-header-bg: rgba(255, 255, 255, 0.04);
+
+    /* === Diff === */
+    --diff-add-bg: #e6ffec;
+    --diff-add-fg: #1a7f37;
+    --diff-remove-bg: #ffebe9;
+    --diff-remove-fg: #cf222e;
+    --diff-add-line-bg: rgba(46, 160, 67, 0.12);
+    --diff-remove-line-bg: rgba(248, 81, 73, 0.12);
+
+    /* === Tool Status === */
+    --tool-running: var(--warning);
+    --tool-completed: var(--success);
+    --tool-failed: var(--error);
+    --tool-queued: var(--fg-3);
+    --tool-confirm: var(--warning);
+
+    /* === Spacing === */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+
+    /* === Radii === */
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 20px;
+    --radius-full: 9999px;
+
+    /* === Shadows === */
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
+    --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.16);
+
+    /* === Typography === */
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Microsoft YaHei", "Helvetica Neue", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco,
+        Consolas, "Liberation Mono", monospace;
+
+    --text-xs: 11px;
+    --text-sm: 12px;
+    --text-base: 14px;
+    --text-md: 15px;
+    --text-lg: 16px;
+    --text-xl: 18px;
+    --text-2xl: 22px;
+    --text-3xl: 28px;
+
+    --leading-tight: 1.4;
+    --leading-normal: 1.5;
+    --leading-relaxed: 1.6;
+    --leading-prose: 1.7;
+
+    /* === Layout === */
+    --header-height: 52px;
+    --max-content-width: 1200px;
+
+    /* === Animation === */
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+    --duration-fast: 120ms;
+    --duration-base: 200ms;
+    --duration-slow: 320ms;
+
+    /* === Z-Index === */
+    --z-base: 0;
+    --z-dropdown: 100;
+    --z-sticky: 200;
+    --z-modal: 1000;
+    --z-toast: 9999;
+    --z-overlay: 9999;
+}
+
+[data-theme="dark"] {
+    --bg-0: #0f0f10;
+    --bg-1: #1a1a1c;
+    --bg-2: #252528;
+    --bg-3: #34343a;
+    --bg-hover: #2d2d30;
+    --bg-input: #1f1f22;
+    --bg-overlay: rgba(0, 0, 0, 0.6);
+
+    --fg-0: #fafafa;
+    --fg-1: #d4d4d8;
+    --fg-2: #a1a1aa;
+    --fg-3: #71717a;
+    --fg-on-accent: #ffffff;
+
+    --border: #2a2a2e;
+    --border-subtle: #222226;
+    --border-strong: #3f3f46;
+
+    --accent: #818cf8;
+    --accent-hover: #a5b4fc;
+    --accent-active: #c7d2fe;
+    --accent-soft: rgba(129, 140, 248, 0.15);
+    --accent-fg: #0f0f10;
+
+    --success: #34d399;
+    --success-soft: rgba(52, 211, 153, 0.15);
+    --warning: #fbbf24;
+    --warning-soft: rgba(251, 191, 36, 0.15);
+    --error: #f87171;
+    --error-soft: rgba(248, 113, 113, 0.15);
+    --info: #60a5fa;
+    --info-soft: rgba(96, 165, 250, 0.15);
+
+    --diff-add-bg: rgba(46, 160, 67, 0.15);
+    --diff-add-fg: #7ee787;
+    --diff-remove-bg: rgba(248, 81, 73, 0.15);
+    --diff-remove-fg: #ffa198;
+    --diff-add-line-bg: rgba(46, 160, 67, 0.18);
+    --diff-remove-line-bg: rgba(248, 81, 73, 0.18);
+
+    --code-bg: #14141f;
+
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+    --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.7);
+}
+
+/* 减少动画(无障碍) */
+@media (prefers-reduced-motion: reduce) {
+    :root {
+        --duration-fast: 0ms;
+        --duration-base: 0ms;
+        --duration-slow: 0ms;
+    }
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}

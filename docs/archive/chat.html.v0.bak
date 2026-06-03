@@ -1,0 +1,3407 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>CodeSage Chat</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+            id="hljs-theme-dark"
+            disabled
+        />
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"
+            id="hljs-theme-light"
+        />
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/java.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/javascript.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/xml.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/css.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/json.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+        <link
+            rel="stylesheet"
+            href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+        />
+        <style>
+            :root {
+                --bg-primary: #ffffff;
+                --bg-secondary: #f7f7f8;
+                --bg-tertiary: #ececf1;
+                --bg-message-user: linear-gradient(
+                    135deg,
+                    #4f46e5 0%,
+                    #6366f1 100%
+                );
+                --bg-message-assistant: #f7f7f8;
+                --bg-thinking: #ffffff;
+                --bg-tool: #ffffff;
+                --bg-code: #1e1e2e;
+                --bg-artifact: #ffffff;
+                --bg-input: #f7f7f8;
+                --bg-hover: #ececf1;
+                --text-primary: #1f1f1f;
+                --text-secondary: #5f5f5f;
+                --text-tertiary: #8e8e8e;
+                --text-on-accent: #ffffff;
+                --border-color: #e5e5e5;
+                --border-subtle: #f0f0f0;
+                --accent-color: #4f46e5;
+                --accent-hover: #4338ca;
+                --accent-light: rgba(79, 70, 229, 0.1);
+                --success-color: #10b981;
+                --error-color: #ef4444;
+                --warning-color: #f59e0b;
+                --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
+                --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.05);
+                --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.08);
+                --radius-sm: 8px;
+                --radius-md: 12px;
+                --radius-lg: 16px;
+                --radius-xl: 20px;
+                --radius-full: 9999px;
+                --font-sans:
+                    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                    "Helvetica Neue", Arial, sans-serif;
+                --font-mono:
+                    "JetBrains Mono", "Fira Code", "SF Mono", Monaco, monospace;
+            }
+
+            [data-theme="dark"] {
+                --bg-primary: #1e1e1e;
+                --bg-secondary: #262626;
+                --bg-tertiary: #333333;
+                --bg-message-user: linear-gradient(
+                    135deg,
+                    #4f46e5 0%,
+                    #6366f1 100%
+                );
+                --bg-message-assistant: #2a2a2a;
+                --bg-thinking: #1e1e1e;
+                --bg-tool: #262626;
+                --bg-code: #14141f;
+                --bg-artifact: #262626;
+                --bg-input: #2d2d2d;
+                --bg-hover: #3d3d3d;
+                --text-primary: #e8e8e8;
+                --text-secondary: #b0b0b0;
+                --text-tertiary: #808080;
+                --text-on-accent: #ffffff;
+                --border-color: #333333;
+                --border-subtle: #2a2a2a;
+                --accent-color: #818cf8;
+                --accent-hover: #a5b4fc;
+                --accent-light: rgba(129, 140, 248, 0.15);
+                --success-color: #34d399;
+                --error-color: #f87171;
+                --warning-color: #fbbf24;
+                --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+                --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.25);
+                --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.35);
+            }
+
+            * {
+                scrollbar-width: thin;
+                scrollbar-color: var(--border-color) transparent;
+            }
+            *::-webkit-scrollbar {
+                width: 5px;
+            }
+            *::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            *::-webkit-scrollbar-thumb {
+                background: var(--border-color);
+                border-radius: 10px;
+            }
+            *::-webkit-scrollbar-thumb:hover {
+                background: var(--text-tertiary);
+            }
+
+            body {
+                font-family: var(--font-sans);
+                background: var(--bg-primary);
+                color: var(--text-primary);
+                margin: 0;
+                height: 100vh;
+                overflow: hidden;
+                font-size: 14px;
+                line-height: 1.6;
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+            }
+
+            /* ========== Animations ========== */
+            @keyframes messageSlideIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(12px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+            .message-enter {
+                animation: messageSlideIn 0.35s cubic-bezier(0.16, 1, 0.3, 1)
+                    forwards;
+            }
+
+            @keyframes thinkingPulse {
+                0%,
+                80%,
+                100% {
+                    opacity: 0.25;
+                    transform: scale(0.7);
+                }
+                40% {
+                    opacity: 1;
+                    transform: scale(1);
+                }
+            }
+            .thinking-dot {
+                animation: thinkingPulse 1.6s ease-in-out infinite;
+            }
+            .thinking-dot:nth-child(2) {
+                animation-delay: 0.2s;
+            }
+            .thinking-dot:nth-child(3) {
+                animation-delay: 0.4s;
+            }
+
+            @keyframes blink {
+                50% {
+                    opacity: 0;
+                }
+            }
+            .cursor-blink {
+                animation: blink 1.1s step-end infinite;
+            }
+
+            @keyframes fadeIn {
+                from {
+                    opacity: 0;
+                }
+                to {
+                    opacity: 1;
+                }
+            }
+            .fade-in {
+                animation: fadeIn 0.2s ease-out;
+            }
+
+            @keyframes scaleIn {
+                from {
+                    opacity: 0;
+                    transform: scale(0.95);
+                }
+                to {
+                    opacity: 1;
+                    transform: scale(1);
+                }
+            }
+            .scale-in {
+                animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            }
+
+            /* ========== Layout ========== */
+            .app-container {
+                display: flex;
+                height: 100vh;
+            }
+            .main-area {
+                flex: 1;
+                display: flex;
+                flex-direction: column;
+                min-width: 0;
+            }
+
+            /* ========== Header ========== */
+            .chat-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 16px;
+                height: 52px;
+                border-bottom: 1px solid var(--border-subtle);
+                background: var(--bg-primary);
+                flex-shrink: 0;
+                z-index: 10;
+            }
+            .header-brand {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .brand-icon {
+                width: 28px;
+                height: 28px;
+                border-radius: var(--radius-md);
+                background: var(--accent-color);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-size: 13px;
+                box-shadow: 0 2px 6px rgba(79, 70, 229, 0.3);
+            }
+            .brand-title {
+                font-size: 15px;
+                font-weight: 600;
+                color: var(--text-primary);
+                letter-spacing: -0.2px;
+            }
+            .brand-subtitle {
+                font-size: 11px;
+                color: var(--text-tertiary);
+                margin-top: -2px;
+                font-weight: 500;
+            }
+
+            /* Model Selector */
+            .model-selector {
+                position: relative;
+            }
+            .model-select-btn {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 5px 10px;
+                border-radius: var(--radius-sm);
+                border: 1px solid var(--border-color);
+                background: var(--bg-secondary);
+                color: var(--text-secondary);
+                font-size: 12px;
+                font-weight: 500;
+                cursor: pointer;
+                transition: all 0.2s;
+                font-family: var(--font-sans);
+            }
+            .model-select-btn:hover {
+                border-color: var(--accent-color);
+                background: var(--accent-light);
+                color: var(--accent-color);
+            }
+            .model-select-btn .chevron {
+                font-size: 10px;
+                transition: transform 0.2s;
+            }
+            .model-select-btn.open .chevron {
+                transform: rotate(180deg);
+            }
+
+            .model-dropdown {
+                position: absolute;
+                top: calc(100% + 6px);
+                right: 0;
+                min-width: 220px;
+                width: max-content;
+                max-width: 400px;
+                max-height: 320px;
+                overflow-y: auto;
+                background: var(--bg-primary);
+                border: 1px solid var(--border-color);
+                border-radius: var(--radius-md);
+                box-shadow: var(--shadow-lg);
+                z-index: 100;
+                display: none;
+                padding: 6px;
+            }
+            .model-dropdown.open {
+                display: block;
+                animation: scaleIn 0.15s ease-out;
+            }
+
+            .model-group-label {
+                font-size: 10px;
+                font-weight: 700;
+                color: var(--text-tertiary);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                padding: 6px 8px 4px;
+            }
+            .model-option {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 7px 8px;
+                border-radius: var(--radius-sm);
+                cursor: pointer;
+                font-size: 12px;
+                color: var(--text-secondary);
+                transition: background 0.15s;
+                white-space: nowrap;
+            }
+            .model-option:hover {
+                background: var(--bg-secondary);
+                color: var(--text-primary);
+            }
+            .model-option.active {
+                background: var(--accent-light);
+                color: var(--accent-color);
+                font-weight: 600;
+            }
+            .model-option .dot {
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                background: var(--border-color);
+                flex-shrink: 0;
+            }
+            .model-option.active .dot {
+                background: var(--accent-color);
+            }
+
+            /* Header actions */
+            .header-actions {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+            }
+            .icon-btn {
+                width: 30px;
+                height: 30px;
+                border-radius: var(--radius-sm);
+                border: none;
+                background: transparent;
+                color: var(--text-tertiary);
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 13px;
+                transition: all 0.2s;
+            }
+            .icon-btn:hover {
+                background: var(--bg-secondary);
+                color: var(--text-primary);
+            }
+            .icon-btn.danger:hover {
+                background: rgba(239, 68, 68, 0.1);
+                color: var(--error-color);
+            }
+
+            /* ========== Messages ========== */
+            .messages-container {
+                flex: 1;
+                overflow-y: auto;
+                padding: 24px 16px;
+                display: flex;
+                flex-direction: column;
+                gap: 24px;
+            }
+
+            .message-user {
+                display: flex;
+                justify-content: flex-end;
+            }
+            .message-user-inner {
+                max-width: 85%;
+                background: var(--bg-message-user);
+                color: var(--text-on-accent);
+                padding: 12px 16px;
+                border-radius: 18px 18px 4px 18px;
+                font-size: 14px;
+                line-height: 1.6;
+                box-shadow: var(--shadow-sm);
+            }
+            .message-user-inner .at-ref {
+                color: rgba(255, 255, 255, 0.85);
+                font-weight: 600;
+            }
+
+            .message-assistant {
+                display: flex;
+                gap: 12px;
+            }
+            .assistant-avatar {
+                width: 28px;
+                height: 28px;
+                border-radius: var(--radius-md);
+                background: var(--accent-color);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-size: 12px;
+                flex-shrink: 0;
+                margin-top: 2px;
+                box-shadow: 0 2px 6px rgba(79, 70, 229, 0.25);
+            }
+            .assistant-body {
+                flex: 1;
+                min-width: 0;
+                max-width: 85%;
+            }
+
+            @media (min-width: 1200px) {
+                .message-user-inner {
+                    max-width: 70%;
+                }
+                .assistant-body {
+                    max-width: 70%;
+                }
+            }
+            @media (min-width: 1600px) {
+                .message-user-inner {
+                    max-width: 65%;
+                }
+                .assistant-body {
+                    max-width: 65%;
+                }
+            }
+            .assistant-meta {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                margin-bottom: 6px;
+            }
+            .assistant-name {
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--text-primary);
+            }
+            .assistant-time {
+                font-size: 11px;
+                color: var(--text-tertiary);
+                font-variant-numeric: tabular-nums;
+            }
+            .assistant-content {
+                font-size: 14px;
+                line-height: 1.7;
+                color: var(--text-primary);
+            }
+
+            /* ========== Thinking Card ========== */
+            .thinking-card {
+                background: var(--bg-thinking);
+                border: 1px solid var(--border-color);
+                border-radius: var(--radius-md);
+                overflow: hidden;
+                margin: 8px 0;
+            }
+            .thinking-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 8px 12px;
+                cursor: pointer;
+                user-select: none;
+                transition: background 0.15s;
+            }
+            .thinking-header:hover {
+                background: var(--bg-hover);
+            }
+            .thinking-dots {
+                display: flex;
+                gap: 4px;
+            }
+            .thinking-dot-visual {
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                background: var(--warning-color);
+            }
+            .thinking-label {
+                font-size: 12px;
+                color: var(--text-tertiary);
+                font-weight: 500;
+            }
+            .thinking-chevron {
+                font-size: 10px;
+                color: var(--text-tertiary);
+                margin-left: auto;
+                transition: transform 0.2s;
+            }
+            .thinking-chevron.open {
+                transform: rotate(180deg);
+            }
+            .thinking-body {
+                padding: 0 12px 10px;
+                font-size: 12px;
+                font-family: var(--font-mono);
+                color: var(--text-secondary);
+                line-height: 1.6;
+                white-space: pre-wrap;
+                word-break: break-word;
+                display: none;
+            }
+            .thinking-body.open {
+                display: block;
+            }
+
+            /* ========== Code Block ========== */
+            .code-block {
+                position: relative;
+                border-radius: var(--radius-md);
+                overflow: hidden;
+                margin: 12px 0;
+                border: 1px solid var(--border-color);
+                background: var(--bg-code);
+            }
+            .code-block-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 8px 14px;
+                background: rgba(255, 255, 255, 0.04);
+                border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            }
+            .code-lang {
+                font-size: 11px;
+                font-weight: 600;
+                color: #a0a0b0;
+                text-transform: lowercase;
+                letter-spacing: 0.3px;
+            }
+            .code-actions {
+                display: flex;
+                gap: 4px;
+                opacity: 0;
+                transition: opacity 0.2s;
+            }
+            .code-block:hover .code-actions {
+                opacity: 1;
+            }
+            .code-action-btn {
+                padding: 3px 8px;
+                border-radius: var(--radius-sm);
+                border: none;
+                background: rgba(255, 255, 255, 0.08);
+                color: #c0c0d0;
+                font-size: 11px;
+                cursor: pointer;
+                transition: background 0.15s;
+                font-family: var(--font-sans);
+                font-weight: 500;
+            }
+            .code-action-btn:hover {
+                background: rgba(255, 255, 255, 0.15);
+                color: #fff;
+            }
+            .code-block pre {
+                margin: 0;
+                padding: 14px;
+                overflow-x: auto;
+                background: transparent;
+            }
+            .code-block code {
+                font-family: var(--font-mono);
+                font-size: 13px;
+                line-height: 1.6;
+            }
+
+            /* ========== Tool Card ========== */
+            .tool-card {
+                border: 1px solid var(--border-color);
+                border-radius: var(--radius-md);
+                overflow: hidden;
+                margin: 8px 0;
+                background: var(--bg-tool);
+                box-shadow: var(--shadow-sm);
+            }
+            .tool-card-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 8px 12px;
+                cursor: pointer;
+                transition: background 0.15s;
+            }
+            .tool-card-header:hover {
+                background: var(--bg-hover);
+            }
+            .tool-status-icon {
+                width: 18px;
+                height: 18px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 9px;
+                flex-shrink: 0;
+            }
+            .tool-status-running {
+                background: var(--warning-color);
+                color: white;
+            }
+            .tool-status-completed {
+                background: var(--success-color);
+                color: white;
+            }
+            .tool-status-failed {
+                background: var(--error-color);
+                color: white;
+            }
+            .tool-name {
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--text-primary);
+            }
+            .tool-summary {
+                font-size: 11px;
+                color: var(--text-tertiary);
+            }
+            .tool-content {
+                max-height: 0;
+                overflow: hidden;
+                opacity: 0;
+                transition:
+                    max-height 0.3s ease,
+                    opacity 0.2s ease;
+                padding: 0 12px;
+            }
+            .tool-content.open {
+                max-height: 500px;
+                opacity: 1;
+                padding: 0 12px 10px;
+            }
+            .tool-content pre {
+                margin: 0;
+                padding: 10px;
+                border-radius: var(--radius-sm);
+                background: var(--bg-code);
+                color: #c0c0d0;
+                font-family: var(--font-mono);
+                font-size: 12px;
+                max-height: 240px;
+                overflow-y: auto;
+                line-height: 1.5;
+            }
+
+            /* ========== Artifact ========== */
+            .artifact-panel {
+                border: 1px solid var(--border-color);
+                border-radius: var(--radius-md);
+                background: var(--bg-artifact);
+                margin: 8px 0;
+                overflow: hidden;
+                box-shadow: var(--shadow-sm);
+            }
+            .artifact-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 10px 12px;
+                background: var(--bg-secondary);
+                border-bottom: 1px solid var(--border-subtle);
+            }
+            .artifact-title {
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--text-primary);
+            }
+            .artifact-actions {
+                display: flex;
+                gap: 4px;
+            }
+
+            /* ========== Input Area ========== */
+            .input-area-wrapper {
+                padding: 12px 16px 16px;
+                border-top: 1px solid var(--border-subtle);
+                background: var(--bg-primary);
+                flex-shrink: 0;
+            }
+            .mode-bar {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                margin-bottom: 8px;
+            }
+            .mode-pill {
+                padding: 4px 12px;
+                border-radius: var(--radius-full);
+                font-size: 11px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s;
+                border: none;
+                background: transparent;
+                color: var(--text-tertiary);
+                font-family: var(--font-sans);
+                letter-spacing: 0.2px;
+            }
+            .mode-pill.active {
+                background: var(--accent-light);
+                color: var(--accent-color);
+            }
+            .mode-pill:hover:not(.active) {
+                background: var(--bg-secondary);
+                color: var(--text-secondary);
+            }
+            .status-text {
+                font-size: 11px;
+                color: var(--text-tertiary);
+                margin-left: auto;
+                font-weight: 500;
+            }
+            .status-text.thinking {
+                color: var(--accent-color);
+            }
+            .status-text.error {
+                color: var(--error-color);
+            }
+
+            .input-box {
+                display: flex;
+                align-items: flex-end;
+                gap: 8px;
+                padding: 10px 14px;
+                border-radius: var(--radius-xl);
+                background: var(--bg-input);
+                border: 1.5px solid transparent;
+                transition: all 0.2s;
+                position: relative;
+            }
+            .input-box:focus-within {
+                border-color: var(--accent-color);
+                background: var(--bg-primary);
+                box-shadow: 0 0 0 3px var(--accent-light);
+            }
+            .input-textarea {
+                flex: 1;
+                background: transparent;
+                border: none;
+                outline: none;
+                resize: none;
+                font-family: var(--font-sans);
+                font-size: 14px;
+                line-height: 1.5;
+                color: var(--text-primary);
+                min-height: 22px;
+                max-height: 200px;
+                padding: 2px 0;
+            }
+            .input-textarea::placeholder {
+                color: var(--text-tertiary);
+            }
+            .send-btn {
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                border: none;
+                background: var(--accent-color);
+                color: white;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                font-size: 12px;
+                flex-shrink: 0;
+                transition: all 0.2s;
+                box-shadow: 0 2px 6px rgba(79, 70, 229, 0.3);
+            }
+            .send-btn:hover {
+                background: var(--accent-hover);
+                transform: scale(1.05);
+            }
+            .send-btn:active {
+                transform: scale(0.95);
+            }
+            .stop-btn {
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                border: none;
+                background: var(--error-color);
+                color: white;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                font-size: 11px;
+                flex-shrink: 0;
+                transition: all 0.2s;
+            }
+            .stop-btn:hover {
+                transform: scale(1.05);
+            }
+            .stop-btn:active {
+                transform: scale(0.95);
+            }
+            .hidden {
+                display: none !important;
+            }
+
+            .input-hint {
+                margin-top: 6px;
+                font-size: 11px;
+                color: var(--text-tertiary);
+                padding-left: 6px;
+            }
+            .input-hint kbd {
+                background: var(--bg-secondary);
+                border: 1px solid var(--border-color);
+                border-radius: 4px;
+                padding: 1px 4px;
+                font-family: var(--font-mono);
+                font-size: 10px;
+            }
+
+            .char-counter {
+                position: absolute;
+                bottom: 6px;
+                right: 50px;
+                font-size: 11px;
+                color: var(--text-tertiary);
+                font-variant-numeric: tabular-nums;
+                pointer-events: none;
+                transition: color 0.2s;
+            }
+            .char-counter.warning {
+                color: var(--warning-color);
+                font-weight: 600;
+            }
+            .char-counter.danger {
+                color: var(--error-color);
+                font-weight: 600;
+            }
+
+            /* ========== Stream Loading ========== */
+            .stream-loading {
+                height: 2px;
+                background: var(--bg-tertiary);
+                border-radius: 1px;
+                overflow: hidden;
+                margin-top: 8px;
+                opacity: 1;
+                transition: opacity 0.3s;
+            }
+            .stream-loading.hidden {
+                opacity: 0;
+            }
+            .stream-loading-bar {
+                height: 100%;
+                width: 40%;
+                background: linear-gradient(
+                    90deg,
+                    transparent,
+                    var(--accent-color),
+                    transparent
+                );
+                animation: streamShimmer 1.5s infinite;
+            }
+            @keyframes streamShimmer {
+                0% {
+                    transform: translateX(-100%);
+                }
+                100% {
+                    transform: translateX(250%);
+                }
+            }
+
+            /* ========== File Autocomplete ========== */
+            .file-autocomplete {
+                position: absolute;
+                bottom: calc(100% + 8px);
+                left: 0;
+                right: 0;
+                max-height: 240px;
+                overflow-y: auto;
+                background: var(--bg-primary);
+                border: 1px solid var(--border-color);
+                border-radius: var(--radius-md);
+                box-shadow: var(--shadow-lg);
+                z-index: 100;
+                display: none;
+                padding: 6px;
+            }
+            .file-autocomplete.visible {
+                display: block;
+                animation: scaleIn 0.15s ease-out;
+            }
+            .file-suggestion {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 7px 8px;
+                cursor: pointer;
+                transition: background 0.15s;
+                border-radius: var(--radius-sm);
+            }
+            .file-suggestion:hover,
+            .file-suggestion.selected {
+                background: var(--bg-secondary);
+            }
+            .file-suggestion-icon {
+                font-size: 14px;
+                width: 20px;
+                text-align: center;
+                flex-shrink: 0;
+            }
+            .file-suggestion-info {
+                flex: 1;
+                min-width: 0;
+            }
+            .file-suggestion-name {
+                font-size: 12px;
+                font-weight: 500;
+                color: var(--text-primary);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .file-suggestion-path {
+                font-size: 11px;
+                color: var(--text-tertiary);
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            /* ========== File Reference Tags ========== */
+            .file-reference-tags {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                margin-bottom: 4px;
+            }
+            .file-reference-tag {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                padding: 3px 8px;
+                border-radius: var(--radius-sm);
+                font-size: 11px;
+                background: var(--accent-light);
+                color: var(--accent-color);
+                border: 1px solid rgba(79, 70, 229, 0.15);
+                font-weight: 500;
+            }
+
+            /* ========== Markdown Content ========== */
+            .markdown-content h1 {
+                font-size: 1.45em;
+                font-weight: 600;
+                margin: 0.6em 0;
+                color: var(--text-primary);
+            }
+            .markdown-content h2 {
+                font-size: 1.25em;
+                font-weight: 600;
+                margin: 0.6em 0;
+                color: var(--text-primary);
+            }
+            .markdown-content h3 {
+                font-size: 1.1em;
+                font-weight: 600;
+                margin: 0.5em 0;
+                color: var(--text-primary);
+            }
+            .markdown-content p {
+                margin: 0.6em 0;
+                line-height: 1.75;
+            }
+            .markdown-content ul,
+            .markdown-content ol {
+                margin: 0.5em 0;
+                padding-left: 1.6em;
+            }
+            .markdown-content li {
+                margin: 0.3em 0;
+            }
+            .markdown-content code {
+                background: var(--bg-tertiary);
+                padding: 2px 6px;
+                border-radius: 5px;
+                font-family: var(--font-mono);
+                font-size: 0.88em;
+                color: var(--accent-color);
+                font-weight: 500;
+            }
+            .markdown-content pre code {
+                background: none;
+                padding: 0;
+                color: inherit;
+                font-weight: 400;
+            }
+            .markdown-content blockquote {
+                border-left: 3px solid var(--accent-color);
+                margin: 0.6em 0;
+                padding: 4px 0 4px 14px;
+                color: var(--text-secondary);
+                font-style: italic;
+                background: var(--accent-light);
+                border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+            }
+            .markdown-content table {
+                border-collapse: collapse;
+                margin: 0.6em 0;
+                width: 100%;
+                font-size: 13px;
+            }
+            .markdown-content th,
+            .markdown-content td {
+                border: 1px solid var(--border-color);
+                padding: 7px 10px;
+                text-align: left;
+            }
+            .markdown-content th {
+                background: var(--bg-secondary);
+                font-weight: 600;
+                font-size: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.3px;
+            }
+            .markdown-content tr:nth-child(even) {
+                background: var(--bg-secondary);
+            }
+            .markdown-content a {
+                color: var(--accent-color);
+                text-decoration: none;
+            }
+            .markdown-content a:hover {
+                text-decoration: underline;
+            }
+            .markdown-content hr {
+                border: none;
+                border-top: 1px solid var(--border-color);
+                margin: 1em 0;
+            }
+            .markdown-content img {
+                max-width: 100%;
+                border-radius: var(--radius-sm);
+            }
+
+            /* ========== Turn Actions ========== */
+            .turn-actions {
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                margin-top: 8px;
+                opacity: 0;
+                transition: opacity 0.2s;
+            }
+            .message-assistant:hover .turn-actions {
+                opacity: 1;
+            }
+            .turn-action-btn {
+                padding: 4px 10px;
+                border-radius: var(--radius-sm);
+                font-size: 11px;
+                cursor: pointer;
+                border: 1px solid var(--border-color);
+                background: var(--bg-primary);
+                color: var(--text-tertiary);
+                transition: all 0.2s;
+                font-family: var(--font-sans);
+                font-weight: 500;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+            }
+            .turn-action-btn:hover {
+                border-color: var(--accent-color);
+                color: var(--accent-color);
+                background: var(--accent-light);
+            }
+
+            /* ========== Welcome State ========== */
+            .welcome-state {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                height: 100%;
+                text-align: center;
+                padding: 40px 20px;
+            }
+            .welcome-icon {
+                width: 56px;
+                height: 56px;
+                border-radius: var(--radius-lg);
+                background: var(--accent-color);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-size: 24px;
+                margin-bottom: 20px;
+                box-shadow: 0 8px 24px rgba(79, 70, 229, 0.25);
+            }
+            .welcome-title {
+                font-size: 22px;
+                font-weight: 700;
+                color: var(--text-primary);
+                margin-bottom: 8px;
+                letter-spacing: -0.3px;
+            }
+            .welcome-subtitle {
+                font-size: 14px;
+                color: var(--text-secondary);
+                max-width: 360px;
+                line-height: 1.6;
+                margin-bottom: 28px;
+            }
+            .quick-prompts {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 8px;
+                max-width: 360px;
+                width: 100%;
+            }
+            .quick-prompt-btn {
+                padding: 10px 14px;
+                border-radius: var(--radius-md);
+                border: 1px solid var(--border-color);
+                background: var(--bg-primary);
+                color: var(--text-secondary);
+                font-size: 13px;
+                font-weight: 500;
+                cursor: pointer;
+                transition: all 0.2s;
+                text-align: left;
+                font-family: var(--font-sans);
+            }
+            .quick-prompt-btn:hover {
+                border-color: var(--accent-color);
+                background: var(--accent-light);
+                color: var(--accent-color);
+                transform: translateY(-1px);
+                box-shadow: var(--shadow-sm);
+            }
+
+            /* ========== Artifact Sidebar ========== */
+            #artifact-sidebar {
+                width: 0;
+                transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+                overflow: hidden;
+                border-left: 1px solid var(--border-subtle);
+                flex-shrink: 0;
+            }
+            #artifact-sidebar.open {
+                width: 380px;
+            }
+            .artifact-sidebar-inner {
+                width: 380px;
+                height: 100%;
+                display: flex;
+                flex-direction: column;
+                background: var(--bg-primary);
+            }
+            .artifact-sidebar-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 14px;
+                height: 52px;
+                border-bottom: 1px solid var(--border-subtle);
+                flex-shrink: 0;
+            }
+            .artifact-sidebar-title {
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--text-primary);
+            }
+            .artifact-list {
+                flex: 1;
+                overflow-y: auto;
+                padding: 12px;
+            }
+
+            /* ========== History Dropdown ========== */
+            .history-selector {
+                position: relative;
+            }
+            .history-dropdown {
+                position: absolute;
+                top: calc(100% + 6px);
+                right: 0;
+                min-width: 320px;
+                max-width: 360px;
+                max-height: 420px;
+                overflow-y: auto;
+                background: var(--bg-primary);
+                border: 1px solid var(--border-color);
+                border-radius: var(--radius-md);
+                box-shadow: var(--shadow-lg);
+                z-index: 100;
+                display: none;
+                padding: 8px;
+            }
+            .history-dropdown.open {
+                display: block;
+                animation: scaleIn 0.15s ease-out;
+            }
+            .history-header {
+                font-size: 11px;
+                font-weight: 700;
+                color: var(--text-tertiary);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                padding: 4px 8px 8px;
+            }
+            .history-item {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 8px 10px;
+                border-radius: var(--radius-sm);
+                cursor: pointer;
+                font-size: 13px;
+                color: var(--text-primary);
+                transition: background 0.15s;
+            }
+            .history-item:hover {
+                background: var(--bg-hover);
+            }
+            .history-item-name {
+                flex: 1;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .history-item-time {
+                font-size: 11px;
+                color: var(--text-tertiary);
+                flex-shrink: 0;
+            }
+            .history-empty {
+                text-align: center;
+                padding: 24px;
+                color: var(--text-tertiary);
+                font-size: 13px;
+            }
+
+            /* ========== Offline Warning ========== */
+            .offline-warning {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                z-index: 9999;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                background: var(--bg-primary);
+                color: var(--text-primary);
+                font-family: var(--font-sans);
+            }
+            .offline-warning h2 {
+                margin-bottom: 12px;
+                font-size: 18px;
+            }
+            .offline-warning p {
+                margin-bottom: 20px;
+                color: var(--text-secondary);
+                font-size: 14px;
+            }
+            .reload-btn {
+                padding: 8px 18px;
+                border-radius: var(--radius-md);
+                border: none;
+                background: var(--accent-color);
+                color: white;
+                cursor: pointer;
+                font-size: 14px;
+                font-weight: 500;
+                font-family: var(--font-sans);
+                transition: background 0.2s;
+            }
+            .reload-btn:hover {
+                background: var(--accent-hover);
+            }
+
+            /* ========== Budget Status ========== */
+            .budget-status {
+                font-size: 11px;
+                font-weight: 600;
+                color: var(--text-tertiary);
+                margin-left: auto;
+                padding: 2px 8px;
+                border-radius: var(--radius-full);
+                background: var(--bg-secondary);
+                font-variant-numeric: tabular-nums;
+                transition: all 0.3s;
+            }
+            .budget-status.ok {
+                color: var(--success-color);
+                background: rgba(16, 185, 129, 0.1);
+            }
+            .budget-status.warning {
+                color: var(--warning-color);
+                background: rgba(245, 158, 11, 0.1);
+            }
+            .budget-status.critical {
+                color: var(--error-color);
+                background: rgba(239, 68, 68, 0.1);
+            }
+            .budget-status.exhausted {
+                color: var(--error-color);
+                background: rgba(239, 68, 68, 0.15);
+                font-weight: 600;
+            }
+
+            /* ========== Budget Exhausted Panel ========== */
+            .budget-exhausted {
+                border: 1px dashed var(--border-color);
+                border-radius: var(--radius-md);
+                padding: 16px;
+                text-align: center;
+                background: var(--bg-secondary);
+                margin: 8px 0;
+            }
+            .budget-exhausted-title {
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--text-primary);
+                margin-bottom: 8px;
+            }
+            .budget-exhausted-reason {
+                font-size: 12px;
+                color: var(--text-secondary);
+                margin-bottom: 8px;
+            }
+            .budget-exhausted-summary {
+                font-size: 11px;
+                color: var(--text-tertiary);
+                margin-bottom: 12px;
+            }
+            .continue-btn {
+                padding: 6px 16px;
+                border-radius: var(--radius-sm);
+                border: none;
+                background: var(--accent-color);
+                color: white;
+                font-size: 12px;
+                cursor: pointer;
+                font-family: var(--font-sans);
+                font-weight: 500;
+                transition: all 0.2s;
+            }
+            .continue-btn:hover {
+                background: var(--accent-hover);
+                transform: scale(1.03);
+            }
+        </style>
+    </head>
+    <body data-theme="light">
+        <div class="app-container">
+            <!-- Main Chat Area -->
+            <div class="main-area">
+                <!-- Header -->
+                <div class="chat-header">
+                    <div class="header-brand">
+                        <div class="brand-icon">
+                            <i class="fas fa-wand-magic-sparkles"></i>
+                        </div>
+                        <div class="brand-title">CodeSage</div>
+                    </div>
+                    <div class="header-actions">
+                        <!-- Chat Mode Toggle -->
+                        <div class="mode-toggle" id="mode-toggle">
+                            <button
+                                class="mode-btn active"
+                                data-mode="GENERAL"
+                                onclick="switchChatMode('GENERAL')"
+                                title="通用对话"
+                            >
+                                通用
+                            </button>
+                            <button
+                                class="mode-btn"
+                                data-mode="CODING"
+                                onclick="switchChatMode('CODING')"
+                                title="代码生成与审查"
+                            >
+                                编程
+                            </button>
+                            <button
+                                class="mode-btn"
+                                data-mode="REASONING"
+                                onclick="switchChatMode('REASONING')"
+                                title="深度推理与分析"
+                            >
+                                推理
+                            </button>
+                            <button
+                                class="mode-btn"
+                                data-mode="VISION"
+                                onclick="switchChatMode('VISION')"
+                                title="图片理解与多模态"
+                            >
+                                视觉
+                            </button>
+                        </div>
+                        <!-- Model Selector -->
+                        <div class="model-selector" id="model-selector">
+                            <button
+                                class="model-select-btn"
+                                id="model-select-btn"
+                                onclick="toggleModelDropdown()"
+                            >
+                                <i class="fas fa-microchip"></i>
+                                <span id="current-model-name">选择模型</span>
+                                <i class="fas fa-chevron-down chevron"></i>
+                            </button>
+                            <div
+                                class="model-dropdown"
+                                id="model-dropdown"
+                            ></div>
+                        </div>
+                        <!-- New Session -->
+                        <button
+                            class="icon-btn"
+                            onclick="onNewSession()"
+                            title="New Session"
+                        >
+                            <i class="fas fa-plus"></i>
+                        </button>
+                        <!-- History Dropdown -->
+                        <div class="history-selector" id="history-selector">
+                            <button
+                                class="icon-btn"
+                                id="history-btn"
+                                onclick="toggleHistoryDropdown()"
+                                title="History"
+                            >
+                                <i class="fas fa-clock-rotate-left"></i>
+                            </button>
+                            <div
+                                class="history-dropdown"
+                                id="history-dropdown"
+                            ></div>
+                        </div>
+                        <button
+                            class="icon-btn danger"
+                            onclick="clearChat()"
+                            title="清空会话"
+                        >
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                        <button
+                            class="icon-btn"
+                            onclick="toggleTheme()"
+                            title="切换主题"
+                        >
+                            <i class="fas fa-moon" id="theme-icon"></i>
+                        </button>
+                        <button
+                            class="icon-btn"
+                            id="thinking-toggle-btn"
+                            onclick="toggleThinkingVisibility()"
+                            title="显示思考过程"
+                        >
+                            <i
+                                class="fas fa-brain"
+                                id="thinking-toggle-icon"
+                            ></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Messages -->
+                <div class="messages-container" id="messages-container">
+                    <div class="welcome-state" id="welcome-state">
+                        <div class="welcome-icon">
+                            <i class="fas fa-code"></i>
+                        </div>
+                        <div class="welcome-title">CodeSage AI 助手</div>
+                        <div class="welcome-subtitle">
+                            我可以帮你编写代码、调试问题、重构项目、生成测试等。支持多轮对话、工具调用、代码生成。
+                        </div>
+                        <div class="quick-prompts">
+                            <button
+                                class="quick-prompt-btn"
+                                onclick="sendQuickPrompt('解释这段代码')"
+                            >
+                                <i class="fas fa-book-open mr-1"></i> 解释代码
+                            </button>
+                            <button
+                                class="quick-prompt-btn"
+                                onclick="sendQuickPrompt('重构这段代码')"
+                            >
+                                <i class="fas fa-sync-alt mr-1"></i> 重构代码
+                            </button>
+                            <button
+                                class="quick-prompt-btn"
+                                onclick="sendQuickPrompt('生成单元测试')"
+                            >
+                                <i class="fas fa-vial mr-1"></i> 生成测试
+                            </button>
+                            <button
+                                class="quick-prompt-btn"
+                                onclick="sendQuickPrompt('修复代码中的bug')"
+                            >
+                                <i class="fas fa-bug mr-1"></i> 修复 Bug
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Input Area -->
+                <div class="input-area-wrapper">
+                    <div class="mode-bar">
+                        <button
+                            class="mode-pill active"
+                            data-mode="agent"
+                            onclick="setMode('agent')"
+                            title="Agent 模式：AI 自动规划并使用工具"
+                        >
+                            Agent
+                        </button>
+                        <button
+                            class="mode-pill"
+                            data-mode="ask"
+                            onclick="setMode('ask')"
+                            title="Ask 模式：仅对话，不调用工具"
+                        >
+                            Ask
+                        </button>
+                        <button
+                            class="mode-pill"
+                            data-mode="manual"
+                            onclick="setMode('manual')"
+                            title="Manual 模式：手动选择工具"
+                        >
+                            Manual
+                        </button>
+                        <span class="status-text" id="status-label">就绪</span>
+                    </div>
+                    <div class="input-box">
+                        <div
+                            id="file-autocomplete"
+                            class="file-autocomplete"
+                        ></div>
+                        <textarea
+                            id="message-input"
+                            class="input-textarea"
+                            placeholder="输入消息... (Enter / Ctrl+Enter 发送, Shift+Enter 换行, @引用文件, Esc 停止生成)"
+                            rows="1"
+                            oninput="handleInput(event)"
+                            onkeydown="handleKeydown(event)"
+                        ></textarea>
+                        <span class="char-counter" id="char-counter"
+                            >0 / 4000</span
+                        >
+                        <button
+                            id="send-btn"
+                            class="send-btn"
+                            onclick="sendMessage()"
+                            title="发送消息 (Enter / Ctrl+Enter)"
+                        >
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                        <button
+                            id="stop-btn"
+                            class="stop-btn hidden"
+                            onclick="stopGeneration()"
+                            title="停止生成 (Escape)"
+                        >
+                            <i class="fas fa-stop"></i>
+                        </button>
+                    </div>
+                    <div class="input-hint">
+                        <kbd>Enter</kbd> / <kbd>Ctrl+Enter</kbd> 发送 ·
+                        <kbd>Shift</kbd> + <kbd>Enter</kbd> 换行 ·
+                        <kbd>@</kbd> 引用文件 · <kbd>Esc</kbd> 停止生成
+                    </div>
+                </div>
+            </div>
+
+            <!-- Artifact Sidebar -->
+            <div id="artifact-sidebar">
+                <div class="artifact-sidebar-inner">
+                    <div class="artifact-sidebar-header">
+                        <span class="artifact-sidebar-title"
+                            ><i class="fas fa-cube mr-2"></i>Artifacts</span
+                        >
+                        <button
+                            class="icon-btn"
+                            onclick="closeArtifactSidebar()"
+                        >
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div class="artifact-list" id="artifact-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <script>
+            // ===== State =====
+            let currentMode = "agent";
+            // T1.5 修复：当前用户选中的 ChatMode（null = 用户未选，后端走 suggestion）
+            let currentChatMode = null;
+            let isGenerating = false;
+            let currentTurnId = null;
+            let turns = new Map();
+            let artifacts = new Map();
+            let availableModels = []; // {provider, models: []}
+            let currentModel = "";
+            const MAX_CHARS = 4000;
+            const WARNING_THRESHOLD = 3600;
+            let showThinkingGlobal = (function () {
+                try {
+                    return (
+                        localStorage.getItem("codesage_show_thinking") !==
+                        "false"
+                    );
+                } catch (e) {
+                    return true;
+                }
+            })();
+
+            // ===== EventBus =====
+            class EventBus {
+                constructor() {
+                    this.handlers = new Map();
+                    this.batchQueue = [];
+                    this.batchScheduled = false;
+                }
+                on(type, handler) {
+                    if (!this.handlers.has(type)) this.handlers.set(type, []);
+                    this.handlers.get(type).push(handler);
+                }
+                off(type, handler) {
+                    const list = this.handlers.get(type);
+                    if (list) {
+                        const idx = list.indexOf(handler);
+                        if (idx >= 0) list.splice(idx, 1);
+                    }
+                }
+                emit(type, data) {
+                    if (type === "text_delta" || type === "thinking_update") {
+                        this.batchQueue.push({ type, data });
+                        this.scheduleBatch();
+                    } else {
+                        this.flush(type, data);
+                    }
+                }
+                scheduleBatch() {
+                    if (this.batchScheduled) return;
+                    this.batchScheduled = true;
+                    requestAnimationFrame(() => {
+                        this.processBatch();
+                        this.batchScheduled = false;
+                    });
+                }
+                processBatch() {
+                    if (this.batchQueue.length === 0) return;
+                    const queue = this.batchQueue.splice(
+                        0,
+                        this.batchQueue.length,
+                    );
+                    // 合并连续的 text_delta
+                    const merged = [];
+                    let pendingText = null;
+                    let pendingTurnId = null;
+                    for (const item of queue) {
+                        if (item.type === "text_delta") {
+                            if (
+                                pendingText !== null &&
+                                pendingTurnId === item.data.turnId
+                            ) {
+                                pendingText += item.data.delta;
+                            } else {
+                                if (pendingText !== null) {
+                                    merged.push({
+                                        type: "text_delta",
+                                        data: {
+                                            turnId: pendingTurnId,
+                                            delta: pendingText,
+                                        },
+                                    });
+                                }
+                                pendingText = item.data.delta;
+                                pendingTurnId = item.data.turnId;
+                            }
+                        } else {
+                            if (pendingText !== null) {
+                                merged.push({
+                                    type: "text_delta",
+                                    data: {
+                                        turnId: pendingTurnId,
+                                        delta: pendingText,
+                                    },
+                                });
+                                pendingText = null;
+                                pendingTurnId = null;
+                            }
+                            merged.push(item);
+                        }
+                    }
+                    if (pendingText !== null) {
+                        merged.push({
+                            type: "text_delta",
+                            data: { turnId: pendingTurnId, delta: pendingText },
+                        });
+                    }
+                    for (const item of merged) {
+                        this.flush(item.type, item.data);
+                    }
+                }
+                flush(type, data) {
+                    const list = this.handlers.get(type);
+                    if (list) list.forEach((h) => h(data));
+                }
+            }
+            const eventBus = new EventBus();
+
+            // 注册核心事件处理器
+            eventBus.on("text_delta", (data) =>
+                onTextDelta(data.turnId, data.delta),
+            );
+            eventBus.on("thinking_start", (data) =>
+                onThinkingStart(data.turnId, data.message),
+            );
+            eventBus.on("thinking_update", (data) =>
+                onThinkingUpdate(data.turnId, data.message),
+            );
+            eventBus.on("thinking_complete", (data) =>
+                onThinkingComplete(data.turnId, data.elapsedMs),
+            );
+            eventBus.on("tool_call_start", (data) =>
+                onToolCallStart(
+                    data.turnId,
+                    data.toolId,
+                    data.toolName,
+                    data.summary,
+                ),
+            );
+            eventBus.on("tool_call_delta", (data) =>
+                onToolCallDelta(data.turnId, data.toolId, data.delta),
+            );
+            eventBus.on("tool_call_complete", (data) =>
+                onToolCallComplete(
+                    data.turnId,
+                    data.toolId,
+                    data.success,
+                    data.result,
+                ),
+            );
+            eventBus.on("tool_call_error", (data) =>
+                onToolCallError(data.turnId, data.toolId, data.error),
+            );
+            eventBus.on("turn_complete", (data) => onTurnComplete(data.turnId));
+            eventBus.on("error", (data) => onError(data.turnId, data.message));
+            eventBus.on("budget_status", (data) =>
+                onBudgetStatus(data.turnId, data),
+            );
+            eventBus.on("budget_exhausted", (data) =>
+                onBudgetExhausted(data.turnId, data),
+            );
+            eventBus.on("budget_extended", (data) =>
+                onBudgetStatus(data.turnId, data),
+            );
+            eventBus.on("plan_generated", (data) =>
+                onPlanGenerated(data.turnId, data),
+            );
+            eventBus.on("plan_approved", (data) =>
+                onPlanApproved(data.turnId, data),
+            );
+            eventBus.on("plan_rejected", (data) =>
+                onPlanRejected(data.turnId, data),
+            );
+            eventBus.on("context_compressed", (data) =>
+                onContextCompressed(data.turnId, data),
+            );
+            eventBus.on("session_migrated", (data) =>
+                onSessionMigrated(data.turnId, data),
+            );
+
+            // ===== Theme =====
+            const HLJS_THEME_DARK_URL =
+                "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css";
+            const HLJS_THEME_LIGHT_URL =
+                "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css";
+
+            function toggleTheme() {
+                const body = document.body;
+                const icon = document.getElementById("theme-icon");
+                const darkLink = document.getElementById("hljs-theme-dark");
+                const lightLink = document.getElementById("hljs-theme-light");
+                const newTheme =
+                    body.getAttribute("data-theme") === "dark"
+                        ? "light"
+                        : "dark";
+                body.setAttribute("data-theme", newTheme);
+                if (newTheme === "dark") {
+                    icon.className = "fas fa-sun";
+                    darkLink.disabled = false;
+                    lightLink.disabled = true;
+                } else {
+                    icon.className = "fas fa-moon";
+                    darkLink.disabled = true;
+                    lightLink.disabled = false;
+                }
+                try {
+                    localStorage.setItem("codesage_theme", newTheme);
+                } catch (e) {
+                    console.warn("localStorage not available for theme");
+                }
+                if (window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({
+                            type: "theme_changed",
+                            theme: newTheme,
+                        }),
+                    );
+                }
+            }
+
+            function setTheme(theme) {
+                const body = document.body;
+                const icon = document.getElementById("theme-icon");
+                const darkLink = document.getElementById("hljs-theme-dark");
+                const lightLink = document.getElementById("hljs-theme-light");
+                body.setAttribute("data-theme", theme);
+                if (theme === "dark") {
+                    icon.className = "fas fa-sun";
+                    darkLink.disabled = false;
+                    lightLink.disabled = true;
+                } else {
+                    icon.className = "fas fa-moon";
+                    darkLink.disabled = true;
+                    lightLink.disabled = false;
+                }
+                try {
+                    localStorage.setItem("codesage_theme", theme);
+                } catch (e) {
+                    console.warn("localStorage not available for theme");
+                }
+            }
+
+            // ===== Model Selector =====
+            function setAvailableModels(modelData) {
+                availableModels = modelData || [];
+                renderModelDropdown();
+            }
+
+            function setCurrentModel(model, providerName) {
+                currentModel = model;
+                const btnName = document.getElementById("current-model-name");
+                const display = model || "未配置";
+                if (btnName) {
+                    btnName.textContent =
+                        display.length > 14
+                            ? display.substring(0, 12) + "..."
+                            : display;
+                }
+                renderModelDropdown();
+            }
+
+            function renderModelDropdown() {
+                const dropdown = document.getElementById("model-dropdown");
+                if (!availableModels.length) {
+                    dropdown.innerHTML =
+                        '<div class="model-option" style="color:var(--text-tertiary);cursor:default;">暂无可用模型</div>';
+                    return;
+                }
+                let html = "";
+                availableModels.forEach((group) => {
+                    html += `<div class="model-group-label">${escapeHtml(group.provider)}</div>`;
+                    group.models.forEach((m) => {
+                        const isActive = m === currentModel;
+                        html += `<div class="model-option ${isActive ? "active" : ""}" onclick="selectModel('${escapeJs(m)}')">
+                        <span class="dot"></span>
+                        <span>${escapeHtml(m)}</span>
+                    </div>`;
+                    });
+                });
+                dropdown.innerHTML = html;
+            }
+
+            function toggleModelDropdown() {
+                const btn = document.getElementById("model-select-btn");
+                const dropdown = document.getElementById("model-dropdown");
+                const isOpen = dropdown.classList.contains("open");
+                if (isOpen) {
+                    dropdown.classList.remove("open");
+                    btn.classList.remove("open");
+                } else {
+                    renderModelDropdown();
+                    dropdown.classList.add("open");
+                    btn.classList.add("open");
+                }
+            }
+
+            function selectModel(model) {
+                currentModel = model;
+                renderModelDropdown();
+                document
+                    .getElementById("model-dropdown")
+                    .classList.remove("open");
+                document
+                    .getElementById("model-select-btn")
+                    .classList.remove("open");
+                const btnName = document.getElementById("current-model-name");
+                btnName.textContent =
+                    model.length > 14 ? model.substring(0, 12) + "..." : model;
+                if (window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({ type: "switch_model", model: model }),
+                    );
+                }
+            }
+
+            // T1.5 修复：响应后端发来的 ChatMode 自动建议
+            // data = { effective, suggestion, userExplicit }
+            // 行为：
+            //   - 如果 userExplicit=true，仅更新 UI 按钮（不修改 currentChatMode）。
+            //   - 如果 userExplicit=false，弹出轻提示 "已自动选择 X 模式" 并更新 UI 按钮。
+            //     （不修改 currentChatMode，这样下次用户选模式时仍可覆盖）
+            function handleModeSuggestion(data) {
+                if (!data || !data.effective) return;
+                const effective = data.effective;
+                const userExplicit = !!data.userExplicit;
+                // 同步更新 UI 按钮的 active 态（仅在 selected 模式不等于 effective 时）
+                document.querySelectorAll(".mode-btn").forEach(function (btn) {
+                    if (btn.dataset.mode === effective) {
+                        btn.classList.add("active");
+                    } else if (!userExplicit) {
+                        // 后端自动推断：仅当后端明确选了不同 mode 时取消其他 active
+                        // 避免覆盖用户手动选择
+                    }
+                });
+                if (!userExplicit) {
+                    // 后端自动建议：弹出轻提示（不覆盖 currentChatMode）
+                    const label = modeLabel(effective);
+                    showToast(
+                        "ℹ️ 已根据消息内容自动选择 " +
+                            label +
+                            " 模式（点击顶部门手动切换）",
+                        4000,
+                    );
+                }
+            }
+
+            function modeLabel(mode) {
+                switch (mode) {
+                    case "GENERAL":
+                        return "通用";
+                    case "CODING":
+                        return "编程";
+                    case "REASONING":
+                        return "推理";
+                    case "VISION":
+                        return "视觉";
+                    default:
+                        return mode;
+                }
+            }
+
+            // 轻提示吐司（不阻塞 UI）
+            function showToast(message, durationMs) {
+                let toast = document.getElementById("codesage-toast");
+                if (!toast) {
+                    toast = document.createElement("div");
+                    toast.id = "codesage-toast";
+                    toast.style.cssText =
+                        "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(40,40,40,0.92);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:99999;box-shadow:0 4px 16px rgba(0,0,0,0.3);transition:opacity 0.3s;opacity:0;";
+                    document.body.appendChild(toast);
+                }
+                toast.textContent = message;
+                toast.style.opacity = "1";
+                clearTimeout(toast._hideTimer);
+                toast._hideTimer = setTimeout(function () {
+                    toast.style.opacity = "0";
+                }, durationMs || 3000);
+            }
+
+            document.addEventListener("click", (e) => {
+                const selector = document.getElementById("model-selector");
+                if (selector && !selector.contains(e.target)) {
+                    document
+                        .getElementById("model-dropdown")
+                        ?.classList.remove("open");
+                    document
+                        .getElementById("model-select-btn")
+                        ?.classList.remove("open");
+                }
+            });
+
+            // ===== Theme init =====
+            (function initTheme() {
+                try {
+                    const saved = localStorage.getItem("codesage_theme");
+                    if (saved) setTheme(saved);
+                } catch (e) {
+                    console.warn("localStorage not available for theme");
+                }
+            })();
+
+            // ===== Session Management =====
+            let sessions = [];
+            let currentSessionId = null;
+
+            function toggleHistoryDropdown() {
+                const dropdown = document.getElementById("history-dropdown");
+                const btn = document.getElementById("history-btn");
+                const isOpen = dropdown.classList.contains("open");
+                if (isOpen) {
+                    dropdown.classList.remove("open");
+                    btn.classList.remove("open");
+                } else {
+                    if (window.javaBridge) {
+                        window.javaBridge.sendMessage(
+                            JSON.stringify({ type: "request_sessions" }),
+                        );
+                    }
+                    dropdown.classList.add("open");
+                    btn.classList.add("open");
+                }
+            }
+
+            function closeHistoryDropdown() {
+                document
+                    .getElementById("history-dropdown")
+                    ?.classList.remove("open");
+                document
+                    .getElementById("history-btn")
+                    ?.classList.remove("open");
+            }
+
+            function renderHistoryDropdown(sessionList) {
+                sessions = sessionList || [];
+                const dropdown = document.getElementById("history-dropdown");
+                if (!dropdown) return;
+
+                if (sessions.length === 0) {
+                    dropdown.innerHTML =
+                        '<div class="history-empty">No conversations yet</div>';
+                    return;
+                }
+
+                const sorted = [...sessions].sort(
+                    (a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0),
+                );
+
+                let html =
+                    '<div class="history-header">Recent Conversations</div>';
+                html += sorted
+                    .map(
+                        (s) => `
+                    <div class="history-item" onclick="onSessionClick('${escapeJs(s.id)}'); closeHistoryDropdown();">
+                        <i class="fas fa-comment" style="font-size:12px;color:var(--text-tertiary);"></i>
+                        <span class="history-item-name">${escapeHtml(s.name || "New Session")}</span>
+                        <span class="history-item-time">${escapeHtml(formatRelativeTime(s.lastActivityAt || s.createdAt))}</span>
+                    </div>
+                `,
+                    )
+                    .join("");
+
+                dropdown.innerHTML = html;
+            }
+
+            function formatRelativeTime(timestamp) {
+                const now = Date.now();
+                const diff = now - timestamp;
+                const minute = 60 * 1000;
+                const hour = 60 * minute;
+                const day = 24 * hour;
+                if (diff < minute) return "Just now";
+                if (diff < hour) return Math.floor(diff / minute) + "m ago";
+                if (diff < day) return Math.floor(diff / hour) + "h ago";
+                if (diff < day * 2) return "Yesterday";
+                return Math.floor(diff / day) + "d ago";
+            }
+
+            function onSessionClick(sessionId) {
+                currentSessionId = sessionId;
+                if (window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({ type: "switch_session", sessionId }),
+                    );
+                }
+            }
+
+            function onNewSession() {
+                if (window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({ type: "new_session" }),
+                    );
+                }
+            }
+
+            function onSessionsUpdated(newSessions) {
+                sessions = newSessions || [];
+                renderHistoryDropdown(sessions);
+            }
+
+            function onSessionCreated(session) {
+                if (session) {
+                    sessions.push(session);
+                    currentSessionId = session.id;
+                    renderHistoryDropdown(sessions);
+                }
+            }
+
+            function onSessionSwitched(sessionId) {
+                if (sessionId === currentSessionId) return;
+                currentSessionId = sessionId;
+                renderHistoryDropdown(sessions);
+                clearChat();
+            }
+
+            function onSessionDeleted(sessionId) {
+                sessions = sessions.filter((s) => s.id !== sessionId);
+                if (currentSessionId === sessionId) currentSessionId = null;
+                renderHistoryDropdown(sessions);
+            }
+
+            function onSessionRenamed(sessionId, name) {
+                const s = sessions.find((s) => s.id === sessionId);
+                if (s) {
+                    s.name = name;
+                    renderHistoryDropdown(sessions);
+                }
+            }
+
+            function loadHistory(messages) {
+                clearChat();
+                if (!messages || messages.length === 0) return;
+
+                const welcome = document.getElementById("welcome-state");
+                if (welcome) welcome.style.display = "none";
+
+                const container = document.getElementById("messages-container");
+                let i = 0;
+                while (i < messages.length) {
+                    const msg = messages[i];
+                    if (msg.role === "user") {
+                        addUserMessage(msg.content);
+
+                        let j = i + 1;
+                        let assistantContent = "";
+                        while (
+                            j < messages.length &&
+                            messages[j].role !== "user"
+                        ) {
+                            if (messages[j].role === "assistant") {
+                                assistantContent += messages[j].content;
+                            }
+                            j++;
+                        }
+
+                        if (assistantContent) {
+                            const turnId = "turn_hist_" + i;
+                            const div = document.createElement("div");
+                            div.id = turnId;
+                            div.className = "message-enter message-assistant";
+                            div.innerHTML = `
+                                <div class="assistant-avatar"><i class="fas fa-robot"></i></div>
+                                <div class="assistant-body">
+                                    <div class="assistant-meta">
+                                        <span class="assistant-name">CodeSage</span>
+                                    </div>
+                                    <div class="assistant-content markdown-content">${renderMarkdown(assistantContent)}</div>
+                                    <div class="turn-actions">
+                                        <button class="turn-action-btn" onclick="copyTurn('${turnId}')" title="复制"><i class="fas fa-copy"></i> 复制</button>
+                                    </div>
+                                </div>
+                            `;
+                            container.appendChild(div);
+                            div.querySelectorAll("pre code").forEach(
+                                (block) => {
+                                    if (typeof hljs !== "undefined")
+                                        hljs.highlightElement(block);
+                                },
+                            );
+                        }
+                        i = j;
+                    } else {
+                        i++;
+                    }
+                }
+                scrollToBottom();
+            }
+
+            // 点击外部关闭 history dropdown
+            document.addEventListener("click", (e) => {
+                const selector = document.getElementById("history-selector");
+                if (selector && !selector.contains(e.target)) {
+                    closeHistoryDropdown();
+                }
+            });
+
+            // ===== Mode =====
+            function setMode(mode) {
+                currentMode = mode;
+                document.querySelectorAll(".mode-pill").forEach((btn) => {
+                    btn.classList.toggle("active", btn.dataset.mode === mode);
+                });
+            }
+
+            // ===== Input =====
+            function updateCharCount(textarea) {
+                const len = textarea.value.length;
+                const counter = document.getElementById("char-counter");
+                if (!counter) return;
+                counter.textContent = `${len} / ${MAX_CHARS}`;
+                counter.className = "char-counter";
+                if (len >= MAX_CHARS) {
+                    counter.classList.add("danger");
+                } else if (len >= WARNING_THRESHOLD) {
+                    counter.classList.add("warning");
+                }
+            }
+
+            function autoResize(textarea) {
+                textarea.style.height = "auto";
+                textarea.style.height =
+                    Math.min(textarea.scrollHeight, 200) + "px";
+            }
+
+            let autocompleteQuery = "";
+            let autocompleteIndex = -1;
+            let autocompleteSuggestions = [];
+
+            function handleInput(event) {
+                const textarea = event.target;
+                autoResize(textarea);
+                let text = textarea.value;
+                if (text.length > MAX_CHARS) {
+                    textarea.value = text.substring(0, MAX_CHARS);
+                    text = textarea.value;
+                }
+                updateCharCount(textarea);
+                const cursorPos = textarea.selectionStart;
+                const textBeforeCursor = text.substring(0, cursorPos);
+                const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+                if (lastAtIndex >= 0) {
+                    const textAfterAt = textBeforeCursor.substring(
+                        lastAtIndex + 1,
+                    );
+                    if (!textAfterAt.includes(" ") && textAfterAt.length >= 0) {
+                        autocompleteQuery = textAfterAt;
+                        requestFileSuggestions(textAfterAt);
+                        return;
+                    }
+                }
+                hideAutocomplete();
+            }
+
+            function handleKeydown(event) {
+                const autocomplete =
+                    document.getElementById("file-autocomplete");
+                if (autocomplete.classList.contains("visible")) {
+                    if (event.key === "ArrowDown") {
+                        event.preventDefault();
+                        autocompleteIndex = Math.min(
+                            autocompleteIndex + 1,
+                            autocompleteSuggestions.length - 1,
+                        );
+                        updateAutocompleteSelection();
+                        return;
+                    }
+                    if (event.key === "ArrowUp") {
+                        event.preventDefault();
+                        autocompleteIndex = Math.max(autocompleteIndex - 1, -1);
+                        updateAutocompleteSelection();
+                        return;
+                    }
+                    if (event.key === "Enter" || event.key === "Tab") {
+                        event.preventDefault();
+                        if (
+                            autocompleteIndex >= 0 &&
+                            autocompleteIndex < autocompleteSuggestions.length
+                        ) {
+                            insertFileReference(
+                                autocompleteSuggestions[autocompleteIndex],
+                            );
+                        }
+                        return;
+                    }
+                    if (event.key === "Escape") {
+                        hideAutocomplete();
+                        return;
+                    }
+                }
+                if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    sendMessage();
+                }
+                if (event.key === "Enter" && event.ctrlKey) {
+                    event.preventDefault();
+                    sendMessage();
+                }
+                if (event.key === "Escape") {
+                    if (isGenerating) {
+                        event.preventDefault();
+                        stopGeneration();
+                    }
+                }
+                if (
+                    event.ctrlKey &&
+                    event.shiftKey &&
+                    event.key.toLowerCase() === "c"
+                ) {
+                    event.preventDefault();
+                    const turnIds = Array.from(turns.keys());
+                    const lastTurnId = turnIds[turnIds.length - 1];
+                    if (lastTurnId) copyTurn(lastTurnId);
+                    return;
+                }
+            }
+
+            function requestFileSuggestions(query) {
+                if (window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({ type: "file_search", query: query }),
+                    );
+                }
+            }
+
+            function showFileSuggestions(suggestions) {
+                const container = document.getElementById("file-autocomplete");
+                if (suggestions.length === 0) {
+                    hideAutocomplete();
+                    return;
+                }
+                autocompleteSuggestions = suggestions;
+                autocompleteIndex = 0;
+                container.innerHTML = suggestions
+                    .map(
+                        (s, i) => `
+                <div class="file-suggestion ${i === 0 ? "selected" : ""}" data-index="${i}" onclick="selectSuggestion(${i})">
+                    <span class="file-suggestion-icon">${s.icon}</span>
+                    <div class="file-suggestion-info">
+                        <div class="file-suggestion-name">${escapeHtml(s.name)}</div>
+                        <div class="file-suggestion-path">${escapeHtml(s.relativePath)}</div>
+                    </div>
+                </div>
+            `,
+                    )
+                    .join("");
+                container.classList.add("visible");
+            }
+
+            function updateAutocompleteSelection() {
+                const container = document.getElementById("file-autocomplete");
+                const items = container.querySelectorAll(".file-suggestion");
+                items.forEach((item, i) =>
+                    item.classList.toggle("selected", i === autocompleteIndex),
+                );
+                if (autocompleteIndex >= 0 && items[autocompleteIndex]) {
+                    items[autocompleteIndex].scrollIntoView({
+                        block: "nearest",
+                    });
+                }
+            }
+
+            function selectSuggestion(index) {
+                if (index >= 0 && index < autocompleteSuggestions.length) {
+                    insertFileReference(autocompleteSuggestions[index]);
+                }
+            }
+
+            function insertFileReference(suggestion) {
+                const textarea = document.getElementById("message-input");
+                const text = textarea.value;
+                const cursorPos = textarea.selectionStart;
+                const textBeforeCursor = text.substring(0, cursorPos);
+                const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+                if (lastAtIndex >= 0) {
+                    const beforeAt = text.substring(0, lastAtIndex);
+                    const afterCursor = text.substring(cursorPos);
+                    const refText = "@" + suggestion.relativePath;
+                    textarea.value = beforeAt + refText + " " + afterCursor;
+                    textarea.selectionStart = textarea.selectionEnd =
+                        lastAtIndex + refText.length + 1;
+                    autoResize(textarea);
+                }
+                hideAutocomplete();
+            }
+
+            function hideAutocomplete() {
+                const container = document.getElementById("file-autocomplete");
+                container.classList.remove("visible");
+                container.innerHTML = "";
+                autocompleteSuggestions = [];
+                autocompleteIndex = -1;
+                autocompleteQuery = "";
+            }
+
+            function sendQuickPrompt(prompt) {
+                document.getElementById("message-input").value = prompt;
+                sendMessage();
+            }
+
+            // ===== Messaging =====
+            function sendMessage() {
+                const input = document.getElementById("message-input");
+                const text = input.value.trim();
+                if (!text || isGenerating) return;
+                hideAutocomplete();
+                const welcome = document.getElementById("welcome-state");
+                if (welcome) welcome.style.display = "none";
+                addUserMessage(text);
+                input.value = "";
+                input.style.height = "auto";
+                startAITurn();
+                if (window.javaBridge) {
+                    // T1.5 修复：发送消息时携带 chatMode 选区。
+                    // null 表示用户未选，后端会走 suggestChatMode 推测。
+                    const msgPayload = {
+                        type: "send_message",
+                        content: text,
+                        turnId: currentTurnId,
+                        model: currentModel,
+                    };
+                    if (currentChatMode) {
+                        msgPayload.chatMode = currentChatMode;
+                    }
+                    const msg = JSON.stringify(msgPayload);
+                    try {
+                        window.javaBridge.sendMessage(msg);
+                    } catch (e) {
+                        onError(currentTurnId, "发送消息失败: " + e.message);
+                    }
+                } else {
+                    onError(currentTurnId, "Java Bridge 未初始化，请刷新页面");
+                }
+            }
+
+            // T1.5 修复：切换 ChatMode 的 JS 函数
+            // 调用后通过 javaBridge.sendMessage 告知后端记下用户选择，
+            // 同时更新 UI 按钮的 active 状态。
+            function switchChatMode(mode) {
+                if (!mode) return;
+                currentChatMode = mode;
+                // 更新 UI 按钮 active 态
+                document.querySelectorAll(".mode-btn").forEach(function (btn) {
+                    if (btn.dataset.mode === mode) {
+                        btn.classList.add("active");
+                    } else {
+                        btn.classList.remove("active");
+                    }
+                });
+                if (window.javaBridge) {
+                    try {
+                        window.javaBridge.sendMessage(
+                            JSON.stringify({
+                                type: "switch_chat_mode",
+                                mode: mode,
+                            }),
+                        );
+                    } catch (e) {
+                        console.error("[switchChatMode] failed:", e);
+                    }
+                }
+            }
+
+            function stopGeneration() {
+                if (window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({ type: "stop_generation" }),
+                    );
+                }
+            }
+
+            function clearChat() {
+                const container = document.getElementById("messages-container");
+                container.innerHTML = `
+                <div class="welcome-state" id="welcome-state">
+                    <div class="welcome-icon"><i class="fas fa-code"></i></div>
+                    <div class="welcome-title">CodeSage AI 助手</div>
+                    <div class="welcome-subtitle">
+                        我可以帮你编写代码、调试问题、重构项目、生成测试等。支持多轮对话、工具调用、代码生成。
+                    </div>
+                    <div class="quick-prompts">
+                        <button class="quick-prompt-btn" onclick="sendQuickPrompt('解释这段代码')"><i class="fas fa-book-open mr-1"></i> 解释代码</button>
+                        <button class="quick-prompt-btn" onclick="sendQuickPrompt('重构这段代码')"><i class="fas fa-sync-alt mr-1"></i> 重构代码</button>
+                        <button class="quick-prompt-btn" onclick="sendQuickPrompt('生成单元测试')"><i class="fas fa-vial mr-1"></i> 生成测试</button>
+                        <button class="quick-prompt-btn" onclick="sendQuickPrompt('修复代码中的bug')"><i class="fas fa-bug mr-1"></i> 修复 Bug</button>
+                    </div>
+                </div>
+            `;
+                turns.clear();
+                currentTurnId = null;
+                if (window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({ type: "clear_session" }),
+                    );
+                }
+            }
+
+            // ===== Message Rendering =====
+            function addUserMessage(content) {
+                const container = document.getElementById("messages-container");
+                const div = document.createElement("div");
+                div.className = "message-enter message-user";
+                const highlightedContent = content.replace(
+                    /@([^\s@]+)/g,
+                    '<span class="at-ref">@$1</span>',
+                );
+                div.innerHTML = `<div class="message-user-inner">${highlightedContent}</div>`;
+                container.appendChild(div);
+                scrollToBottom();
+            }
+
+            function showFileReferences(turnId, references) {
+                const turn = turns.get(turnId);
+                if (!turn) return;
+                const container = document.getElementById("messages-container");
+                const div = document.createElement("div");
+                div.id = turnId + "-refs";
+                div.className = "message-enter flex justify-end";
+                div.innerHTML = `
+                <div class="max-w-[85%] mb-1">
+                    <div class="file-reference-tags">
+                        ${references.map((ref) => `<span class="file-reference-tag"><i class="fas fa-file-code"></i> ${escapeHtml(ref.name)}</span>`).join("")}
+                    </div>
+                </div>
+            `;
+                container.appendChild(div);
+                scrollToBottom();
+            }
+
+            function startAITurn() {
+                isGenerating = true;
+                currentTurnId = "turn_" + Date.now();
+                turns.set(currentTurnId, {
+                    content: "",
+                    thinking: "",
+                    tools: [],
+                });
+                const container = document.getElementById("messages-container");
+                const div = document.createElement("div");
+                div.id = currentTurnId;
+                div.className = "message-enter message-assistant";
+                div.innerHTML = `
+                <div class="assistant-avatar"><i class="fas fa-robot"></i></div>
+                <div class="assistant-body">
+                    <div class="assistant-meta">
+                        <span class="assistant-name">CodeSage</span>
+                        <span class="assistant-time" id="${currentTurnId}-timer">0.0s</span>
+                        <span class="budget-status ok" id="${currentTurnId}-budget">就绪</span>
+                    </div>
+                    <div id="${currentTurnId}-thinking" class="thinking-card hidden">
+                        <div class="thinking-header" onclick="toggleThinking('${currentTurnId}')">
+                            <div class="thinking-dots">
+                                <span class="thinking-dot thinking-dot-visual"></span>
+                                <span class="thinking-dot thinking-dot-visual"></span>
+                                <span class="thinking-dot thinking-dot-visual"></span>
+                            </div>
+                            <span class="thinking-label">思考中...</span>
+                            <i class="fas fa-chevron-down thinking-chevron" id="${currentTurnId}-thinking-icon"></i>
+                        </div>
+                        <div class="thinking-body" id="${currentTurnId}-thinking-content"></div>
+                    </div>
+                    <div id="${currentTurnId}-tools" class="space-y-2"></div>
+                    <div id="${currentTurnId}-content" class="assistant-content markdown-content"><span class="cursor-blink">▌</span></div>
+                    <div class="stream-loading" id="${currentTurnId}-loading"><div class="stream-loading-bar"></div></div>
+                    <div id="${currentTurnId}-actions" class="turn-actions hidden">
+                        <button class="turn-action-btn" onclick="copyTurn('${currentTurnId}')" title="复制"><i class="fas fa-copy"></i> 复制</button>
+                        <button class="turn-action-btn" onclick="regenerateTurn('${currentTurnId}')" title="重新生成"><i class="fas fa-redo"></i> 重新生成</button>
+                    </div>
+                </div>
+            `;
+                container.appendChild(div);
+                scrollToBottom();
+                document.getElementById("send-btn").classList.add("hidden");
+                document.getElementById("stop-btn").classList.remove("hidden");
+                const status = document.getElementById("status-label");
+                status.textContent = "思考中...";
+                status.className = "status-text thinking";
+                startTurnTimer(currentTurnId);
+            }
+
+            let turnTimers = new Map();
+            let turnSafetyTimeouts = new Map();
+
+            function startTurnTimer(turnId) {
+                const startTime = Date.now();
+                const timer = setInterval(() => {
+                    const elapsed = ((Date.now() - startTime) / 1000).toFixed(
+                        1,
+                    );
+                    const timerEl = document.getElementById(turnId + "-timer");
+                    if (timerEl) timerEl.textContent = elapsed + "s";
+                }, 100);
+                turnTimers.set(turnId, timer);
+
+                // 安全超时：如果 2 分钟内没有收到 turn_complete，强制重置状态
+                const safetyTimeout = setTimeout(() => {
+                    console.warn(
+                        `[Safety] Turn ${turnId} timed out after 2 minutes, resetting isGenerating`,
+                    );
+                    isGenerating = false;
+                    currentTurnId = null;
+                    stopTurnTimer(turnId);
+                    turnSafetyTimeouts.delete(turnId);
+                    const contentEl = document.getElementById(
+                        turnId + "-content",
+                    );
+                    if (contentEl && contentEl.textContent.trim() === "▌") {
+                        contentEl.innerHTML =
+                            '<div style="color:var(--error-color);font-size:14px;"><i class="fas fa-exclamation-circle mr-1"></i> 响应超时，请重试</div>';
+                    }
+                    document
+                        .getElementById("send-btn")
+                        .classList.remove("hidden");
+                    document.getElementById("stop-btn").classList.add("hidden");
+                    const status = document.getElementById("status-label");
+                    status.textContent = "就绪";
+                    status.className = "status-text";
+                }, 120000);
+                turnSafetyTimeouts.set(turnId, safetyTimeout);
+            }
+
+            function stopTurnTimer(turnId) {
+                const timer = turnTimers.get(turnId);
+                if (timer) {
+                    clearInterval(timer);
+                    turnTimers.delete(turnId);
+                }
+                const safety = turnSafetyTimeouts.get(turnId);
+                if (safety) {
+                    clearTimeout(safety);
+                    turnSafetyTimeouts.delete(turnId);
+                }
+            }
+
+            function toggleThinking(turnId) {
+                const content = document.getElementById(
+                    turnId + "-thinking-content",
+                );
+                const icon = document.getElementById(turnId + "-thinking-icon");
+                content.classList.toggle("open");
+                icon.classList.toggle("open");
+            }
+
+            // ===== Stream Events =====
+            function onTextDelta(turnId, delta) {
+                const turn = turns.get(turnId);
+                if (!turn) return;
+                turn.content += delta;
+                const contentEl = document.getElementById(turnId + "-content");
+                if (contentEl) {
+                    // 增量追加纯文本，避免频繁重新渲染 Markdown 导致闪烁和卡顿
+                    let streamSpan = contentEl.querySelector(".stream-text");
+                    if (!streamSpan) {
+                        contentEl.innerHTML =
+                            '<span class="stream-text" style="white-space:pre-wrap;word-break:break-word;"></span><span class="cursor-blink">▌</span>';
+                        streamSpan = contentEl.querySelector(".stream-text");
+                    }
+                    streamSpan.textContent = turn.content;
+                }
+                const loadingEl = document.getElementById(turnId + "-loading");
+                if (loadingEl) loadingEl.classList.add("hidden");
+                scrollToBottom();
+            }
+
+            function toggleThinkingVisibility() {
+                showThinkingGlobal = !showThinkingGlobal;
+                try {
+                    localStorage.setItem(
+                        "codesage_show_thinking",
+                        showThinkingGlobal,
+                    );
+                } catch (e) {
+                    console.warn(
+                        "localStorage not available for thinking toggle",
+                    );
+                }
+                const icon = document.getElementById("thinking-toggle-icon");
+                const btn = document.getElementById("thinking-toggle-btn");
+                if (showThinkingGlobal) {
+                    if (icon) icon.style.color = "var(--accent-color)";
+                    if (btn) btn.style.background = "var(--accent-light)";
+                } else {
+                    if (icon) icon.style.color = "";
+                    if (btn) btn.style.background = "";
+                }
+            }
+
+            function initThinkingToggle() {
+                const icon = document.getElementById("thinking-toggle-icon");
+                const btn = document.getElementById("thinking-toggle-btn");
+                if (showThinkingGlobal) {
+                    if (icon) icon.style.color = "var(--accent-color)";
+                    if (btn) btn.style.background = "var(--accent-light)";
+                }
+            }
+
+            function onThinkingStart(turnId, message) {
+                const thinkingEl = document.getElementById(
+                    turnId + "-thinking",
+                );
+                if (thinkingEl) thinkingEl.classList.remove("hidden");
+                onThinkingUpdate(turnId, message);
+                if (showThinkingGlobal) {
+                    const content = document.getElementById(
+                        turnId + "-thinking-content",
+                    );
+                    const icon = document.getElementById(
+                        turnId + "-thinking-icon",
+                    );
+                    if (content) content.classList.add("open");
+                    if (icon) icon.classList.add("open");
+                }
+            }
+
+            function onThinkingUpdate(turnId, message) {
+                const turn = turns.get(turnId);
+                if (turn) turn.thinking += message + "\n";
+                const contentEl = document.getElementById(
+                    turnId + "-thinking-content",
+                );
+                if (contentEl)
+                    contentEl.textContent = turn ? turn.thinking : message;
+            }
+
+            function onThinkingComplete(turnId, elapsedMs) {
+                const thinkingEl = document.getElementById(
+                    turnId + "-thinking",
+                );
+                if (thinkingEl) {
+                    const dots = thinkingEl.querySelectorAll(
+                        ".thinking-dot-visual",
+                    );
+                    dots.forEach((d) => {
+                        d.style.display = "none";
+                    });
+                    const label = thinkingEl.querySelector(".thinking-label");
+                    if (label)
+                        label.textContent =
+                            "思考完成 \u00b7 " +
+                            (elapsedMs / 1000).toFixed(1) +
+                            "s";
+                }
+            }
+
+            function onToolCallStart(turnId, toolId, toolName, summary) {
+                const turn = turns.get(turnId);
+                if (turn)
+                    turn.tools.push({
+                        id: toolId,
+                        name: toolName,
+                        status: "running",
+                    });
+                const toolsEl = document.getElementById(turnId + "-tools");
+                if (toolsEl) {
+                    const toolDiv = document.createElement("div");
+                    toolDiv.id = "tool-" + toolId;
+                    toolDiv.className = "tool-card";
+                    toolDiv.innerHTML = `
+                    <div class="tool-card-header" onclick="toggleTool('${toolId}')">
+                        <div class="tool-status-icon tool-status-running"><i class="fas fa-spinner fa-spin"></i></div>
+                        <span class="tool-name">${escapeHtml(toolName)}</span>
+                        <span class="tool-summary">${escapeHtml(summary)}</span>
+                        <i class="fas fa-chevron-down" style="font-size:10px;color:var(--text-tertiary);margin-left:auto;"></i>
+                    </div>
+                    <div class="tool-content" id="tool-content-${toolId}">
+                        <pre>Running...</pre>
+                    </div>
+                `;
+                    toolsEl.appendChild(toolDiv);
+                }
+                scrollToBottom();
+            }
+
+            function onToolCallDelta(turnId, toolId, delta) {
+                const toolEl = document.getElementById("tool-" + toolId);
+                if (toolEl) {
+                    const contentEl = document.getElementById(
+                        "tool-content-" + toolId,
+                    );
+                    if (contentEl) {
+                        const pre = contentEl.querySelector("pre");
+                        if (pre) {
+                            pre.textContent = (pre.textContent || "") + delta;
+                        }
+                    }
+                }
+            }
+
+            function onToolCallComplete(turnId, toolId, success, result) {
+                const turn = turns.get(turnId);
+                if (turn) {
+                    const tool = turn.tools.find((t) => t.id === toolId);
+                    if (tool) tool.status = success ? "completed" : "failed";
+                }
+                const toolEl = document.getElementById("tool-" + toolId);
+                if (toolEl) {
+                    const icon = toolEl.querySelector(".tool-status-icon");
+                    icon.className =
+                        "tool-status-icon " +
+                        (success
+                            ? "tool-status-completed"
+                            : "tool-status-failed");
+                    icon.innerHTML = success
+                        ? '<i class="fas fa-check"></i>'
+                        : '<i class="fas fa-times"></i>';
+                    const contentEl = document.getElementById(
+                        "tool-content-" + toolId,
+                    );
+                    if (contentEl) {
+                        const pre = contentEl.querySelector("pre");
+                        if (pre) pre.textContent = result.substring(0, 2000);
+                    }
+                }
+            }
+
+            function onToolCallError(turnId, toolId, error) {
+                const turn = turns.get(turnId);
+                if (turn) {
+                    const tool = turn.tools.find((t) => t.id === toolId);
+                    if (tool) tool.status = "failed";
+                }
+                const toolEl = document.getElementById("tool-" + toolId);
+                if (toolEl) {
+                    const icon = toolEl.querySelector(".tool-status-icon");
+                    icon.className = "tool-status-icon tool-status-failed";
+                    icon.innerHTML = '<i class="fas fa-times"></i>';
+                    const contentEl = document.getElementById(
+                        "tool-content-" + toolId,
+                    );
+                    if (contentEl) {
+                        const pre = contentEl.querySelector("pre");
+                        if (pre) pre.textContent = "Error: " + error;
+                    }
+                }
+            }
+
+            function onPlanGenerated(turnId, data) {
+                const turn = turns.get(turnId);
+                if (!turn) return;
+                const container = document.getElementById(turnId + "-tools");
+                if (container) {
+                    const div = document.createElement("div");
+                    div.className = "tool-card";
+                    div.innerHTML = `
+                        <div class="tool-card-header">
+                            <div class="tool-status-icon tool-status-running"><i class="fas fa-list-check"></i></div>
+                            <span class="tool-name">Plan</span>
+                            <span class="tool-summary">${escapeHtml(data.description)}</span>
+                        </div>
+                        <div class="tool-content open">
+                            <pre>${data.steps.map((s, i) => `${i + 1}. ${escapeHtml(s.description)}`).join("\n")}</pre>
+                        </div>
+                    `;
+                    container.appendChild(div);
+                }
+                scrollToBottom();
+            }
+
+            function onPlanApproved(turnId, data) {
+                // 计划批准后的 UI 反馈
+            }
+
+            function onPlanRejected(turnId, data) {
+                const turn = turns.get(turnId);
+                if (!turn) return;
+                const container = document.getElementById(turnId + "-content");
+                if (container) {
+                    container.innerHTML += `<div style="color:var(--error-color);font-size:13px;margin-top:8px;"><i class="fas fa-times-circle mr-1"></i> 计划被拒绝: ${escapeHtml(data.reason)}</div>`;
+                }
+            }
+
+            function onContextCompressed(turnId, data) {
+                const turn = turns.get(turnId);
+                if (!turn) return;
+                const container = document.getElementById(turnId + "-content");
+                if (container) {
+                    container.innerHTML += `<div style="color:var(--text-tertiary);font-size:12px;margin-top:8px;"><i class="fas fa-compress-arrows-alt mr-1"></i> 上下文已压缩: ${data.originalTokens} → ${data.compressedTokens} tokens (${data.strategy})</div>`;
+                }
+            }
+
+            function onSessionMigrated(turnId, data) {
+                const container = document.getElementById("messages-container");
+                if (container) {
+                    const div = document.createElement("div");
+                    div.className = "message-enter";
+                    div.style.cssText =
+                        "text-align:center;color:var(--text-tertiary);font-size:12px;padding:8px;";
+                    div.innerHTML = `<i class="fas fa-exchange-alt mr-1"></i> 会话已迁移: ${data.messageCount} 条消息`;
+                    container.appendChild(div);
+                    scrollToBottom();
+                }
+            }
+
+            function toggleTool(toolId) {
+                const content = document.getElementById(
+                    "tool-content-" + toolId,
+                );
+                if (content) content.classList.toggle("open");
+            }
+
+            function onTurnComplete(turnId) {
+                isGenerating = false;
+                currentTurnId = null;
+                stopTurnTimer(turnId);
+                const turn = turns.get(turnId);
+                if (turn) {
+                    const contentEl = document.getElementById(
+                        turnId + "-content",
+                    );
+                    if (contentEl) {
+                        contentEl.innerHTML = renderMarkdown(turn.content);
+                        enhanceCodeBlocks(contentEl);
+                        if (typeof hljs !== "undefined") {
+                            contentEl
+                                .querySelectorAll("pre code")
+                                .forEach((block) =>
+                                    hljs.highlightElement(block),
+                                );
+                        }
+                    }
+                }
+                const actionsEl = document.getElementById(turnId + "-actions");
+                if (actionsEl) actionsEl.classList.remove("hidden");
+                document.getElementById("send-btn").classList.remove("hidden");
+                document.getElementById("stop-btn").classList.add("hidden");
+                const status = document.getElementById("status-label");
+                status.textContent = "就绪";
+                status.className = "status-text";
+            }
+
+            function onBudgetStatus(turnId, data) {
+                const budgetEl = document.getElementById(turnId + "-budget");
+                if (!budgetEl) return;
+                const statusClass = data.status.toLowerCase();
+                budgetEl.className = "budget-status " + statusClass;
+                const parts = [];
+                if (
+                    data.remainingIterations !== undefined &&
+                    data.remainingIterations < 1000000
+                ) {
+                    parts.push(`${data.remainingIterations}轮`);
+                }
+                if (
+                    data.remainingTokens !== undefined &&
+                    data.remainingTokens < 1000000
+                ) {
+                    parts.push(`${data.remainingTokens}tk`);
+                }
+                if (
+                    data.remainingSeconds !== undefined &&
+                    data.remainingSeconds < 1000000000
+                ) {
+                    parts.push(`${data.remainingSeconds}s`);
+                }
+                budgetEl.textContent =
+                    parts.join(" · ") + ` (${data.usagePercent}%)`;
+            }
+
+            function onBudgetExhausted(turnId, data) {
+                isGenerating = false;
+                currentTurnId = null;
+                stopTurnTimer(turnId);
+                const contentEl = document.getElementById(turnId + "-content");
+                if (contentEl) {
+                    // 追加预算耗尽提示，保留已生成的内容
+                    const exhaustedPanel = document.createElement("div");
+                    exhaustedPanel.className = "budget-exhausted";
+                    exhaustedPanel.innerHTML = `
+                        <div class="budget-exhausted-title">⏸ 任务已暂停</div>
+                        <div class="budget-exhausted-reason">${escapeHtml(data.reason)}</div>
+                        <div class="budget-exhausted-summary">
+                            已执行 ${data.consumedIterations} 轮，耗时 ${data.elapsedSeconds}s
+                        </div>
+                        ${data.allowContinue ? `<button class="continue-btn" onclick="continueTask('${turnId}')">继续执行 (+10轮)</button>` : ""}
+                    `;
+                    contentEl.appendChild(exhaustedPanel);
+                }
+                const budgetEl = document.getElementById(turnId + "-budget");
+                if (budgetEl) {
+                    budgetEl.className = "budget-status exhausted";
+                    budgetEl.textContent = "已暂停";
+                }
+                document.getElementById("send-btn").classList.remove("hidden");
+                document.getElementById("stop-btn").classList.add("hidden");
+                const status = document.getElementById("status-label");
+                status.textContent = "预算耗尽";
+                status.className = "status-text error";
+            }
+
+            function continueTask(turnId) {
+                if (window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({
+                            type: "continue_task",
+                            turnId: turnId,
+                            extraIterations: 10,
+                        }),
+                    );
+                }
+            }
+
+            function onError(turnId, message) {
+                isGenerating = false;
+                currentTurnId = null;
+                stopTurnTimer(turnId);
+                const contentEl = document.getElementById(turnId + "-content");
+                if (contentEl) {
+                    contentEl.innerHTML = `<div style="color:var(--error-color);font-size:14px;"><i class="fas fa-exclamation-circle mr-1"></i> ${escapeHtml(message)}</div>`;
+                }
+                document.getElementById("send-btn").classList.remove("hidden");
+                document.getElementById("stop-btn").classList.add("hidden");
+                const status = document.getElementById("status-label");
+                status.textContent = "错误";
+                status.className = "status-text error";
+            }
+
+            // ===== Artifacts =====
+            function addArtifact(id, title, language, content) {
+                artifacts.set(id, { title, language, content });
+                const sidebar = document.getElementById("artifact-sidebar");
+                sidebar.classList.add("open");
+                const list = document.getElementById("artifact-list");
+                const div = document.createElement("div");
+                div.id = "artifact-" + id;
+                div.className = "artifact-panel";
+                div.innerHTML = `
+                <div class="artifact-header">
+                    <span class="artifact-title"><i class="fas fa-file-code mr-1"></i>${escapeHtml(title)}</span>
+                    <div class="artifact-actions">
+                        <button class="turn-action-btn" onclick="copyArtifact('${id}')" title="复制"><i class="fas fa-copy"></i></button>
+                        <button class="turn-action-btn" onclick="applyArtifact('${id}')" title="应用到编辑器"><i class="fas fa-file-import"></i></button>
+                        <button class="turn-action-btn" onclick="createFileFromArtifact('${id}')" title="创建新文件"><i class="fas fa-plus"></i></button>
+                    </div>
+                </div>
+                <div class="p-0 overflow-x-auto" style="max-height: 300px;">
+                    <pre class="m-0"><code class="language-${language}">${escapeHtml(content)}</code></pre>
+                </div>
+            `;
+                list.appendChild(div);
+                hljs.highlightAll();
+            }
+
+            function closeArtifactSidebar() {
+                document
+                    .getElementById("artifact-sidebar")
+                    .classList.remove("open");
+            }
+
+            function copyArtifact(id) {
+                const artifact = artifacts.get(id);
+                if (artifact) navigator.clipboard.writeText(artifact.content);
+            }
+
+            function applyArtifact(id) {
+                const artifact = artifacts.get(id);
+                if (artifact && window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({
+                            type: "apply_artifact",
+                            artifactId: id,
+                            content: artifact.content,
+                        }),
+                    );
+                }
+            }
+
+            function createFileFromArtifact(id) {
+                const artifact = artifacts.get(id);
+                if (artifact && window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({
+                            type: "create_file_from_artifact",
+                            artifactId: id,
+                            title: artifact.title,
+                            content: artifact.content,
+                        }),
+                    );
+                }
+            }
+
+            // ===== Actions =====
+            function copyTurn(turnId) {
+                const turn = turns.get(turnId);
+                if (turn) navigator.clipboard.writeText(turn.content);
+            }
+
+            function regenerateTurn(turnId) {
+                if (window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({ type: "regenerate", turnId: turnId }),
+                    );
+                }
+            }
+
+            // ===== Code Block Enhancement =====
+            function enhanceCodeBlocks(container) {
+                container.querySelectorAll("pre").forEach((pre) => {
+                    if (pre.closest(".code-block")) return;
+                    const code = pre.querySelector("code");
+                    const langMatch = code?.className?.match(/language-(\w+)/);
+                    const lang = langMatch ? langMatch[1] : "";
+                    const wrapper = document.createElement("div");
+                    wrapper.className = "code-block";
+                    const header = document.createElement("div");
+                    header.className = "code-block-header";
+                    header.innerHTML = `
+                        <span class="code-lang">${escapeHtml(lang)}</span>
+                        <div class="code-actions">
+                            <button class="code-action-btn" onclick="copyCodeBlock(this)" title="复制代码"><i class="fas fa-copy"></i> 复制</button>
+                            <button class="code-action-btn" onclick="openCodeBlockInNewWindow(this)" title="在新窗口打开"><i class="fas fa-external-link-alt"></i> 打开</button>
+                        </div>
+                    `;
+                    wrapper.appendChild(header);
+                    wrapper.appendChild(pre.cloneNode(true));
+                    pre.replaceWith(wrapper);
+                });
+            }
+
+            function copyCodeBlock(btn) {
+                const block = btn.closest(".code-block");
+                const code = block?.querySelector("code");
+                if (code) navigator.clipboard.writeText(code.textContent);
+            }
+
+            function openCodeBlockInNewWindow(btn) {
+                const block = btn.closest(".code-block");
+                const code = block?.querySelector("code");
+                if (!code) return;
+                const win = window.open("about:blank", "_blank");
+                if (win) {
+                    const text = code.textContent;
+                    win.document.write(
+                        `<!doctype html><html><head><meta charset="utf-8"><title>Code</title><style>body{background:#1e1e2e;color:#c0c0d0;font-family:monospace;padding:20px;margin:0;white-space:pre-wrap;word-break:break-all;line-height:1.6;font-size:13px;}</style></head><body>${escapeHtml(text)}</body></html>`,
+                    );
+                    win.document.close();
+                }
+            }
+
+            // ===== Utilities =====
+            function scrollToBottom() {
+                const container = document.getElementById("messages-container");
+                container.scrollTop = container.scrollHeight;
+            }
+
+            function escapeHtml(text) {
+                const div = document.createElement("div");
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            function escapeJs(text) {
+                return text
+                    .replace(/\\/g, "\\\\")
+                    .replace(/'/g, "\\'")
+                    .replace(/"/g, '\\"');
+            }
+
+            function sanitizeHtml(html) {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, "text/html");
+                doc.querySelectorAll(
+                    "script, style, iframe, object, embed, form",
+                ).forEach((el) => el.remove());
+                const walk = (node) => {
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        const attrs = Array.from(node.attributes);
+                        for (const attr of attrs) {
+                            const name = attr.name.toLowerCase();
+                            if (
+                                name.startsWith("on") ||
+                                (name === "href" &&
+                                    /^(javascript|data|vbscript):/i.test(
+                                        attr.value,
+                                    )) ||
+                                name === "action"
+                            ) {
+                                node.removeAttribute(attr.name);
+                            }
+                        }
+                    }
+                    Array.from(node.childNodes).forEach(walk);
+                };
+                walk(doc.body);
+                return doc.body.innerHTML;
+            }
+
+            function renderMarkdown(text) {
+                if (typeof marked === "undefined") return escapeHtml(text);
+                const rawHtml = marked.parse(text);
+                return sanitizeHtml(rawHtml);
+            }
+
+            // ===== Kotlin Bridge =====
+            window.onJavaMessage = function (msg) {
+                try {
+                    const data =
+                        typeof msg === "string" ? JSON.parse(msg) : msg;
+                    switch (data.type) {
+                        case "text_delta":
+                            eventBus.emit("text_delta", data);
+                            break;
+                        case "thinking_start":
+                            eventBus.emit("thinking_start", data);
+                            break;
+                        case "thinking_update":
+                            eventBus.emit("thinking_update", data);
+                            break;
+                        case "thinking_complete":
+                            eventBus.emit("thinking_complete", data);
+                            break;
+                        case "tool_call_start":
+                            eventBus.emit("tool_call_start", data);
+                            break;
+                        case "tool_call_delta":
+                            eventBus.emit("tool_call_delta", data);
+                            break;
+                        case "tool_call_complete":
+                            eventBus.emit("tool_call_complete", data);
+                            break;
+                        case "tool_call_error":
+                            eventBus.emit("tool_call_error", data);
+                            break;
+                        case "tool_confirmation_needed":
+                            eventBus.emit("tool_confirmation_needed", data);
+                            break;
+                        // T1.5 修复：后端发出 ChatMode 自动建议事件
+                        case "mode_suggestion":
+                            handleModeSuggestion(data);
+                            break;
+                        case "turn_complete":
+                            eventBus.emit("turn_complete", data);
+                            break;
+                        case "error":
+                            eventBus.emit("error", data);
+                            break;
+                        case "artifact":
+                            addArtifact(
+                                data.artifactId,
+                                data.title,
+                                data.language,
+                                data.content,
+                            );
+                            break;
+                        case "set_theme":
+                            setTheme(data.theme);
+                            break;
+                        case "set_model":
+                            setCurrentModel(data.model, data.provider);
+                            break;
+                        case "set_models":
+                            setAvailableModels(data.models);
+                            break;
+                        case "add_user_message":
+                            addUserMessage(data.content);
+                            break;
+                        case "clear":
+                            clearChat();
+                            break;
+                        case "file_suggestions":
+                            showFileSuggestions(data.suggestions);
+                            break;
+                        case "file_references":
+                            showFileReferences(data.turnId, data.references);
+                            break;
+                        case "budget_status":
+                            eventBus.emit("budget_status", data);
+                            break;
+                        case "budget_exhausted":
+                            eventBus.emit("budget_exhausted", data);
+                            break;
+                        case "budget_extended":
+                            eventBus.emit("budget_extended", {
+                                status: "OK",
+                                remainingIterations:
+                                    data.newRemainingIterations,
+                                remainingTokens: 999999,
+                                remainingSeconds: 999999,
+                                usagePercent: 0,
+                            });
+                            break;
+                        case "plan_generated":
+                            eventBus.emit("plan_generated", data);
+                            break;
+                        case "plan_approved":
+                            eventBus.emit("plan_approved", data);
+                            break;
+                        case "plan_rejected":
+                            eventBus.emit("plan_rejected", data);
+                            break;
+                        case "context_compressed":
+                            eventBus.emit("context_compressed", data);
+                            break;
+                        case "session_migrated":
+                            eventBus.emit("session_migrated", data);
+                            break;
+                        case "set_sessions":
+                            onSessionsUpdated(data.sessions);
+                            break;
+                        case "session_created":
+                            onSessionCreated(data.session);
+                            break;
+                        case "session_switched":
+                            onSessionSwitched(data.sessionId);
+                            break;
+                        case "session_deleted":
+                            onSessionDeleted(data.sessionId);
+                            break;
+                        case "session_renamed":
+                            onSessionRenamed(data.sessionId, data.name);
+                            break;
+                        case "load_history":
+                            loadHistory(data.messages);
+                            break;
+                        default:
+                            console.warn("Unknown message type:", data.type);
+                    }
+                } catch (e) {
+                    console.error("Failed to handle message:", e, "Raw:", msg);
+                }
+            };
+
+            window.sendMessageToJava = function (json) {
+                if (window.javaBridge) window.javaBridge.sendMessage(json);
+            };
+
+            // ===== Offline Health Check =====
+            initThinkingToggle();
+
+            window.checkCriticalLibraries = function () {
+                return (
+                    typeof marked !== "undefined" &&
+                    typeof hljs !== "undefined" &&
+                    typeof window.javaBridge !== "undefined"
+                );
+            };
+
+            window.requestSessions = function () {
+                if (window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({ type: "request_sessions" }),
+                    );
+                }
+            };
+
+            window.showOfflineWarning = function () {
+                if (document.getElementById("codesage-offline-warning")) return;
+                const div = document.createElement("div");
+                div.id = "codesage-offline-warning";
+                div.className = "offline-warning";
+                div.innerHTML = `
+                <div style="text-align:center;padding:20px;">
+                    <div style="width:48px;height:48px;border-radius:12px;background:var(--bg-secondary);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:20px;color:var(--warning-color);"><i class="fas fa-exclamation-triangle"></i></div>
+                    <h2 style="margin-bottom:8px;font-size:18px;font-weight:600;">加载异常</h2>
+                    <p style="margin-bottom:20px;color:var(--text-secondary);font-size:14px;">CodeSage 界面加载异常，部分资源可能缺失。</p>
+                    <button class="reload-btn" onclick="reloadPage()">重载界面</button>
+                </div>
+            `;
+                document.body.appendChild(div);
+            };
+
+            function reloadPage() {
+                if (window.javaBridge) {
+                    window.javaBridge.sendMessage(
+                        JSON.stringify({ type: "reload_browser" }),
+                    );
+                } else {
+                    location.reload();
+                }
+            }
+        </script>
+    </body>
+</html>

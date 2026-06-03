@@ -35,6 +35,9 @@
             serviceImplementation="com.codesage.shared.config.PluginConfig"
         />
         <applicationService
+            serviceImplementation="com.codesage.shared.config.SettingsRepository"
+        />
+        <applicationService
             serviceImplementation="com.codesage.plugin.CodeSageAppService"
         />
 
@@ -92,6 +95,41 @@
             <keyboard-shortcut
                 keymap="$default"
                 first-keystroke="ctrl shift S"
+            />
+        </action>
+
+        <action
+            id="CodeSage.OpenSettingsFolder"
+            class="com.codesage.ide.actions.OpenSettingsFolderAction"
+            text="打开设置文件夹"
+            description="在系统文件管理器中打开 ~/codesage/ 目录"
+        >
+            <add-to-group group-id="CodeSage.MainMenu" anchor="first" />
+        </action>
+
+        <action
+            id="CodeSage.OpenSettingsFile"
+            class="com.codesage.ide.actions.OpenSettingsFileAction"
+            text="编辑 settings.json"
+            description="在 IDE 编辑器中打开 settings.json"
+        >
+            <add-to-group
+                group-id="CodeSage.MainMenu"
+                anchor="after"
+                relative-to-action="CodeSage.OpenSettingsFolder"
+            />
+        </action>
+
+        <action
+            id="CodeSage.ReloadSettings"
+            class="com.codesage.ide.actions.ReloadSettingsAction"
+            text="重载设置"
+            description="从磁盘重新读取 settings.json"
+        >
+            <add-to-group
+                group-id="CodeSage.MainMenu"
+                anchor="after"
+                relative-to-action="CodeSage.OpenSettingsFile"
             />
         </action>
 
