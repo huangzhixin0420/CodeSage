@@ -50,57 +50,75 @@
         <script src="lib/languages/bash.min.js"></script>
         <script src="lib/languages/sql.min.js"></script>
     </head>
-    <body data-theme="light">
+    <body>
+        <script>
+            // 初始主题：优先采用 Kotlin 注入的 __CODESAGE_INITIAL_THEME__，否则跟随系统偏好
+            (function () {
+                try {
+                    var t =
+                        typeof window.__CODESAGE_INITIAL_THEME__ === "string"
+                            ? window.__CODESAGE_INITIAL_THEME__
+                            : "auto";
+                    if (t === "auto") {
+                        t =
+                            window.matchMedia &&
+                            window.matchMedia("(prefers-color-scheme: dark)")
+                                .matches
+                                ? "dark"
+                                : "light";
+                    }
+                    document.documentElement.setAttribute("data-theme", t);
+                } catch (e) {
+                    /* ignore */
+                }
+            })();
+        </script>
         <a href="#messages-container" class="cs-skip-link">跳到主内容</a>
         <div class="app-container">
             <div class="main-area">
                 <!-- ========== Header ========== -->
                 <div class="chat-header">
                     <div class="header-brand">
-                        <div class="brand-icon">
-                            <i class="fas fa-wand-magic-sparkles"></i>
+                        <div class="brand-icon" aria-label="CodeSage">
+                            <svg viewBox="0 0 32 32" width="22" height="22">
+                                <defs>
+                                    <linearGradient
+                                        id="cs-brand-grad"
+                                        x1="0%"
+                                        y1="0%"
+                                        x2="100%"
+                                        y2="100%"
+                                    >
+                                        <stop
+                                            offset="0%"
+                                            stop-color="#6366f1"
+                                        />
+                                        <stop
+                                            offset="100%"
+                                            stop-color="#8b5cf6"
+                                        />
+                                    </linearGradient>
+                                </defs>
+                                <path
+                                    d="M22 11 C 22 9, 19 8, 16 8 C 11 8, 8 11, 8 16 C 8 21, 11 24, 16 24 C 19 24, 22 23, 22 21"
+                                    fill="none"
+                                    stroke="white"
+                                    stroke-width="2.5"
+                                    stroke-linecap="round"
+                                />
+                                <circle cx="22" cy="11" r="1.8" fill="white" />
+                                <circle
+                                    cx="24.5"
+                                    cy="9"
+                                    r="0.9"
+                                    fill="white"
+                                    opacity="0.7"
+                                />
+                            </svg>
                         </div>
                         <div class="brand-title">CodeSage</div>
                     </div>
                     <div class="header-actions">
-                        <div class="mode-toggle" id="mode-toggle">
-                            <button
-                                class="mode-btn active"
-                                data-mode="GENERAL"
-                                data-cs-tooltip="通用对话"
-                                onclick="
-                                    CodeSage.chat.switchChatMode('GENERAL')
-                                "
-                            >
-                                通用
-                            </button>
-                            <button
-                                class="mode-btn"
-                                data-mode="CODING"
-                                data-cs-tooltip="代码生成与审查"
-                                onclick="CodeSage.chat.switchChatMode('CODING')"
-                            >
-                                编程
-                            </button>
-                            <button
-                                class="mode-btn"
-                                data-mode="REASONING"
-                                data-cs-tooltip="深度推理与分析"
-                                onclick="
-                                    CodeSage.chat.switchChatMode('REASONING')
-                                "
-                            >
-                                推理
-                            </button>
-                            <button
-                                class="mode-btn"
-                                data-mode="VISION"
-                                data-cs-tooltip="图片理解与多模态"
-                                onclick="CodeSage.chat.switchChatMode('VISION')"
-                            >
-                                视觉
-                            </button>
-                        </div>
                         <div class="model-selector" id="model-selector">
                             <button
                                 class="model-select-btn"
@@ -117,22 +135,15 @@
                             ></div>
                         </div>
                         <button
-                            class="icon-btn"
-                            data-cs-tooltip="命令面板 (Cmd+K)"
-                            onclick="CodeSage.openCommandPalette()"
-                        >
-                            <i class="fas fa-terminal"></i>
-                        </button>
-                        <button
-                            class="icon-btn"
-                            data-cs-tooltip="新会话"
+                            class="icon-btn icon-btn-prominent"
+                            data-cs-tooltip="新会话 (Cmd+N)"
                             onclick="CodeSage.chat.onNewSession()"
                         >
                             <i class="fas fa-plus"></i>
                         </button>
                         <div class="history-selector" id="history-selector">
                             <button
-                                class="icon-btn"
+                                class="icon-btn icon-btn-prominent"
                                 id="history-btn"
                                 data-cs-tooltip="历史会话"
                                 onclick="CodeSage.chat.toggleHistoryDropdown()"
@@ -145,18 +156,11 @@
                             ></div>
                         </div>
                         <button
-                            class="icon-btn danger"
-                            data-cs-tooltip="清空当前会话"
-                            onclick="CodeSage.chat.clearChat()"
-                        >
-                            <i class="fas fa-trash-alt"></i>
-                        </button>
-                        <button
                             class="icon-btn"
-                            data-cs-tooltip="切换主题"
-                            onclick="CodeSage.chat.toggleTheme()"
+                            data-cs-tooltip="命令面板 (Cmd+K)"
+                            onclick="CodeSage.openCommandPalette()"
                         >
-                            <i class="fas fa-moon" id="theme-icon"></i>
+                            <i class="fas fa-terminal"></i>
                         </button>
                         <button
                             class="icon-btn"
@@ -168,6 +172,27 @@
                                 class="fas fa-brain"
                                 id="thinking-toggle-icon"
                             ></i>
+                        </button>
+                        <button
+                            class="icon-btn"
+                            data-cs-tooltip="切换主题"
+                            onclick="CodeSage.chat.toggleTheme()"
+                        >
+                            <i class="fas fa-moon" id="theme-icon"></i>
+                        </button>
+                        <button
+                            class="icon-btn danger"
+                            data-cs-tooltip="清空当前会话"
+                            onclick="CodeSage.chat.clearChat()"
+                        >
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                        <button
+                            class="icon-btn"
+                            data-cs-tooltip="设置"
+                            onclick="CodeSage.chat.showSettings()"
+                        >
+                            <i class="fas fa-gear"></i>
                         </button>
                     </div>
                 </div>
@@ -229,34 +254,7 @@
 
                 <!-- ========== Input Area ========== -->
                 <div class="input-area-wrapper">
-                    <div class="mode-bar">
-                        <button
-                            class="mode-pill active"
-                            data-mode="agent"
-                            data-cs-tooltip="Agent 模式:AI 自动规划并使用工具"
-                            onclick="CodeSage.chat.setMode('agent')"
-                        >
-                            Agent
-                        </button>
-                        <button
-                            class="mode-pill"
-                            data-mode="ask"
-                            data-cs-tooltip="Ask 模式:仅对话,不调用工具"
-                            onclick="CodeSage.chat.setMode('ask')"
-                        >
-                            Ask
-                        </button>
-                        <button
-                            class="mode-pill"
-                            data-mode="manual"
-                            data-cs-tooltip="Manual 模式:手动选择工具"
-                            onclick="CodeSage.chat.setMode('manual')"
-                        >
-                            Manual
-                        </button>
-                        <span class="status-text" id="status-label">就绪</span>
-                    </div>
-                    <div class="input-box">
+                    <div class="input-box" id="input-box">
                         <div
                             id="file-autocomplete"
                             class="file-autocomplete"
@@ -264,28 +262,127 @@
                         <textarea
                             id="message-input"
                             class="input-textarea"
-                            placeholder="输入消息... (Enter / Ctrl+Enter 发送, Shift+Enter 换行, @引用文件, Esc 停止生成)"
+                            placeholder="输入消息... (Enter 发送, Shift+Enter 换行, @引用文件)"
                             rows="1"
                         ></textarea>
-                        <span class="char-counter" id="char-counter"
-                            >0 / 4000</span
+                        <div class="input-box-bottom">
+                            <div
+                                class="mode-selector-bottom"
+                                id="mode-selector-bottom"
+                            >
+                                <button
+                                    class="mode-dropdown-btn"
+                                    id="mode-dropdown-btn"
+                                    data-cs-tooltip="选择 AI 运行模式"
+                                    onclick="CodeSage.chat.toggleModeDropdown()"
+                                >
+                                    <i class="fas fa-sliders"></i>
+                                    <span id="current-mode-label">Agent</span>
+                                    <i
+                                        class="fas fa-chevron-down chevron-tiny"
+                                    ></i>
+                                </button>
+                                <div class="mode-dropdown" id="mode-dropdown">
+                                    <button
+                                        class="mode-option"
+                                        data-mode="agent"
+                                        onclick="
+                                            CodeSage.chat.selectMode('agent')
+                                        "
+                                    >
+                                        <i
+                                            class="fas fa-wand-magic-sparkles"
+                                        ></i>
+                                        <div class="mode-option-body">
+                                            <div class="mode-option-label">
+                                                Agent
+                                            </div>
+                                            <div class="mode-option-desc">
+                                                AI 自动规划并使用工具
+                                            </div>
+                                        </div>
+                                    </button>
+                                    <button
+                                        class="mode-option"
+                                        data-mode="ask"
+                                        onclick="
+                                            CodeSage.chat.selectMode('ask')
+                                        "
+                                    >
+                                        <i class="fas fa-comments"></i>
+                                        <div class="mode-option-body">
+                                            <div class="mode-option-label">
+                                                Ask
+                                            </div>
+                                            <div class="mode-option-desc">
+                                                仅对话，不调用工具
+                                            </div>
+                                        </div>
+                                    </button>
+                                    <button
+                                        class="mode-option"
+                                        data-mode="manual"
+                                        onclick="
+                                            CodeSage.chat.selectMode('manual')
+                                        "
+                                    >
+                                        <i class="fas fa-hand-pointer"></i>
+                                        <div class="mode-option-body">
+                                            <div class="mode-option-label">
+                                                Manual
+                                            </div>
+                                            <div class="mode-option-desc">
+                                                手动选择工具
+                                            </div>
+                                        </div>
+                                    </button>
+                                </div>
+                            </div>
+                            <span
+                                class="status-text status-inline"
+                                id="status-label"
+                                >就绪</span
+                            >
+                            <span class="char-counter" id="char-counter"
+                                >0 / 4000</span
+                            >
+                            <button
+                                id="send-btn"
+                                class="send-btn"
+                                data-cs-tooltip="发送消息 (Enter)"
+                                onclick="CodeSage.chat.sendMessage()"
+                            >
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    width="14"
+                                    height="14"
+                                    fill="none"
+                                >
+                                    <path
+                                        d="M12 5 L12 19 M5 12 L12 5 L19 12"
+                                        stroke="currentColor"
+                                        stroke-width="2.2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    />
+                                </svg>
+                            </button>
+                            <button
+                                id="stop-btn"
+                                class="stop-btn hidden"
+                                data-cs-tooltip="停止生成 (Esc)"
+                                onclick="CodeSage.chat.stopGeneration()"
+                            >
+                                <i class="fas fa-stop"></i>
+                            </button>
+                        </div>
+                        <div
+                            class="input-resize-handle"
+                            id="input-resize-handle"
+                            data-cs-tooltip="拖拽调整输入框高度"
                         >
-                        <button
-                            id="send-btn"
-                            class="send-btn"
-                            data-cs-tooltip="发送消息 (Enter)"
-                            onclick="CodeSage.chat.sendMessage()"
-                        >
-                            <i class="fas fa-paper-plane"></i>
-                        </button>
-                        <button
-                            id="stop-btn"
-                            class="stop-btn hidden"
-                            data-cs-tooltip="停止生成 (Esc)"
-                            onclick="CodeSage.chat.stopGeneration()"
-                        >
-                            <i class="fas fa-stop"></i>
-                        </button>
+                            <i class="fas fa-grip-lines"></i>
+                        </div>
                     </div>
                     <div class="input-hint">
                         <kbd>Enter</kbd> 发送 · <kbd>Shift</kbd> +

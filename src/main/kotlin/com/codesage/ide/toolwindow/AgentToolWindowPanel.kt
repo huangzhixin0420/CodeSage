@@ -176,6 +176,8 @@ class AgentToolWindowPanel(
 
             // 检测 IDE 主题并同步
             syncTheme()
+            // 订阅 IDE 主题变化（重启 / 切换主题后实时同步到 WebView）
+            subscribeToIdeThemeChanges()
 
             // 刷新会话列表
             refreshSessionList()
@@ -292,6 +294,28 @@ class AgentToolWindowPanel(
         chatPanel.setTheme(if (isDark) "dark" else "light")
     }
 
+    /**
+     * 订阅 IDE 主题切换(例如用户从 Darcula 切到 IntelliJ Light)
+     * 使用 LafManager 提供的现代 message bus 主题
+     */
+    private var themeConnection: com.intellij.util.messages.MessageBusConnection? = null
+    private fun subscribeToIdeThemeChanges() {
+        try {
+            themeConnection?.dispose()
+            val conn = ApplicationManager.getApplication().messageBus.connect()
+            conn.subscribe(
+                com.intellij.ide.ui.LafManagerListener.TOPIC,
+                com.intellij.ide.ui.LafManagerListener {
+                    logger.info("[AgentToolWindowPanel] IDE theme changed, propagating to WebView")
+                    syncTheme()
+                },
+            )
+            themeConnection = conn
+        } catch (e: Throwable) {
+            logger.warn("[AgentToolWindowPanel] failed to subscribe to theme changes: ${e.message}")
+        }
+    }
+
     private fun updateStatusFromState(state: AgentState) {
         val text = when (state) {
             AgentState.IDLE -> "就绪"
@@ -342,6 +366,8 @@ class AgentToolWindowPanel(
 
     fun dispose() {
         scope?.cancel()
+        themeConnection?.dispose()
+        themeConnection = null
         chatPanel.dispose()
         agentCore?.shutdown()
     }

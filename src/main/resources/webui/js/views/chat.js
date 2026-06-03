@@ -87,6 +87,9 @@ class ChatView {
     this._bindGlobalShortcuts();
     this._bindDragAndDrop();
     this._restoreFromState();
+    this._restoreMode();
+    this._initInputResize();
+    this._bindModeDropdownClickOutside();
     this._initTheme();
     this._watchSystemTheme();
     this._initSidebar();
@@ -542,12 +545,58 @@ class ChatView {
     this._setStatus("就绪", "");
   }
 
-  // ===== Mode =====
-  setMode(mode) {
+  // ===== Mode (Agent / Ask / Manual) =====
+  /** 从 state / localStorage 恢复当前 mode, 高亮下拉项 */
+  _restoreMode() {
+    const saved =
+      state.get("mode") ||
+      (() => {
+        try {
+          return JSON.parse(localStorage.getItem("codesage_state_v1") || "{}")
+            .mode;
+        } catch (e) {
+          return null;
+        }
+      })() ||
+      "agent";
+    this._applyMode(saved);
+  }
+
+  _applyMode(mode) {
     state.set("mode", mode);
-    document.querySelectorAll(".mode-pill").forEach((b) => {
-      b.classList.toggle("active", b.dataset.mode === mode);
+    const label = document.getElementById("current-mode-label");
+    if (label) label.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+    document.querySelectorAll("#mode-dropdown .mode-option").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.mode === mode);
     });
+  }
+
+  /** 保留 setMode 旧 API 以避免调用方报错 (e.g. command palette) */
+  setMode(mode) {
+    this._applyMode(mode);
+  }
+
+  /** 点击下拉按钮 — 切换显示 */
+  toggleModeDropdown() {
+    const dd = document.getElementById("mode-dropdown");
+    const btn = document.getElementById("mode-dropdown-btn");
+    if (!dd || !btn) return;
+    const open = dd.classList.toggle("open");
+    btn.classList.toggle("open", open);
+    if (open) this._closeModelDropdown();
+  }
+
+  /** 从下拉里选一项 */
+  selectMode(mode) {
+    this._applyMode(mode);
+    this._closeModeDropdown();
+  }
+
+  _closeModeDropdown() {
+    const dd = document.getElementById("mode-dropdown");
+    const btn = document.getElementById("mode-dropdown-btn");
+    if (dd) dd.classList.remove("open");
+    if (btn) btn.classList.remove("open");
   }
 
   switchChatMode(mode) {
@@ -579,8 +628,10 @@ class ChatView {
         ? "dark"
         : "light";
     }
-    document.body.setAttribute("data-theme", resolved);
-    document.body.setAttribute("data-theme-pref", theme);
+    // 设在 documentElement 上才能在首个 CSS 加载后立即生效，
+    // 与 index.html <head> 里 inline script 的设置位置保持一致
+    document.documentElement.setAttribute("data-theme", resolved);
+    document.documentElement.setAttribute("data-theme-pref", theme);
     // 图标反映实际主题
     if (this.themeIcon) {
       this.themeIcon.className =
@@ -601,6 +652,72 @@ class ChatView {
     };
     if (mq.addEventListener) mq.addEventListener("change", handler);
     else mq.addListener(handler);
+  }
+
+  /**
+   * 输入框拖拽改高度(顶部 grip handle)
+   *  - 只能向上拖(增加高度)
+   *  - 上限 60vh(防遮消息区)
+   *  - 下限 56px(默认 1 行)
+   *  - 拖动期间 textarea 高度跟着变
+   */
+  _initInputResize() {
+    const handle = document.getElementById("input-resize-handle");
+    const box = document.getElementById("input-box");
+    const textarea = this.messageInput;
+    if (!handle || !box || !textarea) return;
+    let dragging = false;
+    let startY = 0;
+    let startHeight = 0;
+    let rafId = null;
+    let nextHeight = 0;
+
+    const applyHeight = () => {
+      rafId = null;
+      box.style.height = nextHeight + "px";
+      // textarea 自适应到 box 减去底部行
+    };
+    const onMove = (e) => {
+      if (!dragging) return;
+      const dy = startY - e.clientY; // 向上 = 正
+      const maxPx = window.innerHeight * 0.6;
+      const minPx = 56;
+      nextHeight = Math.max(minPx, Math.min(maxPx, startHeight + dy));
+      if (!rafId) rafId = requestAnimationFrame(applyHeight);
+    };
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      dragging = true;
+      startY = e.clientY;
+      startHeight = box.getBoundingClientRect().height;
+      nextHeight = startHeight;
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "ns-resize";
+    });
+    // 双击重置默认高度
+    handle.addEventListener("dblclick", () => {
+      box.style.height = "";
+    });
+  }
+
+  /** 点击下拉外区域时关闭 mode dropdown */
+  _bindModeDropdownClickOutside() {
+    document.addEventListener("click", (e) => {
+      const wrapper = document.getElementById("mode-selector-bottom");
+      if (!wrapper) return;
+      if (wrapper.contains(e.target)) return;
+      this._closeModeDropdown();
+    });
   }
 
   _initTheme() {
@@ -925,7 +1042,8 @@ class ChatView {
   _setStatus(text, cls) {
     if (!this.statusLabel) return;
     this.statusLabel.textContent = text;
-    this.statusLabel.className = "status-text" + (cls ? " " + cls : "");
+    this.statusLabel.className =
+      "status-text status-inline" + (cls ? " " + cls : "");
   }
 
   // ===== Per-turn operations =====

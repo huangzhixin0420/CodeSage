@@ -37,16 +37,22 @@
 }
 
 .brand-icon {
-    width: 28px;
-    height: 28px;
+    width: 30px;
+    height: 30px;
     border-radius: var(--radius-md);
-    background: var(--accent);
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
     display: flex;
     align-items: center;
     justify-content: center;
     color: white;
     font-size: 13px;
-    box-shadow: 0 2px 6px var(--accent-soft);
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.35);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.brand-icon svg {
+    display: block;
 }
 
 .brand-title {
@@ -62,36 +68,9 @@
     gap: var(--space-1);
 }
 
-/* ========== Mode Toggle ========== */
+/* ========== Mode Toggle (legacy - removed in v0.1.1) ========== */
 .mode-toggle {
-    display: flex;
-    align-items: center;
-    background: var(--bg-1);
-    border-radius: var(--radius-full);
-    padding: 2px;
-    margin-right: var(--space-2);
-}
-
-.mode-btn {
-    padding: 4px 10px;
-    border-radius: var(--radius-full);
-    font-size: var(--text-xs);
-    font-weight: 600;
-    color: var(--fg-2);
-    background: transparent;
-    transition: all var(--duration-fast) var(--ease-out);
-    cursor: pointer;
-    letter-spacing: 0.2px;
-}
-
-.mode-btn:hover {
-    color: var(--fg-1);
-}
-
-.mode-btn.active {
-    background: var(--bg-0);
-    color: var(--accent);
-    box-shadow: var(--shadow-xs);
+    display: none;
 }
 
 /* ========== Model Selector ========== */
@@ -276,8 +255,8 @@
 
 /* ========== Icon button ========== */
 .icon-btn {
-    width: 30px;
-    height: 30px;
+    width: 32px;
+    height: 32px;
     border-radius: var(--radius-sm);
     border: none;
     background: transparent;
@@ -303,6 +282,27 @@
 .icon-btn.active {
     background: var(--accent-soft);
     color: var(--accent);
+}
+
+/* Prominent icon button — 用于 + / history，亮白主题下保持可见 */
+.icon-btn-prominent {
+    background: var(--bg-1);
+    color: var(--fg-1);
+    border: 1px solid var(--border);
+}
+
+.icon-btn-prominent:hover {
+    background: var(--accent);
+    color: var(--fg-on-accent);
+    border-color: var(--accent);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px var(--accent-soft);
+}
+
+[data-theme="dark"] .icon-btn-prominent {
+    background: var(--bg-2);
+    color: var(--fg-0);
+    border-color: var(--border);
 }
 
 /* ========== History Dropdown ========== */

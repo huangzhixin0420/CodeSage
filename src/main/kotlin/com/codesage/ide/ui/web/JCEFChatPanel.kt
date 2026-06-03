@@ -136,21 +136,54 @@ class JCEFChatPanel(
 
     /**
      * 读取从 classpath 提取出的 index.html，过一遍 ResourceInliner（处理可能的 CDN URL）后写回。
-     * 主要价值在于保持与旧 chat.html 路径的兼容；新 index.html 几乎不需要内联处理，
-     * 因为所有静态资源都已在提取目录中、浏览器通过 file:// 直接拿。
+     * 同时在 <head> 中注入一个 inline script 设定 window.__CODESAGE_INITIAL_THEME__，
+     * 让 index.html 中 <head> 里的主题初始化脚本在首个 CSS 加载前就能读到正确值，
+     * 避免黑->白->黑的闪烁。
      */
     private fun prepareExtractedIndexHtml(extractedDir: java.io.File) {
         val indexFile = java.io.File(extractedDir, "index.html")
         val original = indexFile.readText(Charsets.UTF_8)
+        val theme = detectInitialTheme()
+        val withTheme = injectInitialThemeScript(original, theme)
         val processed = try {
-            ResourceInliner.inlineResources(original)
+            ResourceInliner.inlineResources(withTheme)
         } catch (e: Exception) {
             logger.warn("ResourceInliner failed, writing raw HTML: ${e.message}")
-            original
+            withTheme
         }
         if (processed !== original) {
             indexFile.writeText(processed, Charsets.UTF_8)
-            logger.info("[JCEFChatPanel] index.html post-processed (CDN URLs inlined)")
+            logger.info("[JCEFChatPanel] index.html post-processed (initial theme=$theme)")
+        }
+    }
+
+    /**
+     * 检测 IDE 当前主题，返回 "light" / "dark"
+     * - JBColor.isBright() 返回 true 表示亮色主题
+     */
+    private fun detectInitialTheme(): String {
+        return try {
+            if (com.intellij.ui.JBColor.isBright()) "light" else "dark"
+        } catch (e: Throwable) {
+            // 单元测试或非 IDE 环境下可能抛出
+            "auto"
+        }
+    }
+
+    /**
+     * 在 <head> 末尾注入 <script>window.__CODESAGE_INITIAL_THEME__ = "...";</script>
+     * 供 index.html 里 <body> 顶部的 inline 脚本读取
+     */
+    private fun injectInitialThemeScript(html: String, theme: String): String {
+        if (html.contains("__CODESAGE_INITIAL_THEME__")) return html
+        val script = "<script>window.__CODESAGE_INITIAL_THEME__ = " +
+                "\"${theme.replace("\"", "\\\"")}\";</script>"
+        // 注入到 <head> 末尾、</head> 之前
+        return if (html.contains("</head>")) {
+            html.replace("</head>", "$script</head>")
+        } else {
+            // 兜底:放进 <body> 开始处
+            html.replace("<body>", "<body>$script")
         }
     }
 
