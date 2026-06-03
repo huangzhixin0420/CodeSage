@@ -364,7 +364,8 @@ object BuiltInSkills {
         GitOperationSkill(),
         CommandExecutionSkill(),
         WebRequestSkill(),
-        CodeSearchSkill()
+        CodeSearchSkill(),
+        TreeBuiltinSkill()  // 纯 Kotlin 目录树，不依赖外部 tree 命令（macOS 默认没装）
     )
 
     private val aiSkills = listOf(

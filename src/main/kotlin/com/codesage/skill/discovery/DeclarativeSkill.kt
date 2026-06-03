@@ -100,10 +100,32 @@ class DeclarativeSkill(
             commandList.add(v.toString())
         }
 
-        val process = ProcessBuilder(commandList)
-            .directory(workingDir)
-            .redirectErrorStream(true)
-            .start()
+        val process = try {
+            ProcessBuilder(commandList)
+                .directory(workingDir)
+                .redirectErrorStream(true)
+                .start()
+        } catch (e: java.io.IOException) {
+            // ProcessBuilder.start() 在命令找不到时（macOS 默认没装某些命令、
+            // 或 wrapper 未提供）抛 IOException，message 为
+            // "Cannot run program \"<cmd>\" (in directory ...): error=2, No such file or directory"。
+            // 原先这个 IOException 会被外层 catch 包装为 "Execution failed: ..."，
+            // 不告诉用户怎么修。检测到 "No such file" 后给安装提示。
+            val msg = e.message ?: ""
+            if (msg.contains("No such file or directory")) {
+                val installHint = if (isMacOs()) {
+                    "Try 'brew install $command' or update the skill config to use a different command."
+                } else {
+                    "Install the command or update the skill config to use a different command."
+                }
+                return SkillResult.Failure(
+                    "Command '$command' not found on PATH. $installHint " +
+                            "(Original error: ${msg.take(200)})",
+                    e
+                )
+            }
+            throw e
+        }
 
         val output = process.inputStream.bufferedReader().readText()
         val exitCode = process.waitFor()
@@ -114,6 +136,10 @@ class DeclarativeSkill(
             SkillResult.Failure("Command failed with exit code $exitCode: $output")
         }
     }
+
+    /** 检测当前 OS 是否 macOS（给 brew install 提示用）。 */
+    private fun isMacOs(): Boolean =
+        System.getProperty("os.name")?.lowercase()?.contains("mac") == true
 
     private fun executeHttp(url: String, input: SkillInput): SkillResult {
         // 简化实现：将输入序列化为 JSON 后通过 HTTP POST 发送

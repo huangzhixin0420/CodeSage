@@ -205,12 +205,14 @@ skills:
 
   # region 声明式外部技能示例（命令型）
 
+  # 注：之前这个示例硬编码 `command: "tree"`，但 tree 在 macOS 默认没装。
+  # 修法：用 builtin 类型指向 TreeBuiltinSkill（纯 Kotlin 实现，跨平台）。
   - id: "declarative_tree"
     name: "Tree Command"
-    description: "以树状结构列出目录内容"
+    description: "以树状结构列出目录内容（纯 Kotlin 实现，跨平台）"
     category: FILE_OPERATION
     tags: ["file", "tree", "directory"]
-    version: "1.0.0"
+    version: "1.1.0"
     inputSchema:
       path:
         type: "string"
@@ -222,10 +224,15 @@ skills:
     outputSchema:
       output:
         type: "string"
-        description: "命令输出"
+        description: "树状结构文本"
+      fileCount:
+        type: "integer"
+        description: "文件总数"
+      dirCount:
+        type: "integer"
+        description: "目录总数"
     implementation:
-      type: "external"
-      externalType: "command"
-      command: "tree"
+      type: "builtin"
+      className: "com.codesage.skill.builtin.TreeBuiltinSkill"
 
   # endregion
