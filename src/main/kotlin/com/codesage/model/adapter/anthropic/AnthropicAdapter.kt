@@ -169,16 +169,24 @@ class AnthropicAdapter(
                 }
 
                 Role.TOOL -> {
-                    // 厳格校验：toolUseId 必须非空。旧代码 "msg.toolCallId ?: ''" 会发
-                    // 出 tool_use_id="" 给 Anthropic，返 bad_request_error 2013。
-                    // 如果上游出了个“空 id” tool result，这里记 WARN 并跳过，不发。
+                    // 厳格校验：toolUseId 必须非空 + 格式合法。
+                    // 上游返的 id 可能含特殊字符（代理 mangle / 错误序列化），
+                    // 会被 Anthropic 拒为 "tool call id is invalid (2013)"。
                     val toolUseId = msg.toolCallId
                     if (toolUseId.isNullOrBlank()) {
                         logger.warn(
                             "[AnthropicAdapter] Skipping tool_result with empty toolCallId " +
                                     "(msg.name=${msg.name}, contentLength=${msg.content.length})"
                         )
-                        continue@msgLoop  // 跳过这个 tool result，不加进 messages
+                        continue@msgLoop
+                    }
+                    if (!isValidToolId(toolUseId)) {
+                        logger.warn(
+                            "[AnthropicAdapter] Skipping tool_result with invalid toolCallId format " +
+                                    "(toolCallId=\"${toolUseId.take(30)}\", len=${toolUseId.length}, " +
+                                    "msg.name=${msg.name}, contentLength=${msg.content.length})"
+                        )
+                        continue@msgLoop
                     }
                     val contentBlock = buildJsonObject {
                         put("type", "tool_result")
@@ -226,7 +234,29 @@ class AnthropicAdapter(
             stream = request.stream
         )
 
-        return json.encodeToString(anthropicRequest)
+        val body = json.encodeToString(anthropicRequest)
+
+        // 调试阶段：dump 请求里所有 tool_use / tool_result 的 id，
+        // 方便 2013 (tool call id is invalid) 时能立刻看到具体哪些 id 被发出去。
+        // DEBUG 级，生产环境默认不打开。
+        if (logger.isDebugEnabled) {
+            val toolUseIds = messages.flatMap { msg ->
+                (msg.content as? JsonArray)?.jsonArray.orEmpty()
+                    .mapNotNull { (it as? JsonObject)?.get("id")?.jsonPrimitive?.content }
+            }
+            val toolResultIds = messages.flatMap { msg ->
+                (msg.content as? JsonArray)?.jsonArray.orEmpty()
+                    .mapNotNull { (it as? JsonObject)?.get("tool_use_id")?.jsonPrimitive?.content }
+            }
+            logger.debug(
+                "[AnthropicAdapter] request tool_id dump | " +
+                        "tool_use_ids=$toolUseIds | " +
+                        "tool_result_ids=$toolResultIds | " +
+                        "bodySize=${body.length}B"
+            )
+        }
+
+        return body
     }
 
     override fun fromVendorResponse(response: String): ChatResponse {
@@ -331,4 +361,15 @@ class AnthropicAdapter(
      * Anthropic 暂时没有 list models API，直接返回 supportedModels
      */
     override suspend fun fetchModels(): List<String> = supportedModels
+
+    companion object {
+        /**
+         * 校验 tool id 格式。Anthropic 接受 1~64 字符的 [A-Za-z0-9_-]。
+         * 不匹配返 2013 "tool call id is invalid"。
+         */
+        internal fun isValidToolId(id: String): Boolean {
+            if (id.isEmpty() || id.length > 64) return false
+            return id.all { it.isLetterOrDigit() || it == '_' || it == '-' }
+        }
+    }
 }

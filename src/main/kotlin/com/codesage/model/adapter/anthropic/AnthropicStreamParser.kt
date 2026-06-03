@@ -2,6 +2,7 @@ package com.codesage.model.adapter.anthropic
 
 import com.codesage.model.dto.StreamChunk
 import com.codesage.model.dto.StreamToolCallDelta
+import com.codesage.shared.utils.Logger
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -21,6 +22,8 @@ import kotlinx.serialization.json.put
  * - `error`：错误
  */
 class AnthropicStreamParser {
+
+    private val logger = Logger.getLogger<AnthropicStreamParser>()
 
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
 
@@ -56,19 +59,24 @@ class AnthropicStreamParser {
                 if (block?.type == "tool_use") {
                     val id = block.id
                     val name = block.name
-                    // 严格校验：Anthropic tool_use 必须有 id + name。
-                    // 旧代码 "id ?: 'tool_$index'" 会自己造占位 id，跢上
-                    // 上后要返给 LLM 返 "tool_use_id: tool_0" 就被
-                    // Anthropic API 拒收 (bad_request_error 2013: tool call id is invalid)。
-                    // 严谨做法：id 或 name 缺失 → 跳过这个 tool_use，
-                    // 避免出现"我们自己造的 id 返给 LLM"这种循环。
-                    if (id.isNullOrBlank() || name.isNullOrBlank()) {
-                        // 清空可能已累的 input，后续不 emit delta
+                    // 严格校验：Anthropic tool_use id 格式必须合法。
+                    // 原因：上游 LLM 代理 / SDK 有时会返特殊字符 / 控制字符 / 超长 id，
+                    // 这些会被 Anthropic 拒为 "tool call id is invalid (2013)"。
+                    // 规则：1~64 chars，[A-Za-z0-9_-] 范围。
+                    val idValid = id != null && isValidToolId(id)
+                    val nameValid = !name.isNullOrBlank()
+                    if (!idValid || !nameValid) {
                         toolMetas.remove(index)
                         toolInputs.remove(index)
+                        // 详细记下：但不 dump 完整 id（避免生成长 log），只报长度 + 首几个字符
+                        val preview = id?.take(20)?.let { "len=${it.length} preview=\"$it\"" } ?: "null"
+                        logger.warn(
+                            "[AnthropicStreamParser] Skipping tool_use with invalid id/name " +
+                                    "(index=$index, id=$preview, name=${name?.take(20) ?: "null"})"
+                        )
                         return null
                     }
-                    toolMetas[index] = id to name
+                    toolMetas[index] = id!! to name!!
                     toolInputs[index] = StringBuilder()
                 }
                 null
@@ -143,6 +151,16 @@ class AnthropicStreamParser {
 
             else -> null
         }
+    }
+
+    /**
+     * 校验 tool id 是否是 Anthropic 接受的格式。
+     * 规则：1~64 字符，仅 [A-Za-z0-9_-]。
+     * 不匹配则 Anthropic API 返 "tool call id is invalid (2013)"。
+     */
+    private fun isValidToolId(id: String): Boolean {
+        if (id.isEmpty() || id.length > 64) return false
+        return id.all { it.isLetterOrDigit() || it == '_' || it == '-' }
     }
 
     /**
