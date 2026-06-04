@@ -119,21 +119,6 @@
                         <div class="brand-title">CodeSage</div>
                     </div>
                     <div class="header-actions">
-                        <div class="model-selector" id="model-selector">
-                            <button
-                                class="model-select-btn"
-                                id="model-select-btn"
-                                onclick="CodeSage.chat.toggleModelDropdown()"
-                            >
-                                <i class="fas fa-microchip"></i>
-                                <span id="current-model-name">选择模型</span>
-                                <i class="fas fa-chevron-down chevron"></i>
-                            </button>
-                            <div
-                                class="model-dropdown"
-                                id="model-dropdown"
-                            ></div>
-                        </div>
                         <button
                             class="icon-btn icon-btn-prominent"
                             data-cs-tooltip="新会话 (Cmd+N)"
@@ -307,6 +292,7 @@
                             rows="1"
                         ></textarea>
                         <div class="input-box-bottom">
+                            <!-- AI 运行模式 (Agent / Ask / Manual) -->
                             <div
                                 class="mode-selector-bottom"
                                 id="mode-selector-bottom"
@@ -378,6 +364,32 @@
                                         </div>
                                     </button>
                                 </div>
+                            </div>
+                            <!-- 模型选择 (与 mode 同款) -->
+                            <div
+                                class="mode-selector-bottom"
+                                id="model-selector-bottom"
+                            >
+                                <button
+                                    class="mode-dropdown-btn"
+                                    id="model-select-btn"
+                                    data-cs-tooltip="选择模型"
+                                    onclick="
+                                        CodeSage.chat.toggleModelDropdown()
+                                    "
+                                >
+                                    <i class="fas fa-microchip"></i>
+                                    <span id="current-model-name"
+                                        >选择模型</span
+                                    >
+                                    <i
+                                        class="fas fa-chevron-down chevron-tiny"
+                                    ></i>
+                                </button>
+                                <div
+                                    class="mode-dropdown"
+                                    id="model-dropdown"
+                                ></div>
                             </div>
                             <span
                                 class="status-text status-inline"

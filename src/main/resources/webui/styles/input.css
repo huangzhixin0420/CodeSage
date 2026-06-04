@@ -8,7 +8,7 @@
  */
 
 .input-area-wrapper {
-    padding: var(--space-3) var(--space-4) var(--space-4);
+    padding: var(--space-2) var(--space-4) var(--space-2);
     border-top: 1px solid var(--border-subtle);
     background: var(--bg-0);
     flex-shrink: 0;
@@ -33,7 +33,7 @@
 .input-box:focus-within {
     border-color: var(--accent);
     background: var(--bg-0);
-    box-shadow: 0 0 0 3px var(--accent-soft);
+    /* 去掉外层发光,避免突兀 */
 }
 
 [data-theme="dark"] .input-box {
@@ -43,6 +43,7 @@
 
 [data-theme="dark"] .input-box:focus-within {
     background: var(--bg-0);
+    border-color: var(--accent);
 }
 
 /* ========== 输入框本体 ========== */
@@ -68,13 +69,14 @@
     color: var(--fg-2);
 }
 
-/* ========== 底部行:模式 / 状态 / 计数 / 发送 ========== */
+/* ========== Bottom row:模式 / 模型 / 状态 / 计数 / 发送 ========== */
 .input-box-bottom {
     display: flex;
     align-items: center;
     gap: var(--space-2);
     padding: 0;
     min-height: 28px;
+    margin-top: var(--space-1);
 }
 
 .status-text.status-inline {
@@ -359,7 +361,7 @@
 
 /* ========== Input hint ========== */
 .input-hint {
-    margin-top: 8px;
+    margin-top: 6px;
     font-size: var(--text-xs);
     color: var(--fg-2);
     padding-left: 6px;

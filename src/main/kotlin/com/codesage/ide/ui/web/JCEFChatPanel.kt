@@ -135,26 +135,69 @@ class JCEFChatPanel(
     }
 
     /**
-     * 读取从 classpath 提取出的 index.html，过一遍 ResourceInliner（处理可能的 CDN URL）后写回。
-     * 同时在 <head> 中注入一个 inline script 设定 window.__CODESAGE_INITIAL_THEME__，
-     * 让 index.html 中 <head> 里的主题初始化脚本在首个 CSS 加载前就能读到正确值，
-     * 避免黑->白->黑的闪烁。
+     * 读取从 classpath 提取出的 index.html，进行后处理后写回。
+     * 包含:
+     *  1. 注入初始主题 inline script(<head> 里) — 避免主题闪烁
+     *  2. 注入 inline 的 Font Awesome CSS + 字体(否则 file:// 字体加载被拦截)
+     *  3. 加载 JsBundler 生成的 js/bundle.js
+     *  4. 过一遍 ResourceInliner(为旧 chat.html 路径留个兜底)
      */
     private fun prepareExtractedIndexHtml(extractedDir: java.io.File) {
         val indexFile = java.io.File(extractedDir, "index.html")
         val original = indexFile.readText(Charsets.UTF_8)
         val theme = detectInitialTheme()
         val withTheme = injectInitialThemeScript(original, theme)
+
+        // 1) 调用 JsBundler 生成 js/bundle.js + inlined FA CSS
+        val bundle: JsBundler.Bundle
+        val inlinedHtml: String
+        try {
+            bundle = JsBundler.bundle()
+            java.io.File(extractedDir, "js/bundle.js").writeText(bundle.js, Charsets.UTF_8)
+            logger.info("[JCEFChatPanel] js/bundle.js written (${bundle.js.length} bytes)")
+            // 2) 把 <link> 换为 <style> 注入 FA,并把 <script type="module"> 换为非 module bundle.js
+            inlinedHtml = replaceWithInlineFA(withTheme, bundle.faCss)
+                .replace(
+                    """<script type="module" src="js/main.js"></script>""",
+                    """<script src="js/bundle.js"></script>""",
+                )
+        } catch (e: Exception) {
+            logger.error("JsBundler failed, falling back to raw HTML: ${e.message}", e)
+            return
+        }
+
         val processed = try {
-            ResourceInliner.inlineResources(withTheme)
+            ResourceInliner.inlineResources(inlinedHtml)
         } catch (e: Exception) {
             logger.warn("ResourceInliner failed, writing raw HTML: ${e.message}")
-            withTheme
+            inlinedHtml
         }
         if (processed !== original) {
             indexFile.writeText(processed, Charsets.UTF_8)
             logger.info("[JCEFChatPanel] index.html post-processed (initial theme=$theme)")
         }
+    }
+
+    /**
+     * 把 <link rel="stylesheet" href="lib/font-awesome/all.min.css" /> 换成内联 <style>
+     * 插入到 <head> 末尾。这样 font-awesome 的字体作为 data: URI 嵌入,
+     * 避免 file:// 页面下被 Chromium 拦截字体加载。
+     */
+    private fun replaceWithInlineFA(html: String, faCss: String): String {
+        if (faCss.isEmpty()) return html
+        // 去掉 link
+        var s = html.replace(
+            Regex("""<link\s+rel="stylesheet"\s+href="lib/font-awesome/all\.min\.css"\s*/>"""),
+            "",
+        )
+        // 在 </head> 前注入 <style>
+        val styleTag = "<style data-cs-inline=\"font-awesome\">$faCss</style>"
+        s = if (s.contains("</head>")) {
+            s.replace("</head>", "$styleTag</head>")
+        } else {
+            s
+        }
+        return s
     }
 
     /**
