@@ -31,9 +31,10 @@
 }
 
 .input-box:focus-within {
-    border-color: var(--accent);
+    /* 焦点仅在背景微变化 + border 深一点点,去掉突出的蓝色蓝
+       (用户反馈“里外都出现蓝色框线”太突兀) */
+    border-color: var(--border-strong);
     background: var(--bg-0);
-    /* 去掉外层发光,避免突兀 */
 }
 
 [data-theme="dark"] .input-box {
@@ -43,7 +44,7 @@
 
 [data-theme="dark"] .input-box:focus-within {
     background: var(--bg-0);
-    border-color: var(--accent);
+    border-color: var(--border-strong);
 }
 
 /* ========== 输入框本体 ========== */
@@ -290,52 +291,61 @@
     top: 0;
     left: 50%;
     transform: translateX(-50%);
-    width: 40px;
-    height: 8px;
+    width: 56px;
+    height: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: ns-resize;
-    color: var(--fg-3);
-    opacity: 0.4;
-    transition: opacity var(--duration-fast) var(--ease-out);
-    z-index: 1;
-    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    color: var(--fg-2);
+    transition: background var(--duration-fast) var(--ease-out);
+    z-index: 2;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
     user-select: none;
     touch-action: none;
+    background: transparent;
 }
 
 .input-resize-handle:hover {
-    opacity: 0.9;
     background: var(--accent-soft);
 }
 
 .input-resize-handle:active {
-    opacity: 1;
     background: var(--accent-soft);
 }
 
+/* 拖拽手柄的可视提示:中间一条短线 + 上面的 grips 图标 */
 .input-resize-handle i {
     font-size: 9px;
-    letter-spacing: 0.5px;
+    color: var(--fg-3);
+    transition: color var(--duration-fast);
+    position: relative;
+    z-index: 1;
+}
+
+.input-resize-handle:hover i {
+    color: var(--accent);
 }
 
 .input-resize-handle::after {
     content: "";
     position: absolute;
-    top: 0;
+    top: 2px;
     left: 50%;
     transform: translateX(-50%);
     width: 24px;
     height: 2px;
     background: var(--fg-3);
     border-radius: 2px;
-    opacity: 0.4;
+    opacity: 0.5;
+    transition:
+        opacity var(--duration-fast),
+        background var(--duration-fast);
 }
 
 .input-resize-handle:hover::after {
     background: var(--accent);
-    opacity: 0.8;
+    opacity: 0.9;
 }
 
 /* ========== Char counter ========== */

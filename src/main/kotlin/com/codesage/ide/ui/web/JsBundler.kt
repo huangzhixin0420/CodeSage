@@ -6,24 +6,21 @@ import java.util.Base64
 /**
  * JS Bundler — 把多文件 ES module 打成单一非模块脚本
  *
- * 为什么需要这个:
- *   - JCEF 是基于 Chromium 内核,加载 file:// 页面时默认禁止 ES module 的 import
- *     (即便是 same-folder import 也会因为 "null origin" 被拦截)
- *   - 旧 index.html 用 type="module" 加载 js/main.js,导致整个 chat.js 没跑
- *   - 所有 onclick="CodeSage.chat.xxx()" 因为 CodeSage.chat 是 undefined 静默失败
- *   - 用户看到:enter 换行、按钮无反应、字数不更新、mode 下拉不出
+ * 关键设计 — IIFE 包裹 + window.__bundle__ 命名空间:
+ *  1. 每个源文件被独立 IIFE 包裹
+ *  2. 顶层 const/let/class 都在 IIFE 局部 scope,同名 const 互不冲突
+ *     (e.g. cs-toast.js 和 cs-inline-alert.js 都定义 VARIANT_ICONS 不再撞)
+ *  3. export 的标识符挂到 window.__bundle__.X(消费侧可见)
+ *  4. import { X } from "..." 在消费侧改成 `const X = window.__bundle__.X`
+ *  5. 用 <script> 直接加载(非 module),file:// 下可正常跑
  *
- * 解决方案:
- *   1. 在 extraction 时把 js/main.js + 所有 import 递归合成一个 bundle.js
- *   2. 抹掉 import/export 语法
- *   3. 用 IIFE 包裹,避免变量污染 window
- *   4. HTML 改为 <script src="js/bundle.js">(非 module),file:// 下可正常加载
- *
- * 同时还会内联 Font Awesome CSS + 字体(woff2 → data: URI),
+ * 同时内联 Font Awesome CSS + 字体(woff2 → data: URI),
  * 解决 file:// 字体加载被拦截、图标显示空白的问题。
  */
 object JsBundler {
     private val logger = Logger.getLogger<JsBundler>()
+
+    data class Bundle(val js: String, val faCss: String)
 
     fun bundle(): Bundle {
         val classLoader = JsBundler::class.java.classLoader
@@ -33,6 +30,7 @@ object JsBundler {
         val js = StringBuilder()
         js.appendLine("/* CodeSage JS bundle — auto-generated at runtime. */")
         js.appendLine("/* Source: webui/js/* (${order.size} modules) */")
+        js.appendLine("window.__bundle__ = window.__bundle__ || {};")
         js.appendLine("(function () {")
         js.appendLine("'use strict';")
         for (path in order) {
@@ -42,21 +40,76 @@ object JsBundler {
             js.appendLine("/* ============================================================ */")
             js.appendLine("/* $path */")
             js.appendLine("/* ============================================================ */")
-            js.append(stripModuleSyntax(content))
-            if (!content.endsWith("\n")) js.appendLine()
+            js.append(processFile(content))
         }
         js.appendLine("})();")
         return Bundle(js = js.toString(), faCss = inlineFontAwesome(classLoader))
     }
 
-    data class Bundle(val js: String, val faCss: String)
+    /**
+     * 处理一个 JS 文件:
+     *  1. 抹掉 import/export 语法
+     *  2. 包成 IIFE(避免跨文件同名 const 冲突)
+     *  3. export 名挂到 window.__bundle__
+     *  4. import 名从 window.__bundle__ 取
+     */
+    private fun processFile(content: String): String {
+        // 1) 收集 import 名 (在 strip 之前, 行首锚定避免误伤 JSDoc 里的 import 注释)
+        val importNames = mutableListOf<String>()
+        val importPattern = Regex("""(?m)^import\s*\{([^}]+)\}\s*from\s*["'][^"']+["'];?""")
+        importPattern.findAll(content).forEach { m ->
+            m.groupValues[1].split(",").forEach { part ->
+                val name = part.trim().split(" as ").last().trim()
+                if (name.isNotEmpty()) importNames.add(name)
+            }
+        }
+        // 2) 收集 export 名
+        val exportNames = mutableListOf<String>()
+        Regex("""(?m)^export\s+(const|let|var)\s+(\w+)""").findAll(content).forEach { m ->
+            exportNames.add(m.groupValues[2])
+        }
+        Regex("""(?m)^export\s+(class|function)\s+(\w+)""").findAll(content).forEach { m ->
+            exportNames.add(m.groupValues[2])
+        }
+        Regex("""(?m)^export\s*\{([^}]+)\};?\s*$""").findAll(content).forEach { m ->
+            m.groupValues[1].split(",").forEach { part ->
+                val name = part.trim().split(" as ").last().trim()
+                if (name.isNotEmpty()) exportNames.add(name)
+            }
+        }
+
+        // 3) Strip import/export
+        val stripped = stripModuleSyntax(content)
+
+        // 4) 包成 IIFE + 注入 import/export 桥接
+        val sb = StringBuilder()
+        sb.appendLine("(function () {")
+        for (name in importNames.distinct()) {
+            sb.appendLine("    var $name = window.__bundle__.$name;")
+        }
+        sb.append(stripped)
+        if (!stripped.endsWith("\n")) sb.appendLine()
+        for (name in exportNames.distinct()) {
+            sb.appendLine("    window.__bundle__.$name = $name;")
+        }
+        sb.appendLine("})();")
+        return sb.toString()
+    }
+
+    /** 仅供测试用:跑一个文件过 stripModuleSyntax 后的结果 */
+    @JvmStatic
+    fun stripForTest(content: String): String = stripModuleSyntax(content)
 
     private fun stripModuleSyntax(content: String): String {
         var s = content
-        // 1) `import { X } from "Y"`  (多行支持)
+        // **重要: 所有 import/export 必须在行首 (^),MULTILINE 模式**
+        // ES module 声明都在文件顶部的行首,模板字符串/HTML 属性里的 `import`/`export`
+        // 子串不应被错误匹配(否则会吃掉模板字符串里的内容)。
+
+        // 1) `import { X } from "Y"`  (多行支持, 必须从行首)
         s = s.replace(
             Regex(
-                pattern = """import\s*\{[^}]*\}\s*from\s*["'][^"']+["'];?\s*\n?""",
+                pattern = """(?m)^import\s*\{[^}]*\}\s*from\s*["'][^"']+["'];?\s*$""",
                 option = RegexOption.DOT_MATCHES_ALL,
             ),
             "",
@@ -64,38 +117,42 @@ object JsBundler {
         // 2) `import NAME from "Y"`
         s = s.replace(
             Regex(
-                pattern = """import\s+\w+\s+from\s*["'][^"']+["'];?\s*\n?""",
+                pattern = """(?m)^import\s+\w+\s+from\s*["'][^"']+["'];?\s*$""",
             ),
             "",
         )
         // 3) `import "Y"`  (side-effect)
         s = s.replace(
             Regex(
-                pattern = """import\s*["'][^"']+["'];?\s*\n?""",
+                pattern = """(?m)^import\s*["'][^"']+["'];?\s*$""",
             ),
             "",
         )
-        // 4) `export { X };`
+        // 4) 动态 import("Y") — 在非 module <script> 里 import() 是 SyntaxError
         s = s.replace(
             Regex(
-                pattern = """^export\s*\{[^}]*\};?\s*$""",
-                option = RegexOption.MULTILINE,
+                pattern = """\bimport\s*\(\s*["'][^"']+["']\s*\)""",
             ),
             "",
         )
-        // 5) `export const|let|var|function|class NAME`
+        // 5) `export { X };`
         s = s.replace(
             Regex(
-                pattern = """^export\s+(const|let|var|function|class)\s+""",
-                option = RegexOption.MULTILINE,
+                pattern = """(?m)^export\s*\{[^}]*\};?\s*$""",
+            ),
+            "",
+        )
+        // 6) `export const|let|var|function|class NAME`
+        s = s.replace(
+            Regex(
+                pattern = """(?m)^export\s+(const|let|var|function|class)\s+""",
             ),
             "$1 ",
         )
-        // 6) `export default ...`
+        // 7) `export default ...`
         s = s.replace(
             Regex(
-                pattern = """^export\s+default\s+""",
-                option = RegexOption.MULTILINE,
+                pattern = """(?m)^export\s+default\s+""",
             ),
             "",
         )
@@ -119,7 +176,7 @@ object JsBundler {
             }
             if (content != null) {
                 val importRegex = Regex(
-                    pattern = """import\s*(?:\{[^}]*\}|\w+)?\s*from\s*["']([^"']+)["'];?""",
+                    """import\s*(?:\{[^}]*\}|\w+)?\s*from\s*["']([^"']+)["'];?""",
                 )
                 for (match in importRegex.findAll(content)) {
                     val importPath = match.groupValues[1]

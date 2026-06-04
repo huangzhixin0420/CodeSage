@@ -22,6 +22,7 @@ import { toast } from "./components/cs-toast.js";
 import { preloadMarkdown } from "./markdown.js";
 import { setLocale, getLocale, t as i18n } from "./i18n.js";
 import { Walkthrough } from "./components/cs-walkthrough.js";
+import { CommandPalette } from "./components/cs-command-palette.js";
 
 // === 全局错误边界(P1.6) ===
 window.addEventListener("error", (e) => {
@@ -129,7 +130,5 @@ window.CodeSage.walkthrough = {
   show: () => Walkthrough.show({ forceShow: true }),
 };
 window.CodeSage.openCommandPalette = () => {
-  import("./components/cs-command-palette.js").then((m) => {
-    new m.CommandPalette().open();
-  });
+  new CommandPalette().open();
 };
