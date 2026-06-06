@@ -12,7 +12,7 @@
 - T0.2 EventBatchEmitter 资源 → `EventBatchEmitterResourceTest`
 - T0.3 ConversationPersistence 资源 → `ConversationPersistenceResourceTest`
 - T0.4 retry counter LRU → `AgentErrorRecovery` + 测试
-- T0.5 KanbanWorker 并行 → `KanbanWorkerConcurrencyTest`
+- ~~T0.5 KanbanWorker 并行 → `KanbanWorkerConcurrencyTest`~~（2026-06 移除）
 - T0.6 空指针修复 → `NullSafetyTest`
 - T0.7 时间线程安全 → `ThreadSafeTimeTest`、`DateTimeFormatter`
 - T1.1 ModelCapabilities → `ModelCapabilities`、`ModelCapabilitiesTest`

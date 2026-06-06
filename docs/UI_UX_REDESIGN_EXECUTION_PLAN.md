@@ -245,7 +245,7 @@ M0 (设计评审)
 | Must have | Should have | Could have | Won't have |
 |---|---|---|---|
 | ✅ Phase 1 全部 | ✅ 动画规范(14 节) | ❌ 自定义主题(Monokai 等) | ❌ Web 端独立使用 |
-| ✅ Phase 2 全部(尤其 cs-tool-call + cs-plan) | ✅ 主题 auto/light/dark | ❌ Pinned 会话 | ❌ Kanban 完全 Web 化(本期保留 Swing) |
+| ✅ Phase 2 全部(尤其 cs-tool-call + cs-plan) | ✅ 主题 auto/light/dark | ❌ Pinned 会话 | — |
 | ✅ Phase 3 模型选择器 + 主题 + 响应式 | ✅ 命令面板 | ❌ 消息搜索 | ❌ Voice input |
 | ✅ Phase 4 全部 | ✅ 国际化(中/英) | ❌ 拖拽文件到输入 | ❌ 自定义 CSS |
 | ✅ Phase 5 全部 | ✅ walkthrough | ❌ telemetry(可选) | ❌ 多 IDE 同步 |
@@ -435,7 +435,7 @@ M0 (设计评审)
 |---|---|---|---|---|
 | D1 | 配置存储用 JSON5 还是 TOML | JSON5 | JSON5(IDE 工具链支持更好,Kotlin 有 kotlinx-serialization-json5) | Phase 4 |
 | D2 | 是否保留 Swing 聊天作为 fallback | 保留 | 保留(避免 JCEF 不可用时白屏) | Phase 1 |
-| D3 | 是否废弃 Kanban 面板(改用 Web Plan) | 保留并降级 | 本期保留,但加 deprecation banner | Phase 5 |
+| D3 | （Kanban 整体已于 2026-06 移除） | — | — | — |
 | D4 | 自定义 Web 组件 vs 引入 React | 自定义 | 自定义(50 个组件内,无依赖,符合 JCEF 体积要求) | Phase 1 |
 | D5 | 是否引入构建工具(webpack/vite) | 不引入 | 暂不引入,ESM + 文件拆分足够 | Phase 1 |
 | D6 | API Key 存储:PasswordSafe / 文件 / 环境变量 | PasswordSafe | 全部支持,默认 PasswordSafe | Phase 4 |

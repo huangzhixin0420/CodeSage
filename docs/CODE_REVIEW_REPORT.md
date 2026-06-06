@@ -136,15 +136,6 @@ private val retryCounters = ConcurrentHashMap<String, AtomicInteger>()
 // 键值累积，从不清理
 ```
 
-### 10. 顺序执行而非并行
-
-**文件**: `KanbanWorker.kt`
-```kotlin
-suspend fun executeTasks(tasks: List<KanbanTask>): List<KanbanTask> {
-    return tasks.map { executeTask(it) }  // 顺序执行
-}
-```
-
 ### 11. 缺少空值检查
 
 **文件**: `EnhancedAgentLoop.kt`
@@ -251,7 +242,7 @@ private fun formatTime(timestamp: Long): String {
 ### 本周修复 (High)
 5. 实现 WebSocket 传输
 6. 添加会话历史的分页
-7. 修复 `KanbanWorker` 并行执行
+7. ~~修复 `KanbanWorker` 并行执行~~（Kanban 整体移除，此项失效）
 8. 添加空值检查
 
 ### 下月计划 (Medium)

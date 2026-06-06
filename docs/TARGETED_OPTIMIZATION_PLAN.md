@@ -28,7 +28,7 @@
 | CodeReview #2 | `EventBatchEmitter` scope 永不取消 | Critical | T0.2 |
 | CodeReview #3 | `ConversationPersistence` executor 不关闭、renameTo 静默失败 | Critical | T0.3 |
 | CodeReview #4 | `retryCounters` 无界增长 | High | T0.4 |
-| CodeReview #5 | `KanbanWorker.executeTasks` 顺序而非并行 | High | T0.5 |
+| ~~CodeReview #5~~ | ~~`KanbanWorker.executeTasks` 顺序而非并行~~ | — | (2026-06 Kanban 移除) |
 | CodeReview #6 | `EventHistory.query` O(n) 全量扫描 | High | T7.1 |
 | CodeReview #7 | `EventBatchEmitter` 缓冲区满抛异常 | High | T0.2 |
 | CodeReview #8 | `EnhancedAgentLoop` 空指针风险 | High | T0.6 |
@@ -150,11 +150,11 @@ fun getOrCreateSession(): AgentSession {
 
 ---
 
-### T0.5 修复 KanbanWorker 顺序执行
+### ~~T0.5 修复 KanbanWorker 顺序执行~~（Kanban 整体已移除）
 
 **文件**：
-- `src/main/kotlin/com/codesage/agent/multiagent/KanbanWorker.kt`
-- `src/main/kotlin/com/codesage/agent/multiagent/KanbanOrchestrator.kt`
+- ~~`src/main/kotlin/com/codesage/agent/multiagent/KanbanWorker.kt`~~（已删除）
+- ~~`src/main/kotlin/com/codesage/agent/multiagent/KanbanOrchestrator.kt`~~（已删除）
 
 **变更**：
 - `executeTasks(tasks)` 改为 `coroutineScope { tasks.map { async { executeTask(it) } }.awaitAll() }`
@@ -526,20 +526,20 @@ fun getOrCreateSession(): AgentSession {
 
 ---
 
-### T4.5 Kanban 真实 LLM 分解
+### ~~T4.5 Kanban 真实 LLM 分解~~（Kanban 整体已移除）
 
 **文件**：
-- `src/main/kotlin/com/codesage/agent/multiagent/KanbanOrchestrator.kt`（`decomposeToKanban` 改造）
+- ~~`src/main/kotlin/com/codesage/agent/multiagent/KanbanOrchestrator.kt`（`decomposeToKanban` 改造）~~（已删除）
 - 新增 `LLMTaskDecomposer` 替代启发式 split
 
 **变更**：
-- 用 LLM 分解复杂任务为 KanbanTask 列表（5–20 个）
+- ~~用 LLM 分解复杂任务为 KanbanTask 列表（5–20 个）~~（已撤回）
 - 输出格式：JSON `{"tasks": [{"description": "...", "toolset": "dev|test|research", "estimated_minutes": 5}]}`
 - 解析失败时降级到现有启发式
 - 缓存：相同任务描述的分解结果 24h 缓存
 
 **验收**：
-- [ ] 单元测试：典型需求"重构用户登录模块"分解为 4–8 个 KanbanTask
+- [ ] ~~单元测试：典型需求"重构用户登录模块"分解为 4–8 个 KanbanTask~~（已撤回）
 - [ ] 性能：分解延迟 < 3s（单次 LLM 调用）
 
 ---

@@ -56,7 +56,7 @@
 | 11 | 消息发送 | 代码审查：sendMessage() / handleKeydown() 未修改核心逻辑 | ✅ 通过 | chat.html: sendMessage / handleKeydown |
 | 12 | 模型选择 | 代码审查：setAvailableModels / selectModel / renderModelDropdown 未修改 | ✅ 通过 | chat.html: Model Selector 区域 |
 | 13 | 主题切换 | 代码审查：toggleTheme / setTheme / initTheme 未修改 | ✅ 通过 | chat.html: Theme 区域 |
-| 14 | Kanban 面板 | 代码审查：AgentToolWindowPanel 中 tabbedPane 仍包含 Kanban 标签页 | ✅ 通过 | AgentToolWindowPanel.kt: tabbedPane.addTab("📋 Kanban") |
+| 14 | ~~Kanban 面板~~ | （Kanban 整体已移除，此条作废） | 🗑️ | — |
 
 ---
 

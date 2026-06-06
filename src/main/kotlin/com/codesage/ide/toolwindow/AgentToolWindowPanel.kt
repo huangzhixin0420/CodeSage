@@ -3,9 +3,6 @@ package com.codesage.ide.toolwindow
 import com.codesage.agent.core.AgentCore
 import com.codesage.agent.core.AgentSession
 import com.codesage.agent.core.AgentState
-import com.codesage.agent.core.SubAgentExecutor
-import com.codesage.agent.multiagent.KanbanOrchestrator
-import com.codesage.ide.ui.components.kanban.KanbanBoardPanel
 import com.codesage.ide.ui.web.JCEFChatPanel
 import com.codesage.ide.settings.SettingsChangeListener
 import com.codesage.plugin.CodeSageProjectService
@@ -18,7 +15,6 @@ import com.intellij.util.ui.JBUI
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collectLatest
 import javax.swing.JPanel
-import javax.swing.JTabbedPane
 
 /**
  * Agent工具窗口面板（JCEF Web UI 重构版）
@@ -36,8 +32,6 @@ class AgentToolWindowPanel(
     private val logger = Logger.getLogger<AgentToolWindowPanel>()
 
     private lateinit var chatPanel: JCEFChatPanel
-    private lateinit var kanbanPanel: KanbanBoardPanel
-
     private var agentCore: AgentCore? = null
     private var scope: CoroutineScope? = null
 
@@ -66,17 +60,7 @@ class AgentToolWindowPanel(
         // 聊天面板 (JCEF Web UI，内部自带会话侧边栏)
         chatPanel = JCEFChatPanel(project)
 
-        // Kanban 面板
-        kanbanPanel = KanbanBoardPanel(null)
-
-        // 标签页面板
-        val tabbedPane = JTabbedPane().apply {
-            addTab("💬 Chat", chatPanel)
-            addTab("📋 Kanban", kanbanPanel)
-            font = JBUI.Fonts.label()
-        }
-
-        add(tabbedPane, java.awt.BorderLayout.CENTER)
+        add(chatPanel, java.awt.BorderLayout.CENTER)
     }
 
     private fun initializeAgent() {
@@ -154,10 +138,6 @@ class AgentToolWindowPanel(
             // Initialize model selector UI
             refreshModelSelector()
             logger.info("chatPanel initialized successfully")
-
-            // 初始化 Kanban 面板（现在agentCore已可用）
-            val kanbanOrchestrator = KanbanOrchestrator(core, SubAgentExecutor(core))
-            kanbanPanel.setOrchestrator(kanbanOrchestrator)
 
             // 监听 Agent 状态
             scope?.launch {

@@ -266,7 +266,7 @@ class SqliteVectorStore : VectorStore  // 基于SQLite-VSS（无额外依赖）
 Agent能够自主规划、执行、验证多步任务，人类仅在关键决策点介入。
 
 ### 现有架构融合点
-- `KanbanOrchestrator`：已有任务分解和调度
+- ~~`KanbanOrchestrator`~~（2026-06 移除）：任务分解和调度
 - `TaskPlanner`：已有任务规划
 - `ToolGuardrails`：已有安全控制
 - `ExecutionTracer`：已有执行追踪

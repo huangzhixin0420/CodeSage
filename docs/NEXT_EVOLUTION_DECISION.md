@@ -36,9 +36,9 @@
 | Phase 1 | Agent不死 | EnhancedAgentLoop + AgentErrorRecovery + IterationBudget | ✅ 已完成 |
 | Phase 2 | Agent记得 | MemoryProvider + ContextCompressor + TokenEstimator | ✅ 已完成 |
 | Phase 3 | Agent成长 | DynamicSkillRegistry + SkillCurator + SkillProvenance | ✅ 已完成 |
-| Phase 4 | Agent分工 | SubAgentExecutor + KanbanOrchestrator + delegate_task | ✅ 已完成 |
+| Phase 4 | Agent分工 | SubAgentExecutor + delegate_task（Kanban 部分于 2026-06 移除） | ✅ 已完成 |
 | 优化1 | 进度可视 | SubAgentProgressPanel + 流式事件 | ✅ 已完成 |
-| 优化2 | 看板管理 | KanbanBoardPanel + KanbanTaskCard | ✅ 已完成 |
+| 优化2 | 看板管理 | _（2026-06 移除：未达价值预期）_ | 🗑️ |
 | 优化3 | 工具扩充 | 6 → 24 个 IDE 工具 | ✅ 已完成 |
 | 优化4 | MCP生态 | MCPServerManager + 配置持久化集成 | ✅ 已完成 |
 | 优化5 | Prompt工程 | PromptTemplate + PromptAssembler + 6种角色 | ✅ 已完成 |
@@ -212,12 +212,12 @@
 |------|------|
 | **代号** | AUTO |
 | **预估工作量** | 3周 |
-| **依赖** | KanbanOrchestrator、TaskPlanner、AgentErrorRecovery |
+| **依赖** | SubAgentExecutor、TaskPlanner、AgentErrorRecovery |
 | **竞品参考** | Claude Code（命令行自主执行） |
 
 **为什么排第二**：
 - 复杂任务从手动多步进化到"一键执行"
-- 已有Kanban/SubAgent/ErrorRecovery/Guardrails全套基础
+- 已有SubAgent/ErrorRecovery/Guardrails全套基础
 - Human-in-the-loop设计降低风险，企业可接受
 
 **核心交付**：

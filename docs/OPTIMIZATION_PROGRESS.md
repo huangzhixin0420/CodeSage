@@ -128,8 +128,8 @@
 |------|------|
 | `agent/tools/ToolRegistry.kt` | 新增 `delegate_task` 工具（task_description, toolset, max_iterations, context_files） |
 | `agent/core/SubAgentExecutor.kt` | 子 Agent 执行器：隔离 context、按 toolset 加载工具、进度回调、并行 spawn |
-| `agent/multiagent/KanbanOrchestrator.kt` | Kanban 调度器：任务分解、分配、状态追踪、看板渲染、结果汇总 |
-| `agent/multiagent/KanbanWorker.kt` | Kanban 执行器：专注执行、异常上报、不自作主张 |
+| ~~`agent/multiagent/KanbanOrchestrator.kt`~~ | ~~Kanban 调度器~~（2026-06 移除） |
+| ~~`agent/multiagent/KanbanWorker.kt`~~ | ~~Kanban 执行器~~（2026-06 移除） |
 | `agent/core/EnhancedAgentLoop.kt` | 集成 `delegate_task` 工具路由到 SubAgentExecutor |
 | `agent/core/AgentCore.kt` | 自动初始化 SubAgentExecutor 并注入到对话循环 |
 
@@ -137,7 +137,7 @@
 
 1. **子 Agent 完全隔离**：`SubAgentExecutor.spawn()` 创建新的 `AgentCore` 实例，独立 session ID，独立上下文，避免污染父 Agent。
 2. **Toolset 分组加载**：`createToolRegistryForToolset()` 支持 dev/research/test/browser 等工具集，子 Agent 只加载所需工具。
-3. **Kanban 只做调度**：`KanbanOrchestrator` 不执行任何实际工作，只维护 todo store 和任务生命周期；`KanbanWorker` 通过 `SubAgentExecutor` 执行具体任务。
+3. ~~**Kanban 只做调度**：~~（Kanban 整体移除，此条作废）
 4. **delegate_task 是一等工具**：模型可自主决定何时 spawn 子 Agent，增强 Agent 的自主协作能力。
 
 ### 测试状态
@@ -167,7 +167,7 @@
 
 ---
 
-## 优化2: Kanban看板面板 — ✅ 已完成
+## ~~优化2: Kanban看板面板~~ — 🗑️ 已撤回 (2026-06)
 
 **完成时间**: 2026-05-24
 
@@ -175,8 +175,8 @@
 
 | 文件 | 说明 |
 |------|------|
-| `ide/ui/components/kanban/KanbanBoardPanel.kt` | 看板面板：三泳道布局（待办/进行中/已完成），JBSplitter 分栏 |
-| `ide/ui/components/kanban/KanbanTaskCard.kt` | 任务卡片：优先级徽章、负责人标签、可点击展开详情 |
+| ~~`ide/ui/components/kanban/KanbanBoardPanel.kt`~~ | ~~看板面板~~（已删除） |
+| ~~`ide/ui/components/kanban/KanbanTaskCard.kt`~~ | ~~任务卡片~~（已删除） |
 | `ide/ui/AgentToolWindowPanel.kt` | 集成看板标签页，支持刷新和清空操作 |
 
 ### 测试状态
@@ -376,9 +376,9 @@
 | **Phase 1** | Agent 不死 | EnhancedAgentLoop + AgentErrorRecovery + IterationBudget |
 | **Phase 2** | Agent 记得 | MemoryProvider + ContextCompressor + TokenEstimator |
 | **Phase 3** | Agent 成长 | DynamicSkillRegistry + SkillCurator + SkillProvenance |
-| **Phase 4** | Agent 分工 | SubAgentExecutor + KanbanOrchestrator + delegate_task |
+| **Phase 4** | Agent 分工 | SubAgentExecutor + delegate_task |
 | **优化1** | 进度可视 | SubAgentProgressPanel + 流式事件 |
-| **优化2** | 看板管理 | KanbanBoardPanel + KanbanTaskCard |
+| **优化2** | 看板管理 | _（2026-06 撤回）_ |
 | **优化3** | 工具扩充 | 6 → 24 个 IDE 工具 |
 | **优化4** | MCP生态 | MCPServerManager + 配置持久化集成 |
 | **优化5** | Prompt工程 | PromptTemplate + PromptAssembler + 6种角色 |

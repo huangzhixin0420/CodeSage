@@ -48,7 +48,7 @@ AgentToolWindowPanel
 │   ├── SessionSidebarPanel (Swing, 200px, JBList)
 │   └── JTabbedPane
 │       ├── JCEFChatPanel (Web UI)
-│       └── KanbanBoardPanel (Swing)
+│       └── (KanbanBoardPanel 2026-06 移除)
 ```
 
 **After:**
@@ -56,7 +56,7 @@ AgentToolWindowPanel
 AgentToolWindowPanel
 ├── JTabbedPane
 │   ├── JCEFChatPanel (Web UI，内部自带 Session Sidebar)
-│   └── KanbanBoardPanel (Swing)
+│   └── (KanbanBoardPanel 2026-06 移除)
 ```
 
 ### 3.2 Web UI 内部布局
@@ -225,7 +225,7 @@ app-container
 | 11 | 消息发送 | 输入文字后 Enter / 点击发送按钮，消息正常发送并流式输出 |
 | 12 | 模型选择 | 模型下拉菜单正常加载、切换 |
 | 13 | 主题切换 | 亮/暗主题切换正常，侧边栏同步 |
-| 14 | Kanban 面板 | Kanban 标签页正常显示，不受布局变更影响 |
+| 14 | ~~Kanban 面板~~ | （Kanban 整体已移除，此条作废） |
 
 ### 6.3 性能验收
 

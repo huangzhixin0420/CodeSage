@@ -94,7 +94,7 @@
 |------|--------------|------------|---------|
 | **执行模式** | `MultiAgentOrchestrator` 串行执行（Planner → Coder → Reviewer） | `delegate_task` 工具：任意 Agent 可 spawn 隔离子 Agent，并行工作流 | 🔴 严重 |
 | **环境隔离** | 共享同一个 `AgentCore` 实例 | 子 Agent 有独立 session、独立 context、独立工具集；通过文件状态注册表共享结果 | 🔴 严重 |
-| **Kanban 模式** | ❌ 无 | `kanban_orchestrator` + `kanban_worker`：Orchestrator 只调度不干活，Worker 专注执行；生命周期自动注入 system prompt | 🟡 中等 |
+| **Kanban 模式** | ❌ 无 | （已于 2026-06 移除，未达价值预期） | — |
 | **任务生命周期** | 简单 `Task`/`SubTask` 数据结构 | 完整的 todo store：从对话历史中 hydrate、状态追踪、完成检测 | 🟡 中等 |
 | **结果聚合** | 字符串拼接 | 父 Agent 通过 `tool_progress_callback` 实时观察子 Agent 推理过程 | 🟡 中等 |
 
@@ -521,33 +521,6 @@ class SubAgentExecutor {
 }
 ```
 
-#### 2.4.3 Kanban 模式（可选高级特性）
-
-```kotlin
-// KanbanOrchestrator: 只做调度，不执行具体工作
-class KanbanOrchestrator {
-    val systemPrompt = """
-        You are a Kanban Orchestrator. Your rules:
-        1. NEVER do the work yourself — only delegate to workers
-        2. Maintain a todo list of all pending tasks
-        3. Track worker progress via delegate_task results
-        4. Reconcile and hand off between workers
-        5. Own the task lifecycle: create → assign → verify → close
-    """
-}
-
-// KanbanWorker: 专注执行，不自作主张
-class KanbanWorker {
-    val systemPrompt = """
-        You are a Kanban Worker. Your rules:
-        1. ONLY execute tasks assigned by the orchestrator
-        2. Report progress and blockers clearly
-        3. Do NOT create new tasks — escalate to orchestrator
-        4. Complete assigned task fully before returning
-    """
-}
-```
-
 ---
 
 ## 三、与 AI 沟通实现目标的策略
@@ -649,7 +622,7 @@ and this project. Use memory_search if you need to recall past decisions.]
 - ✅ `delegate_task` 工具
 - ✅ `SubAgentExecutor`（隔离执行环境）
 - ✅ 工具集（toolset）分组加载
-- ✅ 基础 Kanban 模式支持
+- ❌ ~~基础 Kanban 模式支持~~（2026-06 撤回，未达价值预期）
 
 ### 里程碑 M5（持续）：生态建设
 - 🔄 扩充内置工具到 20+

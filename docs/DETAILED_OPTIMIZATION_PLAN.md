@@ -20,14 +20,14 @@
 
 ---
 
-### 优化2: UI层集成 — Kanban看板面板
-**目标**: 在 IDE 工具窗口中提供 Kanban 看板视图
+### ~~优化2: UI层集成 — Kanban看板面板~~（2026-06 移除）
+**目标**: 在 IDE 工具窗口中提供 Kanban 看板视图（已撤回）
 **文件**:
-- `ide/ui/components/kanban/KanbanBoardPanel.kt` — 新组件：看板面板
-- `ide/ui/components/kanban/KanbanTaskCard.kt` — 任务卡片
+- ~~`ide/ui/components/kanban/KanbanBoardPanel.kt` — 新组件：看板面板~~（已删除）
+- ~~`ide/ui/components/kanban/KanbanTaskCard.kt` — 任务卡片~~（已删除）
 - `ide/toolwindow/AgentToolWindowPanel.kt` — 集成看板标签页
 **验收标准**:
-- 工具窗口新增 "Kanban" 标签页
+- ~~工具窗口新增 "Kanban" 标签页~~（已撤回）
 - 可拖拽/点击更新任务状态
 - 显示 BACKLOG/IN_PROGRESS/DONE 三列
 
@@ -137,7 +137,7 @@
 - `src/test/kotlin/...` — 各组件单元测试
 **验收标准**:
 - 每个新工具至少 2 个测试用例
-- Kanban/SubAgent 组件测试覆盖核心路径
+- SubAgent 组件测试覆盖核心路径
 - 整体测试数 > 130，0 失败
 
 ---
@@ -146,7 +146,7 @@
 
 ```
 P0: 优化1 (UI子Agent进度) → 优化4+5 (扩充工具) → 优化6 (Guardrails)
-P1: 优化2 (Kanban面板) → 优化3 (Thinking增强) → 优化7 (流式工具)
+P1: 优化3 (Thinking增强) → 优化7 (流式工具)（优化2 Kanban 面板 已撤回）
 P2: 优化8 (缓存持久化) → 优化9 (事件增强) → 优化10 (测试覆盖)
 ```
 
@@ -155,8 +155,8 @@ P2: 优化8 (缓存持久化) → 优化9 (事件增强) → 优化10 (测试覆
 | 优化项 | 状态 | 完成时间 | 测试数 |
 |--------|------|---------|--------|
 | 优化1: 子Agent进度可视化 | ✅ 已完成 | 2026-05-24 | 115 |
-| 优化2: Kanban看板面板 | ⏳ 待开始 | - | - |
-| 优化2: Kanban看板面板 | ⏳ 待开始 | - | - |
+| 优化2: Kanban看板面板 | 🗑️ 已撤回 (2026-06) | - | - |
+| 优化2: Kanban看板面板 | 🗑️ 已撤回 (2026-06) | - | - |
 | 优化3: Thinking/工具可视化增强 | ⏳ 待开始 | - | - |
 | 优化4: 文件/搜索类工具(8个) | ⏳ 待开始 | - | - |
 | 优化5: Git/终端/网络类工具(8个) | ⏳ 待开始 | - | - |

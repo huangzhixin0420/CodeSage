@@ -641,8 +641,8 @@ OkHttp 会规范化 URL 但 fragment 在探测中被忽略，攻击者用 `?` �
 
 `srcFile.renameTo(dstFile)` 在 Linux 跨 mount point 失败时返回 false 但**不抛异常**，工具报告 `moved=true` 但实际位置未变。
 
-### M21. `KanbanOrchestrator` 的并发 worker 数量无限制
-**文件**: `src/main/kotlin/com/codesage/agent/multiagent/KanbanOrchestrator.kt`
+### ~~M21. `KanbanOrchestrator` 的并发 worker 数量无限制~~（2026-06 已移除）
+**文件**: `src/main/kotlin/com/codesage/agent/multiagent/KanbanOrchestrator.kt`（已删除）
 
 可被 LLM 配置成 100 并发 → 进程 OOM。
 

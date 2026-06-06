@@ -41,7 +41,7 @@
 |---|---|---|
 | Web UI(主) | `src/main/resources/webui/chat.html`(3407 行,单文件 HTML+CSS+JS) | 现代感强,Tailwind+highlight.js,设计系统初具雏形 |
 | Web UI 桥 | `JCEFChatPanel.kt`(1121 行) | 协议完善,有 JCEF fallback 机制 |
-| Swing UI(备) | `ChatPanel.kt`、`AgentTurnPanel.kt`、`ChatMessage.kt`、`InputPanel.kt`、`ThinkingIndicator.kt`、`ToolCallPanel.kt`、`SubAgentProgressPanel.kt`、`SessionSidebarPanel.kt`、`KanbanBoardPanel.kt`、`RoundedPanel.kt` | 自行实现圆角、动画、tooltip,无设计系统,实现成本高但质感参差 |
+| Swing UI(备) | `ChatPanel.kt`、`AgentTurnPanel.kt`、`ChatMessage.kt`、`InputPanel.kt`、`ThinkingIndicator.kt`、`ToolCallPanel.kt`、`SubAgentProgressPanel.kt`、`SessionSidebarPanel.kt`、`RoundedPanel.kt` | 自行实现圆角、动画、tooltip,无设计系统,实现成本高但质感参差 |
 | 配置面板 | `ProviderSettingsConfigurable.kt`(686 行)、`BudgetSettingsPanel.kt`、`PluginSettingsConfigurable.kt` | 嵌在 IDE Settings → Tools 下的 3 个 Tab,模型列表/预算配置混在一个页面 |
 | 配置存储 | `PluginConfig.kt`(JCEF `PersistentStateComponent`,存 `CodeSagePlugin.xml`)+ IntelliJ `PasswordSafe` | API Key 走系统密钥链,其余走 IDE 配置,无法脱离 IDE 使用 |
 | 数据模型 | `AgentStreamEvent.kt`(26 个事件,涵盖 text/thinking/tool/subagent/budget/plan/context/mode/migration) | 流式事件协议完备,**但 UI 端消费不充分** |
@@ -57,7 +57,7 @@
 | P0-4 | **子 Agent 展示降级** | `SubAgentProgressPanel` 仅当外部传 `SubAgent*` 事件才显示;`JCEFChatPanel` 中 `SubAgentProgress` 被并入 `updateThinking("[子Agent] ...")` | 子 Agent 是 CodeSage 卖点,却用一行文本糊弄 |
 | P0-5 | **Todo/Plan 渲染简陋** | 虽有 `PlanGenerated/Approved/Modified/Rejected` 完整事件,但 `onPlanGenerated` 把步骤渲染成 `<pre>` 普通文本 | 计划是 Agent 能力的核心可视化,目前形同虚设 |
 | P0-6 | **思考过程不可控** | `CollapsibleThinkingPanel` 默认展开,长思考时全屏被刷屏 | Kimi CLI 的「详情/折叠」开关值得借鉴 |
-| P0-7 | **Swing 与 Web 风格割裂** | `AgentTurnPanel` 558 行 Swing 组件与 chat.html 同一时刻可能在不同位置渲染 | Kanban / 未来扩展难以复用 |
+| P0-7 | **Swing 与 Web 风格割裂** | `AgentTurnPanel` 558 行 Swing 组件与 chat.html 同一时刻可能在不同位置渲染 | 未来扩展难以复用 |
 | P1-1 | 模型下拉长名截断(`length>14 ? substring(0,12)+'...'`),且分组后无搜索 | `renderModelDropdown` | 模型多时无法快速定位 |
 | P1-2 | 流式渲染:Web UI 用纯文本 `streamSpan` 累积,Markdown 需等 `onTurnComplete` 才解析,中间过程无格式化 | `onTextDelta` | 长代码/表格体验差 |
 | P1-3 | 工具卡片最大 500px 高度截断,长输出被吞 | `.tool-content { max-height: 500px }` | |
@@ -73,7 +73,7 @@
 | P2-3 | 无消息回到底部按钮 | 无 | |
 | P2-4 | 无消息搜索 | 无 | |
 | P2-5 | 复制反馈(Toast)位置在底部中央,与输入框冲突 | `showToast` | |
-| P2-6 | Kanban 面板与对话分离,无法在对话内嵌 todo | `KanbanBoardPanel` | |
+| (历史) P2-6 | Kanban 面板与对话分离 | `KanbanBoardPanel` | （2026-06 已移除） |
 
 ### 1.3 代码/架构问题
 
@@ -126,7 +126,7 @@
 
 ## 三、设计原则
 
-1. **统一设计语言**:全界面 Web UI 化(主对话、配置、Plan),Swing 仅保留不可避免的 IDE 集成层(Kanban、Tool Window 容器)
+1. **统一设计语言**:全界面 Web UI 化(主对话、配置、Plan),Swing 仅保留不可避免的 IDE 集成层(Tool Window 容器)
 2. **流即结构**:AI 响应 = 一棵树(Thinking → Tool → SubAgent → Todo → Text),不是平铺字符串
 3. **可解释性优先**:每个工具调用、每个子 Agent、每条计划都要让用户「看得见在做什么」
 4. **可恢复性**:所有破坏性操作(删除、清空、超出预算)都有 inline 确认,无系统弹窗
@@ -149,9 +149,9 @@ ToolWindow                                ToolWindow
 │   │                                      │   ├── 会话列表(时间分组)
 │   └── JCEFChatPanel (Web)               │   └── 底栏:Settings 入口
 │       └── chat.html                      └── TabbedPane
-└── KanbanBoardPanel (Swing)                   ├── ChatPanel (Web,统一)
+└── (Kanban 已移除)                             ├── ChatPanel (Web,统一)
                                                 └── [扩展] PlanPanel (Web)
-                                                 [扩展] KanbanPanel (迁移到 Web 或保持 Swing)
+                                                 [扩展] (Kanban 已移除)
 
 Settings (IDE)                            Settings (独立)
 ├── CodeSage                              ├── ~/codesage/settings.json (主)
@@ -300,7 +300,7 @@ API Key 仍存 IntelliJ `PasswordSafe`,`settings.json` 只存 `apiKeyRef`,启动
 
 废弃(保留兼容但不再使用):
   src/main/kotlin/com/codesage/ide/ui/components/chat/
-  src/main/kotlin/com/codesage/ide/ui/components/kanban/
+  ~~src/main/kotlin/com/codesage/ide/ui/components/kanban/~~ (2026-06 移除)
   src/main/kotlin/com/codesage/ide/settings/
 ```
 
@@ -595,11 +595,6 @@ API Key 仍存 IntelliJ `PasswordSafe`,`settings.json` 只存 `apiKeyRef`,启动
 - 进度条:4 步 1 完成 → `1/4 · 25%`,在 header 显示
 - 全部完成时,Plan 卡片淡出,折叠为 `Plan completed · 4/4 · 18.2s`
 
-### 9.5 与 Kanban 的关系
-
-- Plan = 会话内临时 todo(轻量,自动产生)
-- Kanban = 跨会话任务(重量,需手动管理)
-- 不再让两者功能重叠;Kanban 面板保留作为高级视图
 
 ---
 

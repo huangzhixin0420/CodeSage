@@ -70,7 +70,7 @@
 | T3 RAG | ✅ | 第一轮 |
 | T4.1 / T4.2 / T4.4 | ✅ | 第一轮 |
 | T4.3 Planner 解析验证 | ✅ | 第二轮 |
-| T4.5 Kanban LLM 分解 | ✅ | 第二轮 |
+| ~~T4.5 Kanban LLM 分解~~ | 🗑️ (2026-06 撤回) | — |
 | T5.1 / T5.2 | ✅ | 第一轮 |
 | T5.3 结构化 Code Insight | ✅ | 第二轮 |
 | T5.4 本地审查引擎 | ✅ | 第一轮 |
@@ -93,7 +93,7 @@
 | 任务 | 状态 | 新增代码 | 新增测试 | 验收 |
 |------|------|---------|---------|------|
 | **T4.3** Planner 输出结构化解析验证 | ✅ 已完成 | 新增 `StructuredPlanParser.kt`：YAML/JSON 解析 + 严格验证（依赖引用、循环检测、id 唯一）+ 区分"解析错误"与"验证错误"+ Markdown 注释剥离 | `StructuredPlanParserTest.kt`（18 个测试） | 合法 YAML → DagTaskPlan；循环依赖识别并直接返回 Failure（不 fallback 到 NL）；markdown 包裹剥离；JSON 解析；自然语言 fallback |
-| **T4.5** Kanban 真实 LLM 分解 | ✅ 已完成 | 新增 `LLMTaskDecomposer` 类：注入式 LLM 调用 + 24h 缓存（按 description hash）+ toolset/estimated_minutes 分类 + maxTasks 限制；`KanbanOrchestrator.decomposeToKanban` 接受 `llmDecomposer` 参数（默认 null 走启发式） | `LLMTaskDecomposerTest.kt`（18 个测试） | 典型需求分解 3-4 个 KanbanTask；缓存命中瞬时；< 3s 延迟；LLM 失败/解析失败回退到启发式 |
+| ~~**T4.5** Kanban 真实 LLM 分解~~ | 🗑️ 撤回 (2026-06) | （随 KanbanOrchestrator 整体移除，`LLMTaskDecomposer` 同步删除） | — | — |
 | **T5.3** 结构化 Code Insight 工具补全 | ✅ 已完成 | 增强 `CodeInsightExecutor.analyzeSymbol`：附加 `complexity` / `parameter_count` / `doc_status` / `visibility` / `callers` / `callees` 结构化字段；新增 `enrichSymbolJson` + `findCallees` 辅助方法 | （沿用现有 `CodeInsightExecutorTest`） | 编译通过；字段正确填充；callers/callees 启发式提取 |
 | **T7.2** 工具调用追踪关联 | ✅ 已完成 | `ToolExecutor` 接受 `tracer` + `traceContext` 可选参数；每次 tool 调用创建 child span，结束 span 时记录 duration / success/error/cancelled；AgentCore 注入 tracer 到 ToolExecutor | `ToolCallTracingTest.kt`（9 个测试） | Span 生命周期完整；多 span 嵌套；事件记录；向后兼容（tracer=null 不抛） |
 | **T7.3** Observability 面板 UI | ⏸  暂不实现 | 属于纯 UI 任务；本轮聚焦 backend 集成 | — | — |
@@ -111,7 +111,7 @@
 ## 第二轮新增源文件
 
 - `agent/planner/StructuredPlanParser.kt`
-- `agent/multiagent/KanbanOrchestrator.kt`（扩展，新增 `LLMTaskDecomposer`）
+- ~~`agent/multiagent/KanbanOrchestrator.kt`（扩展，新增 `LLMTaskDecomposer`）~~（已删除）
 
 ## 第二轮修改源文件
 
@@ -134,7 +134,7 @@
 3. 只有 `parseAttempted=false`（解析本身失败）才继续尝试 JSON / NL
 
 ### T4.5 — LLM 分解器与启发式并存
-- `decomposeToKanban` 默认走启发式（保持现有行为）
+- ~~`decomposeToKanban` 默认走启发式（保持现有行为）~~（方法已删除）
 - 传 `llmDecomposer` 时优先 LLM；LLM 失败/空结果时自动回退
 - 缓存按 description 的 hash（normalize 后），case/whitespace 不敏感
 - 24h TTL + `pruneExpired` 防止无界增长
@@ -263,7 +263,7 @@ Tests: 796, Skipped: 0, Failures: 0, Errors: 0
 
 - T2.1 / T2.2 / T3 / T5.1 / T5.2 / T6.x：先前已实现（在 OPTIMIZATION_PROGRESS.md 中），本次未涉及
 - LLM 驱动的 Planner 输出结构化解析（T4.3 之前已部分实现，本次未重做）
-- Kanban 真实 LLM 分解（T4.5）：未实现（属于深度优化）
+- ~~Kanban 真实 LLM 分解（T4.5）：未实现（属于深度优化）~~（已撤回）
 - 远程 MCP marketplace 拉取：未实现（保持零外部依赖 + 隐私）
 - T7.3 Observability 面板 UI：未实现（属于 UI 部分，本期聚焦 backend）
 - T7.2 Tool call 追踪关联：未实现（已在 EventHistory 中预留 typeIndex 支持）

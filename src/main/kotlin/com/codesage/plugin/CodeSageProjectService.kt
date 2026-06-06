@@ -3,7 +3,6 @@ package com.codesage.plugin
 import com.codesage.agent.core.AgentCore
 import com.codesage.agent.core.AgentConfig
 import com.codesage.agent.context.ContextManager
-import com.codesage.agent.multiagent.MultiAgentOrchestrator
 import com.codesage.agent.planner.TaskPlanner
 import com.codesage.agent.tools.SkillToolAdapter
 import com.codesage.shared.config.PluginConfig
@@ -20,7 +19,6 @@ class CodeSageProjectService(private val project: Project) {
     private val logger = Logger.getLogger<CodeSageProjectService>()
 
     val agentCore: AgentCore
-    val multiAgentOrchestrator: MultiAgentOrchestrator
 
     init {
         logger.info("Initializing CodeSage project service for: ${project.name}")
@@ -42,8 +40,6 @@ class CodeSageProjectService(private val project: Project) {
             project = project,
             skillToolAdapter = skillToolAdapter
         )
-
-        multiAgentOrchestrator = MultiAgentOrchestrator(agentCore)
 
         val config = PluginConfig.getInstance()
         agentCore.initialize(
