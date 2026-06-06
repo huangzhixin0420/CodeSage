@@ -149,7 +149,6 @@ class EventHistory(private val maxEvents: Int = MAX_EVENTS) {
             is AgentStreamEvent.Thinking -> event.message
             is AgentStreamEvent.Error -> event.message
             is AgentStreamEvent.ToolCallResult -> "${event.toolName}:${event.success}"
-            is AgentStreamEvent.BudgetStatus -> event.status
             else -> null
         }
     }

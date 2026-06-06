@@ -20,7 +20,9 @@ enum class Role {
 data class ToolCall(
     val id: String,
     val name: String,
-    val arguments: String  // JSON string
+    val arguments: String,  // JSON string
+    val summary: String? = null,  // 简短说明(去掉 "Running X..." 重复)
+    val icon: String? = null,     // 工具专属 FA 图标 class,比如 "fas fa-eye"
 )
 
 /**
@@ -79,6 +81,11 @@ data class ToolProperty(
 
 /**
  * 统一消息结构
+ *
+ * [userLanguage] 是可选的 BCP-47 语言标签(例 "zh-CN" / "en-US"),由前端在
+ * 发送 user message 时附带。Agent 层会把它拼进系统提示,要求模型用相同
+ * 语言回答用户。如果为 null,则按 PluginConfig/SettingsRepository 里
+ * `ui.language` 的当前值兜底。
  */
 @Serializable
 data class Message(
@@ -86,10 +93,13 @@ data class Message(
     val content: String,
     val name: String? = null,
     val toolCalls: List<ToolCall>? = null,
-    val toolCallId: String? = null
+    val toolCallId: String? = null,
+    val userLanguage: String? = null,
 ) {
     companion object {
-        fun userMessage(content: String) = Message(role = Role.USER, content = content)
+        fun userMessage(content: String, userLanguage: String? = null) =
+            Message(role = Role.USER, content = content, userLanguage = userLanguage)
+
         fun systemMessage(content: String) = Message(role = Role.SYSTEM, content = content)
         fun assistantMessage(content: String, toolCalls: List<ToolCall>? = null) =
             Message(role = Role.ASSISTANT, content = content, toolCalls = toolCalls)

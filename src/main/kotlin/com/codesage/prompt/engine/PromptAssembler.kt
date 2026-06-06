@@ -29,6 +29,9 @@ class PromptAssembler(
 
     /**
      * 组装上下文
+     *
+     * [userLanguage] 是 BCP-47 标签(例 "zh-CN" / "en-US")。如果非空,
+     * 会在系统提示中追加一段"User Language",要求模型用相同语言回答。
      */
     data class AssemblyContext(
         val role: PromptRole = PromptRole.ASSISTANT,
@@ -39,7 +42,8 @@ class PromptAssembler(
         val hasMemory: Boolean = false,
         val hasSubAgent: Boolean = false,
         val hasMCP: Boolean = false,
-        val customVars: Map<String, Any> = emptyMap()
+        val customVars: Map<String, Any> = emptyMap(),
+        val userLanguage: String? = null,
     )
 
     init {
@@ -84,6 +88,14 @@ class PromptAssembler(
             context.projectFramework?.let {
                 builder.appendLine("Framework: $it")
             }
+            builder.appendLine()
+        }
+
+        // 用户语言 — 告诉模型用用户的语言回答
+        context.userLanguage?.takeIf { it.isNotBlank() }?.let { lang ->
+            builder.appendLine("## User Language")
+            builder.appendLine("The user is communicating in `$lang`. ")
+                .appendLine("Respond in the same language unless the user explicitly asks for another one.")
             builder.appendLine()
         }
 

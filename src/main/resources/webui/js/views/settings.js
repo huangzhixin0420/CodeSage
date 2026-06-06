@@ -4,7 +4,7 @@
  * 6 大分组(对齐设计文档 §13.3):
  *   ⚡ General — 通用
  *   🤖 Models — Provider / Model / API Key
- *   ⚙ Budget & Agent — 预算 / 轮次 / 子 Agent
+ *   ⚙ Agent — Agent 行为与子 Agent
  *   🎨 UI — 主题 / 字号 / 紧凑模式 / 动画
  *   ⌨ Shortcuts — 快捷键(只读 + 重新录制)
  *   🔌 MCP — MCP 服务器
@@ -19,6 +19,7 @@ import { state } from "../state.js";
 import { toast } from "../components/cs-toast.js";
 import { Modal } from "../components/cs-modal.js";
 import { escapeHtml, debounce } from "../utils.js";
+import { setLocale, getLocale } from "../i18n.js";
 
 const PROVIDER_TYPES = [
   { value: "minimax", label: "MiniMax" },
@@ -117,7 +118,7 @@ class SettingsView {
           </div>
           <nav class="cs-settings-nav" data-cs-role="nav"></nav>
           <div class="cs-settings-footer">
-            <div class="cs-settings-path" data-cs-role="path">~/codesage/settings.json</div>
+            <div class="cs-settings-path" data-cs-role="path">~/.codesage/settings.json</div>
             <button class="cs-button size-sm variant-ghost" data-cs-action="open-folder">
               <i class="fas fa-folder-open"></i>&nbsp;打开文件夹
             </button>
@@ -178,12 +179,54 @@ class SettingsView {
   _renderMain() {
     const main = this.container.querySelector('[data-cs-role="main"]');
     const renderer = GROUP_RENDERERS[this.currentGroup];
-    if (renderer) {
-      main.innerHTML = "";
-      renderer(this, main);
-    } else {
-      main.innerHTML = `<div class="cs-settings-empty">未知分组: ${this.currentGroup}</div>`;
+    if (!main) return;
+    if (!renderer) {
+      main.innerHTML = `<div class="cs-settings-empty">未知分组: ${escapeHtml(this.currentGroup)}</div>`;
+      return;
     }
+    if (!this.data) {
+      // 等待数据,显示骨架+onboarding(给用户一个“能点”的东西而不是纯转圈)
+      main.innerHTML = `
+        <div class="cs-settings-loading">
+          <i class="fas fa-circle-notch spin"></i>
+          <p>正在加载设置…</p>
+        </div>
+      `;
+      this._renderOnboardingHint(main);
+      return;
+    }
+    main.innerHTML = "";
+    renderer(this, main);
+  }
+
+  /**
+   * 在加载期间额外渲染一个 onboarding 提示区域 —
+   * 告诉用户“文件不存在?点这里从环境里挑一个 Provider 快速配置”
+   * 而不是只能等 loading 转完 (JSON decode 挂了就会一直转)
+   */
+  _renderOnboardingHint(main) {
+    const hint = document.createElement("div");
+    hint.className = "cs-settings-onboarding";
+    hint.innerHTML = `
+      <p class="cs-form-field-desc">未检测到 ~/.codesage/settings.json。插件会在首次启动时自动创建默认文件。</p>
+      <div class="cs-settings-onboarding-actions">
+        <button class="cs-button size-sm variant-secondary" data-cs-action="refresh">
+          <i class="fas fa-rotate"></i>&nbsp;重试
+        </button>
+        <button class="cs-button size-sm variant-ghost" data-cs-action="open-folder-onboard">
+          <i class="fas fa-folder-open"></i>&nbsp;打开设置目录
+        </button>
+      </div>
+    `;
+    main.appendChild(hint);
+    hint
+      .querySelector('[data-cs-action="refresh"]')
+      .addEventListener("click", () => this._refreshData());
+    hint
+      .querySelector('[data-cs-action="open-folder-onboard"]')
+      .addEventListener("click", () =>
+        bridge.send({ type: "settings_open_folder" }),
+      );
   }
 
   _refreshData() {
@@ -199,11 +242,63 @@ class SettingsView {
   _onBridge(msg) {
     if (msg.type === "settings_data") {
       this.data = msg.settings;
+      if (this._dataLoadWatchdog) {
+        clearTimeout(this._dataLoadWatchdog);
+        this._dataLoadWatchdog = null;
+      }
+      // 更新路径显示 (从 settings.path 字段)
+      const pathEl = this.container?.querySelector('[data-cs-role="path"]');
+      if (pathEl && msg.settings?.path) {
+        const p = String(msg.settings.path);
+        pathEl.textContent = p.replace(/\/[^/]+$/, "") || p;
+      }
+      // 同步 i18n locale:Kotlin settings.json 里的 ui.language 跟当前 currentLocale
+      // 不一致时(例:用户切了语言保存后,或外部直接编辑 settings.json)调 setLocale
+      // 让 i18n 字符串查找也跟着切。select 显示本身由 this.data 驱动,这一行只
+      // 保证 currentLocale 模块变量也跟上,避免下次渲染时 t() 用错的语言。
+      const lang = msg.settings?.ui?.language;
+      if (lang && lang !== getLocale()) {
+        setLocale(lang);
+      }
       this._renderMain();
     } else if (msg.type === "settings_saved") {
       toast.success("设置已保存");
     } else if (msg.type === "settings_error") {
-      toast.error("保存失败: " + msg.message);
+      // settings.json 可能“脏”得代码层无法自动修复(例:JSON 错位 / 字段类型错 / 文件过大)
+      // 这种情况下,仅 toast 报错不够——需要让用户能“一键打开设置目录”手动清理
+      // 判断 “可能是文件问题” 的几个关键词:解析/parse/读/读不到/损坏/格式/size/权限
+      const lower = String(msg.message || "").toLowerCase();
+      const looksLikeFileIssue =
+        lower.includes("解析") ||
+        lower.includes("parse") ||
+        lower.includes("读") ||
+        lower.includes("损坏") ||
+        lower.includes("格式") ||
+        lower.includes("size") ||
+        lower.includes("oom") ||
+        lower.includes("权限") ||
+        lower.includes("permission");
+      if (looksLikeFileIssue && bridge?.send) {
+        toast.error("设置文件异常: " + msg.message, {
+          variant: "error",
+          duration: 12000,
+          action: {
+            label: "打开设置目录",
+            onClick: () => {
+              try {
+                bridge.send({ type: "settings_open_folder" });
+              } catch (e) {
+                console.warn(
+                  "[settings] failed to send settings_open_folder:",
+                  e,
+                );
+              }
+            },
+          },
+        });
+      } else {
+        toast.error("保存失败: " + msg.message);
+      }
     } else if (msg.type === "set_api_key_result") {
       // 调用由 modal 注册的 handler
       if (typeof this._onSetApiKeyResult === "function") {
@@ -406,9 +501,39 @@ class SettingsView {
         // update slider display
         const display = root.querySelector(`[data-cs-display="${name}"]`);
         if (display) display.textContent = v;
+        // 实时应用设置到主页面 — 不等保存
+        this._applySetting(name, v);
         this._saveDebounced();
       });
     });
+  }
+
+  /**
+   * 实时把单个设置反映到主页面 — 不等 _saveDebounced 500ms
+   * 语言/字号/紧凑模式这种改完应该立刻看到效果
+   */
+  _applySetting(path, value) {
+    try {
+      if (path === "ui.language") {
+        // i18n locale 切换 — setLocale 是同步函数,只更新内存
+        setLocale(value);
+      } else if (path === "ui.fontSize") {
+        // 全站基础字号
+        document.documentElement.style.setProperty("--text-base", value + "px");
+      } else if (path === "ui.compactMode") {
+        document.body.classList.toggle("cs-compact-mode", !!value);
+      } else if (path === "ui.theme") {
+        // 主题色模式 — 优先调主页面 chat 的 setTheme 让聊天页立即跟随
+        if (window.CodeSage?.chat?.setTheme) {
+          window.CodeSage.chat.setTheme(value);
+        }
+        if (this.setTheme) this.setTheme(value);
+      } else if (path === "ui.showThinking") {
+        // 思考气泡显示 — 聊天页已绑定了 thinkingToggleVisibility, 这里不需要重做
+      }
+    } catch (e) {
+      console.warn("[CodeSage] _applySetting failed for", path, e);
+    }
   }
 
   _setField(path, value) {
@@ -512,65 +637,9 @@ const GROUP_RENDERERS = {
     const s = view.data;
     const a = s.agent;
     root.innerHTML = `
-      <h2 class="cs-settings-h2">预算 & Agent</h2>
-      <p class="cs-settings-section-desc">Agent 循环的预算控制与子 Agent 行为</p>
+      <h2 class="cs-settings-h2">Agent 行为</h2>
+      <p class="cs-settings-section-desc">子 Agent 行为与循环参数</p>
       <div class="cs-settings-section">
-        ${view._formField({
-          id: "maxIter",
-          label: "最大迭代次数",
-          hint: "1-100",
-          description: "单个任务最多允许的 Agent 循环次数",
-          children: view._slider(
-            "agent.maxIterations",
-            a.maxIterations,
-            1,
-            100,
-          ),
-        })}
-        ${view._formField({
-          id: "maxDur",
-          label: "最大时长(秒)",
-          description: "单个任务最大执行时间",
-          children: view._slider(
-            "agent.maxDurationSeconds",
-            a.maxDurationSeconds,
-            10,
-            3600,
-            10,
-          ),
-        })}
-        ${view._formField({
-          id: "warnTh",
-          label: "预算告警阈值",
-          description: "达到此百分比触发黄色告警",
-          children: view._slider(
-            "agent.budgetWarningThreshold",
-            a.budgetWarningThreshold,
-            10,
-            90,
-          ),
-        })}
-        ${view._formField({
-          id: "subRatio",
-          label: "子 Agent 预算比例",
-          description: "子 Agent 可使用的预算占父级比例",
-          children: view._slider(
-            "agent.subAgentBudgetRatio",
-            Math.round(a.subAgentBudgetRatio * 100),
-            10,
-            100,
-            5,
-          ),
-        })}
-        ${view._formField({
-          id: "allowContinue",
-          label: "预算耗尽后允许继续",
-          children: view._toggle(
-            "agent.allowContinueOnExhaustion",
-            a.allowContinueOnExhaustion,
-            "允许追加 10 轮继续",
-          ),
-        })}
         ${view._formField({
           id: "enablePlanning",
           label: "Plan 模式",
@@ -777,7 +846,6 @@ SettingsView.prototype._renderProviderCard = function (p, index) {
         <div class="cs-provider-card-title">
           <span class="cs-provider-card-dot ${p.enabled ? "enabled" : "disabled"}"></span>
           <strong>${escapeHtml(p.name || p.id)}</strong>
-          <span class="cs-provider-card-type">${escapeHtml(p.type)}</span>
         </div>
         <div class="cs-provider-card-actions">
           <button class="cs-button size-sm variant-ghost" data-cs-action="toggle-provider" data-id="${escapeHtml(p.id)}">
@@ -799,7 +867,13 @@ SettingsView.prototype._renderProviderCard = function (p, index) {
         </div>
         <div class="cs-provider-card-row">
           <span class="cs-provider-card-label">API Key</span>
-          <code class="cs-provider-card-value">${p.apiKeyRef ? escapeHtml(p.apiKeyRef) : '<span style="color:var(--warning)">未配置</span>'}</code>
+          <span class="cs-provider-card-value" data-cs-role="api-key">
+            <span data-cs-role="api-key-masked" style="font-family:var(--font-mono);letter-spacing:1px;">••••••••••••</span>
+            <span data-cs-role="api-key-value" style="display:none;">${escapeHtml(p.apiKeyRef || "")}</span>
+            <button class="cs-icon-btn-tiny" data-cs-action="toggle-api-key" aria-label="显示/隐藏 Key" type="button" style="margin-left:6px;border:none;background:transparent;color:var(--fg-2);cursor:pointer;padding:2px 4px;">
+              <i class="fas fa-eye"></i>
+            </button>
+          </span>
         </div>
         <div class="cs-provider-card-row">
           <span class="cs-provider-card-label">模型 (${(p.models || []).length})</span>
@@ -1114,16 +1188,28 @@ SettingsView.prototype._bindProviderActions = function (root) {
       this._editProvider(id);
     });
   });
+  // API Key 可见性切换 — 默认隐藏,点眼睛图标才显示
+  root.querySelectorAll('[data-cs-action="toggle-api-key"]').forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const wrap = btn.closest('[data-cs-role="api-key"]');
+      if (!wrap) return;
+      const masked = wrap.querySelector('[data-cs-role="api-key-masked"]');
+      const value = wrap.querySelector('[data-cs-role="api-key-value"]');
+      const isHidden = value.style.display === "none";
+      masked.style.display = isHidden ? "none" : "";
+      value.style.display = isHidden ? "" : "none";
+      btn.innerHTML = isHidden
+        ? '<i class="fas fa-eye-slash"></i>'
+        : '<i class="fas fa-eye"></i>';
+    });
+  });
   root.querySelectorAll('[data-cs-action="remove-provider"]').forEach((btn) => {
     btn.addEventListener("click", () => {
       const id = btn.dataset.id;
       const p = this.data.providers.find((x) => x.id === id);
       if (!p) return;
-      if (!confirm(`确定要删除 Provider "${p.name}" 吗?`)) return;
-      this.data.providers = this.data.providers.filter((x) => x.id !== id);
-      this._save();
-      this._renderMain();
-      toast.success(`已删除 ${p.name}`);
+      // 用自定义 modal 替代 confirm() — JCEF 里 confirm() 经常被禁用
+      this._confirmDeleteProvider(p);
     });
   });
   root.querySelectorAll('[data-cs-action="add-provider"]').forEach((btn) => {
@@ -1131,23 +1217,55 @@ SettingsView.prototype._bindProviderActions = function (root) {
   });
 };
 
+/**
+ * 删除 Provider 确认弹窗 — 用 Modal 组件而不是原生 confirm()
+ * (JCEF 里 confirm() 经常被禁用或表现不一致)
+ */
+SettingsView.prototype._confirmDeleteProvider = function (p) {
+  const content = document.createElement("div");
+  content.innerHTML = `
+    <p>确定要删除 Provider <strong>${escapeHtml(p.name || p.id)}</strong> 吗？</p>
+    <p class="cs-form-field-desc">此操作不可撤销，对应的 API Key 也会从 IDE PasswordSafe 中移除。</p>
+  `;
+  const modal = new Modal({ title: "删除 Provider", content, size: "sm" });
+  const footer = document.createElement("div");
+  footer.className = "cs-modal-footer";
+  footer.style.cssText =
+    "padding:12px 0 0;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border-subtle);margin-top:16px;";
+  footer.innerHTML = `
+    <button class="cs-button variant-ghost size-md" data-cs-action="cancel">取消</button>
+    <button class="cs-button size-md" data-cs-action="confirm" style="background:var(--error);color:white;">删除</button>
+  `;
+  content.parentElement.appendChild(footer);
+  footer
+    .querySelector('[data-cs-action="cancel"]')
+    .addEventListener("click", () => modal.close());
+  footer
+    .querySelector('[data-cs-action="confirm"]')
+    .addEventListener("click", () => {
+      this.data.providers = this.data.providers.filter((x) => x.id !== p.id);
+      this._save();
+      this._renderMain();
+      modal.close();
+      toast.success(`已删除 ${p.name || p.id}`);
+    });
+  modal.open();
+};
+
 SettingsView.prototype._addProvider = function () {
+  // 修复:不要立即 push,先打开 modal,用户取消就不加
   const id = "provider-" + Date.now();
   const newProvider = {
     id,
-    name: "新 Provider",
+    name: "",
     type: "openai-compatible",
     baseUrl: "",
     enabled: true,
     apiKeyRef: `keychain:${id}`,
     models: [],
   };
-  this.data.providers.push(newProvider);
-  this._save();
-  this._renderMain();
-  // 立即打开编辑 modal
-  this._openProviderModal(newProvider);
-  toast.info("已添加新 Provider,请填写配置");
+  this._openProviderModal(newProvider, { isNew: true });
+  toast.info("请填写新 Provider 配置");
 };
 
 SettingsView.prototype._editProvider = function (id) {
@@ -1159,8 +1277,10 @@ SettingsView.prototype._editProvider = function (id) {
 /**
  * 打开 Provider 编辑 modal（支持新增、编辑、API Key 修改、连通性测试）
  */
-SettingsView.prototype._openProviderModal = function (provider) {
-  const isNew = !provider.name || provider.name === "新 Provider";
+SettingsView.prototype._openProviderModal = function (provider, options = {}) {
+  // options.isNew 由 _addProvider 传入(避免把空 name 当 "新 Provider" 的字面判错)
+  const isNew =
+    options.isNew ?? (!provider.name || provider.name === "新 Provider");
   const content = document.createElement("div");
   content.className = "cs-provider-form";
   const typesOptions = PROVIDER_TYPES.map(
@@ -1299,6 +1419,10 @@ SettingsView.prototype._openProviderModal = function (provider) {
           return;
         }
         // 2) 写 settings.json (不含 apiKey)
+        // 如果是新增,先 push 到 providers (取消的话就不会 push)
+        if (isNew) {
+          this.data.providers.push(provider);
+        }
         provider.name = name;
         provider.type = type;
         provider.baseUrl = baseUrl;
@@ -1326,6 +1450,10 @@ SettingsView.prototype._openProviderModal = function (provider) {
       });
     } else {
       // 没填 key,直接写其余字段
+      // 如果是新增,先 push 到 providers (取消的话就不会 push)
+      if (isNew) {
+        this.data.providers.push(provider);
+      }
       provider.name = name;
       provider.type = type;
       provider.baseUrl = baseUrl;

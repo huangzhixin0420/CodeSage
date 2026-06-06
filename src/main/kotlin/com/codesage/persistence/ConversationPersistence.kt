@@ -198,7 +198,21 @@ class ConversationPersistence(
             val diskSessions = storageDir.listFiles { f -> f.extension == "json" }
                 ?.mapNotNull { file ->
                     try {
-                        file.nameWithoutExtension to json.decodeFromString<PersistedSession>(file.readText())
+                        val parsed = json.decodeFromString<PersistedSession>(file.readText())
+                        // T0.11 修复（CodeReview Medium #27）：反序列化后做基础校验
+                        // 避免磁盘上的损坏/旧版本文件进入内存后导致后续 NPE
+                        if (parsed.id.isBlank()) {
+                            logger.warn("Skipping session file with blank id: ${file.name}")
+                            return@mapNotNull null
+                        }
+                        if (parsed.metadata.saveVersion > CURRENT_VERSION) {
+                            logger.warn(
+                                "Session file ${file.name} has newer version " +
+                                    "${parsed.metadata.saveVersion} > $CURRENT_VERSION; skipping"
+                            )
+                            return@mapNotNull null
+                        }
+                        file.nameWithoutExtension to parsed
                     } catch (e: Exception) {
                         logger.warn("Failed to parse session file: ${file.name}", e)
                         null
@@ -247,7 +261,7 @@ class ConversationPersistence(
     /**
      * 清理旧会话（保留最近N个）
      */
-    fun cleanupOldSessions(keepCount: Int = 50) {
+    fun cleanupOldSessions(keepCount: Int = DEFAULT_KEEP_SESSIONS) {
         val all = loadAllSessions()
         if (all.size <= keepCount) return
 
@@ -274,8 +288,8 @@ class ConversationPersistence(
     fun shutdown() {
         ioExecutor.shutdown()
         try {
-            if (!ioExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                logger.warn("ConversationPersistence executor did not terminate in 5s, forcing shutdown")
+            if (!ioExecutor.awaitTermination(SHUTDOWN_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
+                logger.warn("ConversationPersistence executor did not terminate in ${SHUTDOWN_TIMEOUT_SECONDS}s, forcing shutdown")
                 ioExecutor.shutdownNow()
             }
         } catch (e: InterruptedException) {
@@ -286,6 +300,14 @@ class ConversationPersistence(
 
     companion object {
         private const val CURRENT_VERSION = 1
+
+        // T0.10 修复（CodeReview Medium #19）：提取魔法数字
+        // 显式命名常量让运维/调参更容易，也避免在代码中散落难以追踪的字面量。
+        /** shutdown 等待 in-flight 写入完成的超时（秒） */
+        const val SHUTDOWN_TIMEOUT_SECONDS = 5L
+
+        /** cleanupOldSessions 默认保留的会话数（与 PluginConfig.conversationCleanupKeep 默认对齐） */
+        const val DEFAULT_KEEP_SESSIONS = 50
     }
 }
 
@@ -349,7 +371,9 @@ fun PersistedMessage.toMessage(): Message {
             com.codesage.model.dto.ToolCall(
                 id = it.id,
                 name = it.name,
-                arguments = it.arguments
+                arguments = it.arguments,
+                summary = null,  // 不持久化 (前端用一次性流式数据)
+                icon = null,
             )
         },
         toolCallId = this.toolCallId

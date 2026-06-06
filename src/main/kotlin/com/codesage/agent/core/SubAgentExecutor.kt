@@ -38,7 +38,7 @@ data class SubAgentResult(
  * 参考 Hermes 的 delegate_task 工具设计：
  * - 创建新 AgentCore 实例（隔离的 context）
  * - 加载指定 toolset 的工具（而非全部工具）
- * - 独立 session 和 budget（继承父 agent 的 budget 比例）
+ * - 独立 session
  * - 通过 progress callback 实时汇报进度给父 agent
  *
  * 防止无限递归：每个 SubAgentExecutor 知道自己所在的嵌套深度（[depth]），
@@ -83,7 +83,6 @@ open class SubAgentExecutor(
      * @param maxIterations 子 Agent 的迭代预算
      * @param contextFiles 子 Agent 需要访问的文件列表
      * @param progressCallback 进度回调（实时汇报给父 agent）
-     * @param parentBudget 父 agent 的 budget（用于按比例继承）
      */
     open suspend fun spawn(
         parentSessionId: String,
@@ -92,7 +91,6 @@ open class SubAgentExecutor(
         maxIterations: Int = 10,
         contextFiles: List<String> = emptyList(),
         progressCallback: suspend (String) -> Unit = {},
-        parentBudget: TaskBudget? = null
     ): SubAgentResult {
         // 1. 递归深度检查
         if (depth >= MAX_RECURSION_DEPTH) {
@@ -118,28 +116,7 @@ open class SubAgentExecutor(
         val toolCount = subToolRegistry.getAllTools().size
         logger.info("[SubAgent] Toolset='$toolset' → $toolCount tools available")
 
-        // 3. 计算子 Agent 预算配置（继承父 Agent 剩余预算比例）
-        val subBudgetConfig = if (parentBudget != null) {
-            val pluginConfig = PluginConfig.getInstance()
-            val parentRemaining = parentBudget.remainingIterations()
-            val subMaxIterations = (parentRemaining * pluginConfig.subAgentBudgetRatio).toInt()
-                .coerceAtLeast(3)
-                .coerceAtMost(maxIterations)
-            logger.info("[SubAgent] Budget inherited from parent: parentRemaining=$parentRemaining, subMaxIterations=$subMaxIterations (ratio=${pluginConfig.subAgentBudgetRatio})")
-            TaskBudget.BudgetConfig(
-                maxIterations = subMaxIterations,
-                maxTokens = parentBudget.config.maxTokens,
-                maxDurationMs = parentBudget.config.maxDurationMs,
-                enableIteration = parentBudget.config.enableIteration,
-                enableToken = parentBudget.config.enableToken,
-                enableTime = parentBudget.config.enableTime,
-                warningThresholdPercent = parentBudget.config.warningThresholdPercent
-            )
-        } else {
-            TaskBudget.BudgetConfig(maxIterations = maxIterations)
-        }
-
-        // 4. 基于父 prompt 构造子 Agent 的 prompt
+        // 3. 基于父 prompt 构造子 Agent 的 prompt
         val parentPrompt = parentAgent.getSystemPrompt()
         val subSystemPrompt = generateSubAgentPrompt(taskDescription, toolset, parentPrompt)
         // 日志：拆分 prompt 各部分字节数。万一未来发现 sub-agent 被 400，
@@ -151,7 +128,7 @@ open class SubAgentExecutor(
                     "subSystemPrompt=${subSystemPrompt.length}B"
         )
 
-        // 5. 创建子 AgentCore（注入过滤后的 registry 和子深度）
+        // 4. 创建子 AgentCore（注入过滤后的 registry 和子深度）
         val subAgent = AgentCore(
             gateway = gateway,
             project = project,
@@ -160,16 +137,15 @@ open class SubAgentExecutor(
             subAgentDepth = depth + 1
         )
 
-        // 配置子 Agent（传入自定义 prompt + 预算）
+        // 配置子 Agent（传入自定义 prompt）
         subAgent.initialize(
             AgentConfig(
                 defaultModel = parentAgent.getCurrentModel(),
-                systemPrompt = subSystemPrompt,
-                budgetConfig = subBudgetConfig
+                systemPrompt = subSystemPrompt
             )
         )
 
-        // 6. 构建任务消息（包含上下文文件）
+        // 5. 构建任务消息（包含上下文文件）
         // 读取上下文文件内容并注入到任务描述中
         val taskMessage = buildString {
             appendLine(taskDescription)
@@ -199,7 +175,7 @@ open class SubAgentExecutor(
             }
         }
 
-        // 7. 执行对话循环
+        // 6. 执行对话循环
         val outputBuilder = StringBuilder()
         val toolsUsed = mutableSetOf<String>()
         var iterationsUsed = 0
@@ -241,20 +217,6 @@ open class SubAgentExecutor(
                         progressCallback("[SubAgent nested depth=${depth + 1}] Completed: ${if (event.success) "success" else "failed"}")
                     }
 
-                    is AgentStreamEvent.BudgetStatus -> {
-                        progressCallback("[SubAgent] Budget: ${event.status}, remaining=${event.remainingIterations}")
-                    }
-
-                    is AgentStreamEvent.BudgetExhausted -> {
-                        success = false
-                        outputBuilder.appendLine("\n[BUDGET EXHAUSTED] ${event.reason}")
-                        progressCallback("[SubAgent] Budget exhausted: ${event.reason}")
-                    }
-
-                    is AgentStreamEvent.BudgetExtended -> {
-                        progressCallback("[SubAgent] Budget extended: +${event.extraIterations} iterations")
-                    }
-
                     is AgentStreamEvent.Error -> {
                         success = false
                         outputBuilder.appendLine("\n[ERROR] ${event.message}")
@@ -284,7 +246,7 @@ open class SubAgentExecutor(
             toolsUsed = toolsUsed.toList()
         )
 
-        logger.info("[SubAgent] Completed. Success=$success, Iterations=$iterationsUsed, Tools=${toolsUsed}, Depth=$depth")
+        logger.info("[SubAgent] Completed. Success=$success, Tools=${toolsUsed}, Depth=$depth")
         return result
     }
 

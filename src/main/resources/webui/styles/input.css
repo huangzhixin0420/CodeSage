@@ -8,33 +8,65 @@
  */
 
 .input-area-wrapper {
-    padding: var(--space-2) var(--space-4) var(--space-2);
+    /* 底部间距压到 6px — 让整个输入区域(模式/模型/状态/字符数/发送)
+       紧贴聊天区底边,但保留 5~10px 呼吸距离 */
+    padding: var(--space-1) var(--space-4) 6px;
     border-top: 1px solid var(--border-subtle);
     background: var(--bg-0);
     flex-shrink: 0;
 }
 
+/* 紧凑模式:减小所有间距、字号、卡片内边距 */
+body.cs-compact-mode {
+    --space-1: 2px;
+    --space-2: 4px;
+    --space-3: 8px;
+    --space-4: 10px;
+    --space-6: 16px;
+    --text-sm: 11px;
+    --text-base: 13px;
+    --text-md: 14px;
+}
+
+body.cs-compact-mode .messages-container {
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-3);
+}
+
+body.cs-compact-mode .input-area-wrapper {
+    padding: var(--space-1) var(--space-2) 6px;
+}
+
+body.cs-compact-mode .input-box {
+    padding: 8px 10px 6px;
+}
+
 .input-box {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--space-3) var(--space-3) var(--space-2);
+    gap: 6px;
+    /* 底 padding 压到 6px — 跟 .input-area-wrapper 底 padding 叠加 = ~12px
+       从聊天区底边起算(用户反馈"5~10px",这里是上界,看起来更舒服) */
+    padding: 10px var(--space-3) 6px;
     border-radius: var(--radius-xl);
     background: var(--bg-input);
     border: 1.5px solid var(--border);
     transition: all var(--duration-base);
     position: relative;
-    max-height: 60vh;
-    min-height: 56px;
+    /* 高度限制: max 50vh (避免长输入把聊天区全推走) / min 80px (确保 model dropdown
+       + bottom row 完整可见,不出现"输入框被挤塌"的视觉) */
+    max-height: 50vh;
+    min-height: 80px;
     /* 不设 overflow:hidden,否则上方的 mode dropdown / file-autocomplete 会被裁掉 */
     overflow: visible;
 }
 
 .input-box:focus-within {
-    /* 焦点仅在背景微变化 + border 深一点点,去掉突出的蓝色蓝
-       (用户反馈“里外都出现蓝色框线”太突兀) */
-    border-color: var(--border-strong);
+    /* 焦点只换背景,不再改 border 颜色 — 之前的 border-color
+       在某些 IDE 主题下渲染出来偏蓝,用户反馈太突兀
+       背景对比已经足够让用户感知"我正在输入" */
     background: var(--bg-0);
+    border-color: var(--border);
 }
 
 [data-theme="dark"] .input-box {
@@ -44,7 +76,7 @@
 
 [data-theme="dark"] .input-box:focus-within {
     background: var(--bg-0);
-    border-color: var(--border-strong);
+    border-color: var(--border);
 }
 
 /* ========== 输入框本体 ========== */

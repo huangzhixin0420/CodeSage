@@ -182,20 +182,6 @@ class ChatPanel(
                                 if (!isUserScrolling) scrollToBottom()
                             }
 
-                            is AgentStreamEvent.BudgetStatus -> {
-                                // TODO: Step 6 中完善预算状态展示
-                            }
-
-                            is AgentStreamEvent.BudgetExhausted -> {
-                                turn.showBudgetExhausted(event.reason, event.consumedIterations, event.allowContinue)
-                                if (!isUserScrolling) scrollToBottom()
-                            }
-
-                            is AgentStreamEvent.BudgetExtended -> {
-                                turn.updateBudgetStatus(event.newRemainingIterations, 0)
-                                turn.updateThinking("预算已追加: +${event.extraIterations}轮，剩余 ${event.newRemainingIterations} 轮")
-                            }
-
                             is AgentStreamEvent.Error -> {
                                 turn.setError(event.message)
                                 if (!isUserScrolling) scrollToBottom()

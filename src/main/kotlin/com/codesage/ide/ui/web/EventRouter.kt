@@ -67,12 +67,19 @@ class EventRouter {
 
         // === 工具调用 ===
         register<AgentStreamEvent.ToolCallStart> { e, turnId ->
+            // 修复:summary 不再是 "Running X..." 跟工具名重复
+            // 优先用 toolCall 自己的 summary 字段(工具实现里提供),否则用工具名
+            val toolSummary = e.toolCall.summary?.takeIf { it.isNotBlank() }
+                ?: e.toolCall.name
+            // 取工具的 icon (来自 Tool schema),前端用它做个性化图标
+            val toolIcon = e.toolCall.icon?.takeIf { it.isNotBlank() }
             mapOf(
                 "type" to "tool_call_start",
                 "turnId" to turnId,
                 "toolId" to e.toolCall.id,
                 "toolName" to e.toolCall.name,
-                "summary" to "Running ${e.toolCall.name}...",
+                "summary" to toolSummary,
+                "icon" to toolIcon,
                 // 把 arguments 从 JSON string 解析为对象,方便前端展示
                 "arguments" to parseJsonOrRaw(e.toolCall.arguments),
             )
@@ -206,38 +213,6 @@ class EventRouter {
                 "oldSessionId" to e.oldSessionId,
                 "newSessionId" to e.newSessionId,
                 "messageCount" to e.messageCount,
-            )
-        }
-
-        // === 预算 ===
-        register<AgentStreamEvent.BudgetStatus> { e, turnId ->
-            mapOf(
-                "type" to "budget_status",
-                "turnId" to turnId,
-                "status" to e.status,
-                "remainingIterations" to e.remainingIterations,
-                "remainingTokens" to e.remainingTokens,
-                "remainingSeconds" to e.remainingSeconds,
-                "usagePercent" to e.usagePercent,
-            )
-        }
-        register<AgentStreamEvent.BudgetExhausted> { e, turnId ->
-            mapOf(
-                "type" to "budget_exhausted",
-                "turnId" to turnId,
-                "reason" to e.reason,
-                "consumedIterations" to e.consumedIterations,
-                "consumedTokens" to e.consumedTokens,
-                "elapsedSeconds" to e.elapsedSeconds,
-                "allowContinue" to e.allowContinue,
-            )
-        }
-        register<AgentStreamEvent.BudgetExtended> { e, turnId ->
-            mapOf(
-                "type" to "budget_extended",
-                "turnId" to turnId,
-                "extraIterations" to e.extraIterations,
-                "newRemainingIterations" to e.newRemainingIterations,
             )
         }
 

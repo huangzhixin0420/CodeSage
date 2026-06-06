@@ -42,8 +42,8 @@
                 --bg-tertiary: #ececf1;
                 --bg-message-user: linear-gradient(
                     135deg,
-                    #4f46e5 0%,
-                    #6366f1 100%
+                    #334155 0%,
+                    #475569 100%
                 );
                 --bg-message-assistant: #f7f7f8;
                 --bg-thinking: #ffffff;
@@ -58,8 +58,8 @@
                 --text-on-accent: #ffffff;
                 --border-color: #e5e5e5;
                 --border-subtle: #f0f0f0;
-                --accent-color: #4f46e5;
-                --accent-hover: #4338ca;
+                --accent-color: #334155;
+                --accent-hover: #1e293b;
                 --accent-light: rgba(79, 70, 229, 0.1);
                 --success-color: #10b981;
                 --error-color: #ef4444;
@@ -85,8 +85,8 @@
                 --bg-tertiary: #333333;
                 --bg-message-user: linear-gradient(
                     135deg,
-                    #4f46e5 0%,
-                    #6366f1 100%
+                    #334155 0%,
+                    #475569 100%
                 );
                 --bg-message-assistant: #2a2a2a;
                 --bg-thinking: #1e1e1e;
@@ -101,9 +101,9 @@
                 --text-on-accent: #ffffff;
                 --border-color: #333333;
                 --border-subtle: #2a2a2a;
-                --accent-color: #818cf8;
-                --accent-hover: #a5b4fc;
-                --accent-light: rgba(129, 140, 248, 0.15);
+                --accent-color: #94a3b8;
+                --accent-hover: #cbd5e1;
+                --accent-light: rgba(148, 163, 184, 0.15);
                 --success-color: #34d399;
                 --error-color: #f87171;
                 --warning-color: #fbbf24;
@@ -1317,77 +1317,6 @@
                 background: var(--accent-hover);
             }
 
-            /* ========== Budget Status ========== */
-            .budget-status {
-                font-size: 11px;
-                font-weight: 600;
-                color: var(--text-tertiary);
-                margin-left: auto;
-                padding: 2px 8px;
-                border-radius: var(--radius-full);
-                background: var(--bg-secondary);
-                font-variant-numeric: tabular-nums;
-                transition: all 0.3s;
-            }
-            .budget-status.ok {
-                color: var(--success-color);
-                background: rgba(16, 185, 129, 0.1);
-            }
-            .budget-status.warning {
-                color: var(--warning-color);
-                background: rgba(245, 158, 11, 0.1);
-            }
-            .budget-status.critical {
-                color: var(--error-color);
-                background: rgba(239, 68, 68, 0.1);
-            }
-            .budget-status.exhausted {
-                color: var(--error-color);
-                background: rgba(239, 68, 68, 0.15);
-                font-weight: 600;
-            }
-
-            /* ========== Budget Exhausted Panel ========== */
-            .budget-exhausted {
-                border: 1px dashed var(--border-color);
-                border-radius: var(--radius-md);
-                padding: 16px;
-                text-align: center;
-                background: var(--bg-secondary);
-                margin: 8px 0;
-            }
-            .budget-exhausted-title {
-                font-size: 14px;
-                font-weight: 600;
-                color: var(--text-primary);
-                margin-bottom: 8px;
-            }
-            .budget-exhausted-reason {
-                font-size: 12px;
-                color: var(--text-secondary);
-                margin-bottom: 8px;
-            }
-            .budget-exhausted-summary {
-                font-size: 11px;
-                color: var(--text-tertiary);
-                margin-bottom: 12px;
-            }
-            .continue-btn {
-                padding: 6px 16px;
-                border-radius: var(--radius-sm);
-                border: none;
-                background: var(--accent-color);
-                color: white;
-                font-size: 12px;
-                cursor: pointer;
-                font-family: var(--font-sans);
-                font-weight: 500;
-                transition: all 0.2s;
-            }
-            .continue-btn:hover {
-                background: var(--accent-hover);
-                transform: scale(1.03);
-            }
         </style>
     </head>
     <body data-theme="light">
@@ -1790,15 +1719,6 @@
             );
             eventBus.on("turn_complete", (data) => onTurnComplete(data.turnId));
             eventBus.on("error", (data) => onError(data.turnId, data.message));
-            eventBus.on("budget_status", (data) =>
-                onBudgetStatus(data.turnId, data),
-            );
-            eventBus.on("budget_exhausted", (data) =>
-                onBudgetExhausted(data.turnId, data),
-            );
-            eventBus.on("budget_extended", (data) =>
-                onBudgetStatus(data.turnId, data),
-            );
             eventBus.on("plan_generated", (data) =>
                 onPlanGenerated(data.turnId, data),
             );
@@ -2580,7 +2500,6 @@
                     <div class="assistant-meta">
                         <span class="assistant-name">CodeSage</span>
                         <span class="assistant-time" id="${currentTurnId}-timer">0.0s</span>
-                        <span class="budget-status ok" id="${currentTurnId}-budget">就绪</span>
                     </div>
                     <div id="${currentTurnId}-thinking" class="thinking-card hidden">
                         <div class="thinking-header" onclick="toggleThinking('${currentTurnId}')">
@@ -2963,77 +2882,6 @@
                 status.className = "status-text";
             }
 
-            function onBudgetStatus(turnId, data) {
-                const budgetEl = document.getElementById(turnId + "-budget");
-                if (!budgetEl) return;
-                const statusClass = data.status.toLowerCase();
-                budgetEl.className = "budget-status " + statusClass;
-                const parts = [];
-                if (
-                    data.remainingIterations !== undefined &&
-                    data.remainingIterations < 1000000
-                ) {
-                    parts.push(`${data.remainingIterations}轮`);
-                }
-                if (
-                    data.remainingTokens !== undefined &&
-                    data.remainingTokens < 1000000
-                ) {
-                    parts.push(`${data.remainingTokens}tk`);
-                }
-                if (
-                    data.remainingSeconds !== undefined &&
-                    data.remainingSeconds < 1000000000
-                ) {
-                    parts.push(`${data.remainingSeconds}s`);
-                }
-                budgetEl.textContent =
-                    parts.join(" · ") + ` (${data.usagePercent}%)`;
-            }
-
-            function onBudgetExhausted(turnId, data) {
-                isGenerating = false;
-                currentTurnId = null;
-                stopTurnTimer(turnId);
-                const contentEl = document.getElementById(turnId + "-content");
-                if (contentEl) {
-                    // 追加预算耗尽提示，保留已生成的内容
-                    const exhaustedPanel = document.createElement("div");
-                    exhaustedPanel.className = "budget-exhausted";
-                    exhaustedPanel.innerHTML = `
-                        <div class="budget-exhausted-title">⏸ 任务已暂停</div>
-                        <div class="budget-exhausted-reason">${escapeHtml(data.reason)}</div>
-                        <div class="budget-exhausted-summary">
-                            已执行 ${data.consumedIterations} 轮，耗时 ${data.elapsedSeconds}s
-                        </div>
-                        ${data.allowContinue ? `<button class="continue-btn" onclick="continueTask('${turnId}')">继续执行 (+10轮)</button>` : ""}
-                    `;
-                    contentEl.appendChild(exhaustedPanel);
-                }
-                const budgetEl = document.getElementById(turnId + "-budget");
-                if (budgetEl) {
-                    budgetEl.className = "budget-status exhausted";
-                    budgetEl.textContent = "已暂停";
-                }
-                document.getElementById("send-btn").classList.remove("hidden");
-                document.getElementById("stop-btn").classList.add("hidden");
-                const status = document.getElementById("status-label");
-                status.textContent = "预算耗尽";
-                status.className = "status-text error";
-            }
-
-            function continueTask(turnId) {
-                if (window.javaBridge) {
-                    window.javaBridge.sendMessage(
-                        JSON.stringify({
-                            type: "continue_task",
-                            turnId: turnId,
-                            extraIterations: 10,
-                        }),
-                    );
-                }
-            }
-
             function onError(turnId, message) {
                 isGenerating = false;
                 currentTurnId = null;
@@ -3296,22 +3144,6 @@
                             break;
                         case "file_references":
                             showFileReferences(data.turnId, data.references);
-                            break;
-                        case "budget_status":
-                            eventBus.emit("budget_status", data);
-                            break;
-                        case "budget_exhausted":
-                            eventBus.emit("budget_exhausted", data);
-                            break;
-                        case "budget_extended":
-                            eventBus.emit("budget_extended", {
-                                status: "OK",
-                                remainingIterations:
-                                    data.newRemainingIterations,
-                                remainingTokens: 999999,
-                                remainingSeconds: 999999,
-                                usagePercent: 0,
-                            });
                             break;
                         case "plan_generated":
                             eventBus.emit("plan_generated", data);

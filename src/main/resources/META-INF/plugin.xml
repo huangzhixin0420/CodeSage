@@ -46,7 +46,9 @@
             serviceImplementation="com.codesage.plugin.CodeSageProjectService"
         />
 
-        <!-- Settings Page -->
+        <!-- Settings Page (canceled — 全部走主页面里的设置入口,
+             避免在 Settings → Tools 里有重复入口分散用户注意力) -->
+        <!--
         <applicationConfigurable
             parentId="tools"
             instance="com.codesage.ide.settings.PluginSettingsConfigurable"
@@ -65,6 +67,7 @@
             id="com.codesage.ide.settings.BudgetSettingsConfigurable"
             displayName="Budget &amp; Rounds"
         />
+        -->
 
         <!-- Tool Window -->
         <toolWindow

@@ -217,7 +217,6 @@ class EnhancedAgentLoopDelegateTaskTest {
             maxIterations: Int,
             contextFiles: List<String>,
             progressCallback: suspend (String) -> Unit,
-            parentBudget: TaskBudget?
         ): SubAgentResult {
             spawnCallCount++
             lastTaskDescription = taskDescription

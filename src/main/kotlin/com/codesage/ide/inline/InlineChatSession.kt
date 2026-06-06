@@ -225,7 +225,7 @@ class InlineChatSession(
             }
 
             else -> {
-                // ToolCallStart/Result/Thinking/BudgetStatus 等事件已由状态机处理
+                // ToolCallStart/Result/Thinking 等事件已由状态机处理
             }
         }
     }

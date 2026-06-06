@@ -283,10 +283,17 @@ class TaskPlanner(
      * 按句子拆分描述
      */
     private fun splitBySentences(description: String): List<String> {
-        val sentenceEnders = Regex("(?<=[.!?。！？])\\s+")
-        return description.split(sentenceEnders)
+        return description.split(SENTENCE_ENDER_REGEX)
             .map { it.trim() }
             .filter { it.isNotEmpty() }
+    }
+
+    companion object {
+        // T0.8 修复（CodeReview High #13）：缓存正则表达式实例
+        // Kotlin 的 Regex 是 thread-safe 且内部使用 Pattern.CASE_INSENSITIVE 等标志位；
+        // 之前 splitBySentences 每次调用都重新创建 Pattern 对象，对长描述文本存在 O(n) 额外开销。
+        // 改为 companion 缓存后，整个进程内只有一份 Pattern 实例。
+        private val SENTENCE_ENDER_REGEX = Regex("(?<=[.!?。！？])\\s+")
     }
 }
 

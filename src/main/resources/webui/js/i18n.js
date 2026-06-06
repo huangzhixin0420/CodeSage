@@ -33,7 +33,8 @@ const STRINGS = {
     },
     welcome: {
       title: "CodeSage AI 助手",
-      subtitle: "我可以帮你编写代码、调试问题、重构项目、生成测试等。支持多轮对话、工具调用、代码生成。",
+      subtitle:
+        "我可以帮你编写代码、调试问题、重构项目、生成测试等。支持多轮对话、工具调用、代码生成。",
       promptExplain: "解释代码",
       promptRefactor: "重构代码",
       promptTest: "生成测试",
@@ -44,11 +45,11 @@ const STRINGS = {
       thinking: "思考中...",
       generating: "生成中...",
       error: "错误",
-      budgetExhausted: "预算耗尽",
       retry: "重试",
     },
     input: {
-      placeholder: "输入消息... (Enter / Ctrl+Enter 发送, Shift+Enter 换行, @引用文件, Esc 停止生成)",
+      placeholder:
+        "输入消息... (Enter / Ctrl+Enter 发送, Shift+Enter 换行, @引用文件, Esc 停止生成)",
       send: "发送消息 (Enter)",
       stop: "停止生成 (Esc)",
       hintSend: "Enter 发送",
@@ -115,19 +116,8 @@ const STRINGS = {
         modelsCount: "模型 ({count})",
       },
       agent: {
-        sectionTitle: "预算 & Agent",
-        sectionDesc: "Agent 循环的预算控制与子 Agent 行为",
-        maxIter: "最大迭代次数",
-        maxIterHint: "1-100",
-        maxIterDesc: "单个任务最多允许的 Agent 循环次数",
-        maxDur: "最大时长(秒)",
-        maxDurDesc: "单个任务最大执行时间",
-        warnTh: "预算告警阈值",
-        warnThDesc: "达到此百分比触发黄色告警",
-        subRatio: "子 Agent 预算比例",
-        subRatioDesc: "子 Agent 可使用的预算占父级比例",
-        allowContinue: "预算耗尽后允许继续",
-        allowContinueLabel: "允许追加 10 轮继续",
+        sectionTitle: "Agent 行为",
+        sectionDesc: "子 Agent 行为与循环参数",
         enablePlanning: "Plan 模式",
         enablePlanningLabel: "大任务自动生成 Todo 计划",
         enableStreaming: "流式输出",
@@ -260,14 +250,17 @@ const STRINGS = {
       step1Title: "智能对话",
       step1Desc: "CodeSage 支持多轮对话、工具调用、代码生成、思考过程可视化。",
       step2Title: "工具与文件",
-      step2Desc: "输入 @ 引用文件,工具调用会显示在助手消息中,可一键应用到编辑器。",
+      step2Desc:
+        "输入 @ 引用文件,工具调用会显示在助手消息中,可一键应用到编辑器。",
       step3Title: "快捷键",
       step3Desc: "Cmd+K 打开命令面板,Cmd+B 切换侧边栏,Esc 停止生成。",
       step4Title: "设置",
-      step4Desc: "所有配置存在 ~/codesage/settings.json,可手动编辑或通过设置界面修改。",
+      step4Desc:
+        "所有配置存在 ~/codesage/settings.json,可手动编辑或通过设置界面修改。",
       next: "下一步",
       skip: "跳过",
       done: "开始使用",
+      openSettingsFolder: "打开设置目录",
     },
     error: {
       title: "错误",
@@ -302,7 +295,8 @@ const STRINGS = {
     },
     welcome: {
       title: "CodeSage AI Assistant",
-      subtitle: "I can help you write code, debug issues, refactor projects, generate tests, and more. Supports multi-turn chat, tool calling, and code generation.",
+      subtitle:
+        "I can help you write code, debug issues, refactor projects, generate tests, and more. Supports multi-turn chat, tool calling, and code generation.",
       promptExplain: "Explain code",
       promptRefactor: "Refactor code",
       promptTest: "Generate test",
@@ -313,11 +307,11 @@ const STRINGS = {
       thinking: "Thinking...",
       generating: "Generating...",
       error: "Error",
-      budgetExhausted: "Budget exhausted",
       retry: "Retry",
     },
     input: {
-      placeholder: "Type a message... (Enter to send, Shift+Enter for newline, @ to mention files, Esc to stop)",
+      placeholder:
+        "Type a message... (Enter to send, Shift+Enter for newline, @ to mention files, Esc to stop)",
       send: "Send (Enter)",
       stop: "Stop (Esc)",
       hintSend: "Enter to send",
@@ -354,11 +348,17 @@ const STRINGS = {
       groups: {
         general: { label: "General", subtitle: "Language, telemetry, updates" },
         models: { label: "Models", subtitle: "Provider / Model / API Key" },
-        agent: { label: "Budget & Agent", subtitle: "Iterations / Tokens / SubAgents" },
+        agent: {
+          label: "Agent",
+          subtitle: "Sub-agent behavior and loop parameters",
+        },
         ui: { label: "UI", subtitle: "Theme / Font size / Animation" },
         shortcuts: { label: "Shortcuts", subtitle: "View and rebind" },
         mcp: { label: "MCP", subtitle: "External tool servers" },
-        advanced: { label: "Advanced", subtitle: "Logging / Telemetry / Experiments" },
+        advanced: {
+          label: "Advanced",
+          subtitle: "Logging / Telemetry / Experiments",
+        },
       },
       general: {
         language: "Display language",
@@ -367,12 +367,14 @@ const STRINGS = {
         autoUpdateDesc: "Notify when a new version is available",
         enableAutoUpdate: "Enable auto-update",
         telemetry: "Anonymous telemetry",
-        telemetryDesc: "Help improve CodeSage (sends only anonymous usage stats)",
+        telemetryDesc:
+          "Help improve CodeSage (sends only anonymous usage stats)",
         enableTelemetry: "Enable telemetry",
       },
       models: {
         sectionTitle: "Models",
-        sectionDesc: "Configure LLM providers and API keys. Each provider is managed independently.",
+        sectionDesc:
+          "Configure LLM providers and API keys. Each provider is managed independently.",
         defaultModel: "Default model",
         defaultModelDesc: "Model used when starting a new session",
         defaultProvider: "Default provider",
@@ -384,19 +386,8 @@ const STRINGS = {
         modelsCount: "Models ({count})",
       },
       agent: {
-        sectionTitle: "Budget & Agent",
-        sectionDesc: "Budget control and sub-agent behavior",
-        maxIter: "Max iterations",
-        maxIterHint: "1-100",
-        maxIterDesc: "Maximum number of agent loop iterations per task",
-        maxDur: "Max duration (seconds)",
-        maxDurDesc: "Maximum execution time for a single task",
-        warnTh: "Budget warning threshold",
-        warnThDesc: "Trigger yellow warning at this percentage",
-        subRatio: "Sub-agent budget ratio",
-        subRatioDesc: "Budget ratio available to sub-agents relative to parent",
-        allowContinue: "Allow continue on budget exhaustion",
-        allowContinueLabel: "Allow continuing with +10 iterations",
+        sectionTitle: "Agent",
+        sectionDesc: "Sub-agent behavior and loop parameters",
         enablePlanning: "Plan mode",
         enablePlanningLabel: "Auto-generate Todo plan for large tasks",
         enableStreaming: "Streaming output",
@@ -423,7 +414,8 @@ const STRINGS = {
       },
       shortcuts: {
         sectionTitle: "Shortcuts",
-        sectionDesc: 'View and rebind shortcuts. Click "Record" then press a new key combination.',
+        sectionDesc:
+          'View and rebind shortcuts. Click "Record" then press a new key combination.',
         record: "Record",
         send: "Send message",
         newLine: "Newline",
@@ -527,28 +519,36 @@ const STRINGS = {
     walkthrough: {
       title: "Welcome to CodeSage",
       step1Title: "Smart conversations",
-      step1Desc: "CodeSage supports multi-turn chat, tool calling, code generation, and visible thinking process.",
+      step1Desc:
+        "CodeSage supports multi-turn chat, tool calling, code generation, and visible thinking process.",
       step2Title: "Tools & files",
-      step2Desc: "Type @ to mention files. Tool calls appear in assistant messages and can be applied to the editor with one click.",
+      step2Desc:
+        "Type @ to mention files. Tool calls appear in assistant messages and can be applied to the editor with one click.",
       step3Title: "Shortcuts",
-      step3Desc: "Cmd+K opens the command palette, Cmd+B toggles the sidebar, Esc stops generation.",
+      step3Desc:
+        "Cmd+K opens the command palette, Cmd+B toggles the sidebar, Esc stops generation.",
       step4Title: "Settings",
-      step4Desc: "All config is stored in ~/codesage/settings.json. You can edit it manually or via the settings view.",
+      step4Desc:
+        "All config is stored in ~/codesage/settings.json. You can edit it manually or via the settings view.",
       next: "Next",
       skip: "Skip",
       done: "Get started",
+      openSettingsFolder: "Open settings folder",
     },
     error: {
       title: "Error",
       networkOffline: "Loading exception, some resources may be missing",
-      networkOfflineDesc: "CodeSage interface failed to load, some resources may be missing.",
+      networkOfflineDesc:
+        "CodeSage interface failed to load, some resources may be missing.",
       reload: "Reload",
       sendFailed: "Failed to send message: {message}",
       commandFailed: "Command execution failed: {message}",
       fileHandle: "File handling failed: {message}",
-      noModel: "No models available. Please configure a provider in settings first.",
+      noModel:
+        "No models available. Please configure a provider in settings first.",
       responseTimeout: "Response timeout, please retry",
-      apiKey: "No AI response received. Please check: 1) Is API Key configured? 2) Is the network connection OK?",
+      apiKey:
+        "No AI response received. Please check: 1) Is API Key configured? 2) Is the network connection OK?",
     },
   },
 };
@@ -563,6 +563,17 @@ export function setLocale(locale) {
   if (STRINGS[locale]) {
     currentLocale = locale;
     document.documentElement.setAttribute("lang", locale.split("-")[0]);
+    // 持久化到 state,跨重启保留。
+    // state.js 末尾的 state:change listener 会自动调 state.persist() 写 localStorage。
+    // 走同步拿:bundler 会把 state.js 提前打包并挂到 window.__bundle__.state,
+    // 这里直接取同步值,避免动态 import() 在打包后产生孤立的 .then() 链
+    // 触发 SyntaxError。原注释说"为防循环依赖"才用动态 import,
+    // 但 i18n 跟 state 互不依赖,改成同步即可。
+    try {
+      window.__bundle__.state.set("language", locale);
+    } catch (_) {
+      /* state 还没就绪/bundler 未加载 — 跳过持久化,不影响当前切换 */
+    }
   }
 }
 
@@ -576,7 +587,9 @@ export function t(key, params = {}) {
   }
   if (typeof cur !== "string") return key;
   // 插值 {name}
-  return cur.replace(/\{(\w+)\}/g, (_, k) => (params[k] != null ? String(params[k]) : `{${k}}`));
+  return cur.replace(/\{(\w+)\}/g, (_, k) =>
+    params[k] != null ? String(params[k]) : `{${k}}`,
+  );
 }
 
 /** 检查 key 是否存在 */

@@ -10,6 +10,7 @@
 
 import { t } from "../i18n.js";
 import { Modal } from "./cs-modal.js";
+import { bridge } from "../bridge.js";
 
 const STORAGE_KEY = "codesage_walkthrough_v1";
 
@@ -37,6 +38,14 @@ const STEPS = [
     desc: () => t("walkthrough.step4Desc"),
     icon: "fa-cog",
     color: "var(--warning)",
+    // 第 4 步额外渲染 “打开设置目录” 按钮,
+    // 兜底 settings.json 脏数据 / 损坏时用户可以手动清理
+    extra: () => `
+      <button class="cs-button variant-ghost size-sm cs-walkthrough-extra" data-cs-walkthrough-action="open-folder">
+        <i class="fas fa-folder-open"></i>
+        <span>${escapeHtml(t("walkthrough.openSettingsFolder") || "打开设置目录")}</span>
+      </button>
+    `,
   },
 ];
 
@@ -56,15 +65,18 @@ export class Walkthrough {
       const step = STEPS[current];
       const total = STEPS.length;
       const dots = STEPS.map(
-        (_, i) => `<span class="cs-walkthrough-dot ${i === current ? "active" : ""}"></span>`,
+        (_, i) =>
+          `<span class="cs-walkthrough-dot ${i === current ? "active" : ""}"></span>`,
       ).join("");
       const isLast = current === STEPS.length - 1;
+      const extraHtml = typeof step.extra === "function" ? step.extra() : "";
       content.innerHTML = `
         <div class="cs-walkthrough-icon" style="background:${step.color}-soft;color:${step.color};" aria-hidden="true">
           <i class="fas ${step.icon}"></i>
         </div>
         <h2 class="cs-walkthrough-title">${escapeHtml(step.title())}</h2>
         <p class="cs-walkthrough-desc">${escapeHtml(step.desc())}</p>
+        ${extraHtml}
         <div class="cs-walkthrough-dots" aria-hidden="true">${dots}</div>
         <div class="cs-walkthrough-actions">
           <button class="cs-button variant-ghost size-md" data-cs-action="skip">${escapeHtml(t("walkthrough.skip"))}</button>
@@ -88,21 +100,44 @@ export class Walkthrough {
     };
 
     const bindActions = () => {
-      content.querySelector('[data-cs-action="skip"]')?.addEventListener("click", () => cleanup(false));
-      content.querySelector('[data-cs-action="next"]')?.addEventListener("click", () => {
-        if (current < STEPS.length - 1) {
-          current++;
-          render();
-        } else {
-          cleanup(true);
-        }
-      });
-      content.querySelector('[data-cs-action="prev"]')?.addEventListener("click", () => {
-        if (current > 0) {
-          current--;
-          render();
-        }
-      });
+      content
+        .querySelector('[data-cs-action="skip"]')
+        ?.addEventListener("click", () => cleanup(false));
+      content
+        .querySelector('[data-cs-action="next"]')
+        ?.addEventListener("click", () => {
+          if (current < STEPS.length - 1) {
+            current++;
+            render();
+          } else {
+            cleanup(true);
+          }
+        });
+      content
+        .querySelector('[data-cs-action="prev"]')
+        ?.addEventListener("click", () => {
+          if (current > 0) {
+            current--;
+            render();
+          }
+        });
+      // “打开设置目录” 额外动作 — 不关 modal,点完后用户还可以继续
+      // walkthrough(点 skip 关闭),仅送一个 bridge 消息让 Kotlin 弹文件夹
+      content
+        .querySelector('[data-cs-walkthrough-action="open-folder"]')
+        ?.addEventListener("click", (e) => {
+          e.preventDefault();
+          try {
+            if (bridge?.send) {
+              bridge.send({ type: "settings_open_folder" });
+            }
+          } catch (err) {
+            console.warn(
+              "[walkthrough] failed to send settings_open_folder:",
+              err,
+            );
+          }
+        });
     };
 
     const modal = new Modal({

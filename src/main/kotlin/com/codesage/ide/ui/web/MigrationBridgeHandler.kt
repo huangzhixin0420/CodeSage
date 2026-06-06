@@ -83,12 +83,6 @@ class MigrationBridgeHandler(
             oldDefaultModel = config.defaultModel,
             oldCodingModel = config.codingModel,
             oldReasoningModel = config.reasoningModel,
-            oldMaxIterations = config.maxIterationsPerTask,
-            oldMaxTokens = config.maxTokensPerTask,
-            oldMaxDuration = config.maxDurationSecondsPerTask,
-            oldBudgetWarning = config.budgetWarningThreshold,
-            oldSubAgentRatio = config.subAgentBudgetRatio,
-            oldAllowContinue = config.allowContinueOnExhaustion,
             oldEnableStreaming = config.enableStreaming,
             oldMaxContextMessages = config.maxContextMessages,
             oldTruncationStrategy = config.truncationStrategy,
@@ -181,12 +175,6 @@ class MigrationBridgeHandler(
             oldDefaultModel = config.defaultModel,
             oldCodingModel = config.codingModel,
             oldReasoningModel = config.reasoningModel,
-            oldMaxIterations = config.maxIterationsPerTask,
-            oldMaxTokens = config.maxTokensPerTask,
-            oldMaxDuration = config.maxDurationSecondsPerTask,
-            oldBudgetWarning = config.budgetWarningThreshold,
-            oldSubAgentRatio = config.subAgentBudgetRatio,
-            oldAllowContinue = config.allowContinueOnExhaustion,
             oldEnableStreaming = config.enableStreaming,
             oldMaxContextMessages = config.maxContextMessages,
             oldTruncationStrategy = config.truncationStrategy,
@@ -246,25 +234,7 @@ internal object SettingsBridgeHandlerBridge {
         val settings = SettingsRepository.getInstance().get()
         val map = mutableMapOf<String, Any?>(
             "type" to "settings_data",
-            "settings" to mapOf(
-                "providers" to settings.providers.map { p ->
-                    mapOf(
-                        "id" to p.id,
-                        "name" to p.name,
-                        "type" to p.type,
-                        "baseUrl" to p.baseUrl,
-                        "enabled" to p.enabled,
-                        "apiKeyRef" to p.apiKeyRef,
-                        "models" to p.models.map { m ->
-                            mapOf("id" to m.id, "label" to m.label, "isDefault" to m.isDefault)
-                        },
-                    )
-                },
-                "defaults" to mapOf(
-                    "providerId" to settings.defaults.providerId,
-                    "model" to settings.defaults.model,
-                ),
-            ),
+            "settings" to SettingsBridgeHandler.settingsToMap(settings),
         )
         map["path"] = SettingsRepository.getInstance().getPath()?.toString() ?: ""
         onMessage(map)

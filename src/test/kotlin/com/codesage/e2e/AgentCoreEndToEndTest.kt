@@ -3,7 +3,6 @@ package com.codesage.e2e
 import com.codesage.agent.core.AgentConfig
 import com.codesage.agent.core.AgentCore
 import com.codesage.agent.core.AgentStreamEvent
-import com.codesage.agent.core.TaskBudget
 import com.codesage.model.adapter.ModelAdapter
 import com.codesage.model.dto.*
 import com.codesage.model.gateway.ModelGateway
@@ -101,26 +100,6 @@ class AgentCoreEndToEndTest {
             assertEquals("Response $i", text)
             assertTrue(events.any { it is AgentStreamEvent.Done })
         }
-    }
-
-    @Test
-    fun `E2E budget exhaustion is signaled when iteration limit reached`() = runBlocking {
-        // 创建低预算的 agent
-        val lowBudgetAgent = AgentCore(gateway = fakeGateway)
-        lowBudgetAgent.initialize(
-            AgentConfig(
-                budgetConfig = TaskBudget.BudgetConfig(
-                    maxIterations = 1,
-                    enableIteration = true
-                )
-            )
-        )
-
-        // 第一次请求会因预算耗尽而结束
-        fakeAdapter.queueResponse(Message.assistantMessage("Trying to continue"))
-        val events = lowBudgetAgent.chatWithTools("Test").toList()
-        val hasBudgetEvent = events.any { it is AgentStreamEvent.BudgetExhausted }
-        assertTrue(hasBudgetEvent, "should signal budget exhaustion with iteration limit of 1")
     }
 
     @Test

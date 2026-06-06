@@ -26,6 +26,7 @@ const STATUS_META = {
   completed: { icon: "fas fa-check", cls: "tool-status-completed" },
   failed: { icon: "fas fa-times", cls: "tool-status-failed" },
   confirm: { icon: "fas fa-exclamation", cls: "tool-status-confirm" },
+  stopped: { icon: "fas fa-stop", cls: "tool-status-stopped" },
 };
 
 const KIND_LABEL = {
@@ -48,6 +49,7 @@ export class ToolCall {
     this.summary = opts.summary || "";
     this.arguments = opts.arguments || null;
     this.kind = opts.kind || null;
+    this.icon = opts.icon || null; // 工具专属图标 (来自 Kotlin Tool schema)
     this.startTime = Date.now();
     this.endTime = null;
     this.status = "running";
@@ -59,11 +61,24 @@ export class ToolCall {
     this.el.setAttribute("data-cs-tool", this.toolCallId);
     this._renderHeader();
     this._renderBody();
+    // 启动超时看门狗(5 分钟还没 complete/fail/stop 就 auto-stop)
+    this._startWatchdog();
   }
 
   _renderHeader() {
     const meta = STATUS_META[this.status];
     const isMcp = this.name.startsWith("mcp__");
+    // 工具专属图标: 优先用后端传来的 icon, MCP 用 mcp 图标
+    let iconHtml = "";
+    if (this.icon) {
+      iconHtml = `<i class="${escapeHtml(this.icon)}" style="margin-right:6px;font-size:13px;color:var(--fg-2);width:14px;text-align:center;"></i>`;
+    } else if (isMcp) {
+      iconHtml = `<i class="fas fa-plug" style="margin-right:6px;font-size:12px;color:var(--accent);width:14px;text-align:center;"></i>`;
+    } else {
+      // fallback: 用 tool kind 推断 (read_file → fa-file, edit_file → fa-pen 等)
+      iconHtml = `<i class="${escapeHtml(this._defaultIconFor(this.name))}" style="margin-right:6px;font-size:12px;color:var(--fg-2);width:14px;text-align:center;"></i>`;
+    }
+
     const displayName = isMcp
       ? `<span style="color:var(--accent);font-size:11px;background:var(--accent-soft);padding:1px 6px;border-radius:4px;margin-right:6px;">MCP: ${escapeHtml(this.serverName || "server")}</span>${escapeHtml(this.name.replace(/^mcp__/, ""))}`
       : escapeHtml(this.name);
@@ -71,6 +86,7 @@ export class ToolCall {
     const headerHtml = `
             <div class="tool-card-header" data-cs-role="header">
                 <div class="tool-status-icon ${meta.cls}"><i class="${meta.icon}"></i></div>
+                ${iconHtml}
                 <span class="tool-name">${displayName}</span>
                 <span class="tool-summary" data-cs-role="summary">${escapeHtml(truncate(this.summary, 60))}</span>
                 <span class="tool-time" data-cs-role="time" style="font-size:11px;color:var(--fg-3);font-variant-numeric:tabular-nums;"></span>
@@ -87,6 +103,19 @@ export class ToolCall {
     this.el
       .querySelector('[data-cs-role="header"]')
       .addEventListener("click", () => this.toggle());
+  }
+
+  _defaultIconFor(name) {
+    if (!name) return "fas fa-cog";
+    if (/read|view|cat|get/i.test(name)) return "fas fa-eye";
+    if (/write|create|save|put/i.test(name)) return "fas fa-file-circle-plus";
+    if (/edit|patch|modify|update/i.test(name)) return "fas fa-pen";
+    if (/delete|remove|rm/i.test(name)) return "fas fa-trash";
+    if (/search|find|grep|query/i.test(name)) return "fas fa-magnifying-glass";
+    if (/run|exec|shell|bash|command/i.test(name)) return "fas fa-terminal";
+    if (/git/i.test(name)) return "fab fa-git-alt";
+    if (/http|fetch|api|request/i.test(name)) return "fas fa-globe";
+    return "fas fa-cog";
   }
 
   _renderBody() {
@@ -113,6 +142,11 @@ export class ToolCall {
     } else if (this.status === "failed") {
       parts.push(
         `<div class="inline-alert error" style="margin:var(--space-2) var(--space-3);"><i class="fas fa-times-circle alert-icon"></i><div class="alert-body"><div class="alert-title">执行失败</div><div class="alert-message">${escapeHtml(this.error || "未知错误")}</div></div></div>`,
+      );
+    } else if (this.status === "stopped") {
+      // 跟 failed 区分:stopped 是“被中断/超时”,failed 是“后端报错误”
+      parts.push(
+        `<div class="inline-alert warning" style="margin:var(--space-2) var(--space-3);"><i class="fas fa-stop-circle alert-icon"></i><div class="alert-body"><div class="alert-title">工具未完成</div><div class="alert-message">${escapeHtml(this.error || "本轮未收到 complete/error 事件,工具被中断")}</div></div></div>`,
       );
     } else if (this.status === "completed" && this.result) {
       parts.push(this._renderResult());
@@ -321,21 +355,41 @@ export class ToolCall {
   }
 
   /** 标记完成,接收 result */
-  complete(result) {
-    this.status = result.success ? "completed" : "failed";
+  complete(success, result) {
+    this._clearWatchdog();
+    this.status = success ? "completed" : "failed";
     this.endTime = Date.now();
-    this.result = result.result || null;
-    this.error = result.result?.error || (result.success ? null : "执行失败");
+    // 兼容后端 AgentStreamEvent.ToolCallResult.result: String —
+    // Kotlin 端发的是 raw 字符串(可能是工具输出内容,也可能是错误信息),
+    // 但 _renderResult() 期望的是 { kind, content, text, ... } 结构化对象,
+    // 否则 r.content/r.text 都会是 undefined,渲染出空 code block
+    if (typeof result === "string") {
+      if (success) {
+        this.result = { kind: "text", content: result };
+        this.error = null;
+      } else {
+        this.result = null;
+        this.error = result || "执行失败";
+      }
+    } else if (result && typeof result === "object") {
+      this.result = result;
+      this.error = success
+        ? null
+        : result.error || result.message || "执行失败";
+    } else {
+      this.result = null;
+      this.error = success ? null : "执行失败";
+    }
     this._renderHeader();
     this._renderBody();
-    // 默认折叠(成功时)
+    // 默认折叠(成功时)— 减少视觉噪音
     if (this.status === "completed") {
       this.el.querySelector(".tool-content")?.classList.remove("open");
       this.el
         .querySelector('[data-cs-role="chevron"]')
         ?.classList.remove("open");
     } else {
-      // 失败时默认展开
+      // 失败时默认展开,让用户看到错误
       this.el.querySelector(".tool-content")?.classList.add("open");
     }
     // P5.5: sub-agent 展开/收起 按钮
@@ -367,17 +421,53 @@ export class ToolCall {
   }
 
   fail(error) {
+    this._clearWatchdog();
     this.status = "failed";
     this.endTime = Date.now();
-    this.error = error;
+    this.error = error || "未知错误";
     this._renderHeader();
     this._renderBody();
     this.el.querySelector(".tool-content")?.classList.add("open");
   }
-}
 
-// 工具函数 - 暴露给 utils 复用
-function formatDuration(ms) {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+  /**
+   * 标记为"已停止"(用户点停 / AI 提前结束 / 超时) — 跟 failed 区别:
+   * - failed: 后端报"执行失败",有具体错误
+   * - stopped: 本轮没人通知结果,可能是被中断或被遗忘
+   */
+  stop(reason) {
+    this._clearWatchdog();
+    this.status = "stopped";
+    this.endTime = Date.now();
+    this.error = reason || "工具未完成";
+    this._renderHeader();
+    this._renderBody();
+    this.el.querySelector(".tool-content")?.classList.add("open");
+  }
+
+  /**
+   * 5 分钟超时看门狗:如果 construct 之后 5min 还没收到 complete/fail/stop,
+   * 自动调 stop() 避免卡片永远转圈
+   */
+  _startWatchdog() {
+    this._clearWatchdog();
+    this._watchdogId = setTimeout(
+      () => {
+        if (this.status === "running") {
+          console.warn(
+            `[cs-tool-call] watchdog: ${this.name} (${this.toolCallId}) running >5min, auto-stopping`,
+          );
+          this.stop("工具执行超时(>5 分钟未收到 complete/error 事件)");
+        }
+      },
+      5 * 60 * 1000,
+    );
+  }
+
+  _clearWatchdog() {
+    if (this._watchdogId) {
+      clearTimeout(this._watchdogId);
+      this._watchdogId = null;
+    }
+  }
 }

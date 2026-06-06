@@ -75,12 +75,6 @@ data class DefaultsSection(
 
 @Serializable
 data class AgentSection(
-    val maxIterations: Int = 30,
-    val maxTokens: Int = 0,
-    val maxDurationSeconds: Int = 600,
-    val budgetWarningThreshold: Int = 70,
-    val subAgentBudgetRatio: Double = 0.5,
-    val allowContinueOnExhaustion: Boolean = true,
     val enablePlanning: Boolean = true,
     val enableParallelSubAgents: Boolean = false,
     val maxParallelSubAgents: Int = 3,

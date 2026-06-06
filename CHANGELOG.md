@@ -1,3 +1,38 @@
+# Changelog
+
+## [Unreleased] — 预算/轮次管理下线
+
+预算/轮次管理相关代码已整体下线(方案尚未成熟,等待重新设计)。
+
+**删除的文件**
+- `src/main/kotlin/com/codesage/agent/core/TaskBudget.kt`
+- `src/main/kotlin/com/codesage/agent/core/IterationBudget.kt`
+- `src/main/kotlin/com/codesage/ide/settings/BudgetSettingsConfigurable.kt`
+- `src/main/kotlin/com/codesage/ide/settings/BudgetSettingsPanel.kt`
+- `src/test/kotlin/com/codesage/agent/core/TaskBudgetTest.kt`
+- `src/test/kotlin/com/codesage/agent/core/IterationBudgetTest.kt`
+- `docs/BUDGET_ROUND_REDESIGN.md`
+
+**主要变更**
+- `AgentStreamEvent` 移除 `BudgetStatus` / `BudgetExhausted` / `BudgetExtended` 事件
+- `PluginConfig` 移除 `maxIterationsPerTask` / `maxTokensPerTask` / `maxDurationSecondsPerTask` /
+  `enableIterationBudget` / `enableTokenBudget` / `enableTimeBudget` / `budgetWarningThreshold` /
+  `subAgentBudgetRatio` / `allowContinueOnExhaustion` 配置
+- `SettingsSchema.AgentSection` 移除 `maxIterations` / `maxTokens` / `maxDurationSeconds` /
+  `budgetWarningThreshold` / `subAgentBudgetRatio` / `allowContinueOnExhaustion` 字段
+- `AgentCore` 移除 `currentBudgetConfig` / `lastExhaustedBudget` 字段和 `continueConversation` /
+  `canContinue` 方法
+- `AgentConfig` 移除 `budgetConfig` 字段
+- `EnhancedAgentLoop` 移除 `TaskBudget` 注入和分层预算状态机,主循环简化为 `while (!interrupted)`
+- `SubAgentExecutor` 移除 `parentBudget` 参数和子 Agent 预算配置(保留 `maxIterations` 作为 LLM 工具调用参数)
+- `JCEFChatPanel` 移除 `continue_task` 消息处理和 `onContinueBudget` 回调
+- `AgentToolWindowPanel` 移除 `onContinueBudget` 注入
+- `EventRouter` / `EventHistory` / `ChatPanel` / `AgentTurnPanel` 移除所有 `Budget*` 事件分发
+- 前端 `chat.html` / `styles/chat.css` / `js/views/chat.js` 移除预算状态徽标、预算耗尽面板、继续执行按钮
+- 前端 `js/views/settings.js` / `js/i18n.js` Agent 设置页移除预算相关表单字段
+- `SettingsBridgeHandler` / `MigrationBridgeHandler` / `SettingsMigrations` 移除相关字段映射
+
+---
 # CodeSage UI/UX 重构 — CHANGELOG
 
 > 完整执行了 `docs/UI_UX_REDESIGN_PROPOSAL.md` + `docs/UI_UX_REDESIGN_EXECUTION_PLAN.md` 的全部 5 个 Phase。

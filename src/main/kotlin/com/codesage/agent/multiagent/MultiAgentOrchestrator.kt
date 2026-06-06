@@ -82,10 +82,6 @@ abstract class BaseAgent(
                     errorMessage = event.message
                 }
 
-                is com.codesage.agent.core.AgentStreamEvent.BudgetExhausted -> {
-                    toolCallLog.appendLine("[BudgetExhausted] ${event.reason}")
-                }
-
                 else -> { /* ignore other events for result aggregation */
                 }
             }

@@ -91,36 +91,6 @@ sealed class AgentStreamEvent {
     ) : AgentStreamEvent()
 
     /**
-     * 预算状态更新（用于 UI 实时展示）
-     */
-    data class BudgetStatus(
-        val status: String, // OK / WARNING / CRITICAL / EXHAUSTED
-        val remainingIterations: Int,
-        val remainingTokens: Int,
-        val remainingSeconds: Int,
-        val usagePercent: Int
-    ) : AgentStreamEvent()
-
-    /**
-     * 预算耗尽（非错误，是可控暂停）
-     */
-    data class BudgetExhausted(
-        val reason: String,
-        val consumedIterations: Int,
-        val consumedTokens: Int,
-        val elapsedSeconds: Int,
-        val allowContinue: Boolean
-    ) : AgentStreamEvent()
-
-    /**
-     * 用户追加预算后恢复执行
-     */
-    data class BudgetExtended(
-        val extraIterations: Int,
-        val newRemainingIterations: Int
-    ) : AgentStreamEvent()
-
-    /**
      * 计划步骤定义
      */
     data class PlanStep(

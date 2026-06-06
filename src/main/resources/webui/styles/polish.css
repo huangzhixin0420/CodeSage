@@ -61,8 +61,12 @@
 }
 
 @keyframes skeleton-shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
 }
 
 .cs-skeleton-line {
@@ -71,9 +75,15 @@
     border-radius: var(--radius-sm);
 }
 
-.cs-skeleton-line.short { width: 40%; }
-.cs-skeleton-line.medium { width: 65%; }
-.cs-skeleton-line.long { width: 90%; }
+.cs-skeleton-line.short {
+    width: 40%;
+}
+.cs-skeleton-line.medium {
+    width: 65%;
+}
+.cs-skeleton-line.long {
+    width: 90%;
+}
 
 .cs-skeleton-circle {
     width: 28px;
@@ -135,6 +145,14 @@
     line-height: var(--leading-relaxed);
     margin: 0 auto var(--space-5);
     max-width: 380px;
+}
+
+/* walkthrough 额外动作按钮(例 “打开设置目录”)— 描述与 dots 之间 */
+.cs-walkthrough-extra {
+    margin: calc(-1 * var(--space-3)) auto var(--space-4);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .cs-walkthrough-dots {
@@ -250,12 +268,6 @@
 button:active:not([disabled]) {
     transform: scale(0.97);
     transition: transform 80ms ease-out;
-}
-
-/* 8. 数字滚动(预算 %) */
-.cs-budget-meter-anim {
-    transition: color var(--duration-slow) var(--ease-out),
-                background var(--duration-slow) var(--ease-out);
 }
 
 /* 9. 光标闪烁(已在 animations.css) */

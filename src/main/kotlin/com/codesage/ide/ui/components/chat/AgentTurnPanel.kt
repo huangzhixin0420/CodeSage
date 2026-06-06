@@ -130,14 +130,6 @@ class AgentTurnPanel(
         agentSection.setModelLabel(model)
     }
 
-    fun updateBudgetStatus(remainingIterations: Int, usagePercent: Int) {
-        agentSection.updateBudgetStatus(remainingIterations, usagePercent)
-    }
-
-    fun showBudgetExhausted(reason: String, consumedIterations: Int, allowContinue: Boolean) {
-        agentSection.showBudgetExhausted(reason, consumedIterations, allowContinue)
-    }
-
     fun getFullResponse(): String = agentContentBuilder.toString()
 
     // ========== 内部类：用户消息区域 ==========
@@ -190,12 +182,6 @@ class AgentTurnPanel(
             foreground = JBColor(Color(0x66_66_66), Color(0xAA_AA_AA))
         }
 
-        private val budgetLabel = JLabel("").apply {
-            font = JBUI.Fonts.smallFont()
-            foreground = JBColor(Color(0x88_88_88), Color(0x66_66_66))
-            isVisible = false
-        }
-
         init {
             isOpaque = false
             border = JBUI.Borders.empty(8, 16, 12, 16)
@@ -215,7 +201,6 @@ class AgentTurnPanel(
                 }
 
                 add(leftPanel, BorderLayout.WEST)
-                add(budgetLabel, BorderLayout.EAST)
             }
 
             // 思考面板（初始隐藏）
@@ -258,22 +243,6 @@ class AgentTurnPanel(
 
         fun setModelLabel(model: String) {
             modelLabel.text = "CodeSage · $model"
-        }
-
-        fun updateBudgetStatus(remainingIterations: Int, usagePercent: Int) {
-            budgetLabel.isVisible = true
-            budgetLabel.text = "剩余 ${remainingIterations} 轮 · ${usagePercent}%"
-            budgetLabel.foreground = when {
-                usagePercent >= 85 -> JBColor(Color(0xD3_2F_2F), Color(0xFF_8A_80))
-                usagePercent >= 70 -> JBColor(Color(0xED_6C_02), Color(0xFF_A0_00))
-                else -> JBColor(Color(0x88_88_88), Color(0x66_66_66))
-            }
-        }
-
-        fun showBudgetExhausted(reason: String, consumedIterations: Int, allowContinue: Boolean) {
-            budgetLabel.isVisible = true
-            budgetLabel.text = "⏸ 已暂停 · ${consumedIterations}轮"
-            budgetLabel.foreground = JBColor(Color(0xD3_2F_2F), Color(0xFF_8A_80))
         }
 
         // --- 思考过程 ---

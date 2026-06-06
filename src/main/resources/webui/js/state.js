@@ -72,6 +72,7 @@ export class AppState extends EventBus {
         "theme",
         "draft",
         "sidebarCollapsed",
+        "language", // i18n locale — 让 setLocale() 持久化能跨重启
       ]) {
         if (data[k] !== undefined) this._state[k] = data[k];
       }
@@ -90,6 +91,7 @@ export class AppState extends EventBus {
         "theme",
         "draft",
         "sidebarCollapsed",
+        "language", // 同上
       ]) {
         data[k] = this._state[k];
       }

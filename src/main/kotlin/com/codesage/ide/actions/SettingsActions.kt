@@ -9,7 +9,6 @@ import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.vfs.LocalFileSystem
-import java.awt.Desktop
 import java.io.File
 
 /**
@@ -28,24 +27,36 @@ class OpenSettingsFolderAction : AnAction(), DumbAware {
         /**
          * 在 OS 文件管理器中打开目录
          * 跨平台支持:macOS / Windows / Linux
+         *
+         * 之前默认走 Desktop.getDesktop().open(dir), 但在 macOS 上
+         * 有时 .isSupported(OPEN) 返回 false 或静默失败 — 改为按平台
+         * 直接调用对应的 shell 命令 (open / explorer / xdg-open) 更可控
          */
         fun openInOs(dir: File) {
             try {
                 if (!dir.exists()) {
                     dir.mkdirs()
                 }
-                if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
-                    Desktop.getDesktop().open(dir)
-                } else {
-                    // Linux fallback
-                    val os = System.getProperty("os.name").lowercase()
-                    val cmd = when {
-                        "mac" in os -> arrayOf("open", dir.absolutePath)
-                        "win" in os -> arrayOf("explorer.exe", dir.absolutePath)
-                        "nix" in os || "nux" in os -> arrayOf("xdg-open", dir.absolutePath)
-                        else -> arrayOf("xdg-open", dir.absolutePath)
-                    }
-                    Runtime.getRuntime().exec(cmd)
+                val absolute = dir.absolutePath
+                val os = System.getProperty("os.name").lowercase()
+                val cmd = when {
+                    "mac" in os -> arrayOf("open", absolute)
+                    "win" in os -> arrayOf("explorer.exe", absolute)
+                    else -> arrayOf("xdg-open", absolute)
+                }
+                val proc = ProcessBuilder(*cmd)
+                    .redirectErrorStream(true)
+                    .start()
+                // 等待命令结束,获取 exit code 用来判断是否成功
+                val exitCode = try {
+                    proc.waitFor()
+                } catch (e: Exception) {
+                    -1
+                }
+                if (exitCode != 0) {
+                    Logger.getLogger<OpenSettingsFolderAction>().warn(
+                        "open command returned exitCode=$exitCode for dir=$absolute"
+                    )
                 }
             } catch (e: Exception) {
                 Logger.getLogger<OpenSettingsFolderAction>().error("Failed to open settings folder", e)

@@ -160,7 +160,7 @@ function openModelSubmenu() {
           bridge.send({ type: "switch_model", model: m });
           toast.success(`已切换到 ${m}`);
         },
-      }))
+      })),
     ),
   });
   sub.open();
@@ -189,7 +189,7 @@ function showHelp() {
           (s) => `<tr>
             <td style="padding:4px 12px 4px 0;color:var(--fg-1);font-family:var(--font-mono);font-size:12px;white-space:nowrap;"><kbd style="background:var(--bg-1);border:1px solid var(--border);border-radius:4px;padding:2px 6px;">${s.k}</kbd></td>
             <td style="padding:4px 0;color:var(--fg-2);font-size:12px;">${s.d}</td>
-        </tr>`
+        </tr>`,
         )
         .join("")}
     </table>
@@ -259,7 +259,7 @@ export class CommandPalette {
                 ${c.hint ? `<div class="cs-cmd-item-hint">${escapeHtml(c.hint)}</div>` : ""}
               </div>
               ${c.shortcut ? `<kbd class="cs-cmd-item-shortcut">${escapeHtml(c.shortcut)}</kbd>` : ""}
-            </li>`
+            </li>`,
           )
           .join("")
       : `<li class="cs-cmd-empty">无匹配命令</li>`;
@@ -287,7 +287,10 @@ export class CommandPalette {
   _onKey(e) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      this.selectedIndex = Math.min(this.selectedIndex + 1, this._filtered.length - 1);
+      this.selectedIndex = Math.min(
+        this.selectedIndex + 1,
+        this._filtered.length - 1,
+      );
       this._highlight();
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
@@ -319,6 +322,26 @@ export class CommandPalette {
 
   open() {
     document.body.appendChild(this.el);
+    // 点击背景关闭 (palette 是 fixed 居中, 背景点击区域是 body)
+    this._onBackdropClick = (e) => {
+      if (!this.el.contains(e.target)) this.close();
+    };
+    // Esc 关闭 — input 里有内容时先清空, 再按 Esc 才真退出
+    this._onPaletteKey = (e) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (this.input.value) {
+        this.input.value = "";
+        this._updateFiltered();
+      } else {
+        this.close();
+      }
+    };
+    // mousedown 比 click 先触发, 避免“点空白处时输入框失焦
+    // 触发 blur 之类的副作用后才被点中”的竞态
+    document.addEventListener("mousedown", this._onBackdropClick, true);
+    document.addEventListener("keydown", this._onPaletteKey, true);
     requestAnimationFrame(() => {
       this.el.classList.add("open");
       this.input.focus();
@@ -328,6 +351,14 @@ export class CommandPalette {
 
   close() {
     this.el.classList.remove("open");
+    if (this._onBackdropClick) {
+      document.removeEventListener("mousedown", this._onBackdropClick, true);
+      this._onBackdropClick = null;
+    }
+    if (this._onPaletteKey) {
+      document.removeEventListener("keydown", this._onPaletteKey, true);
+      this._onPaletteKey = null;
+    }
     setTimeout(() => this.el.remove(), 180);
   }
 

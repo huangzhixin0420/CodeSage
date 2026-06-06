@@ -53,6 +53,7 @@ class ProviderSettingsConfigurable : Configurable {
     override fun reset() = settingsPanel?.reset() ?: Unit
     override fun getDisplayName(): String = "Providers & General"
     override fun disposeUIResources() {
+        settingsPanel?.dispose()
         settingsPanel = null
     }
 }
@@ -68,6 +69,9 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
 
     private val panelId = ++instanceCount
 
+    // 复用的协程作用域，避免每次测试连接都创建新 Scope
+    private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
     // 临时数据副本
     private var providerData = mutableListOf<ProviderEditData>()
     private var tempDefaultProviderId = ""
@@ -76,6 +80,9 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
 
     // 当前正在编辑的 provider 索引（用于解决切换时的保存竞态）
     private var editingProviderIndex: Int = -1
+
+    // display -> modelId 映射，避免模型名含 "(" 时 extractModelFromDisplay 解析错误
+    private val displayToModelMap = mutableMapOf<String, String>()
 
     // 左侧列表
     private val listModel = CollectionListModel<ProviderEditData>()
@@ -347,7 +354,7 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         updateFormEnabledState(p.isEnabled)
     }
 
-    private fun saveCurrentEditToData() {
+    private fun saveCurrentEditToData(notifyModel: Boolean = true) {
         val index = editingProviderIndex
         if (index >= 0 && index < listModel.size) {
             val data = listModel.getElementAt(index)
@@ -361,7 +368,9 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
                 val template = ProviderTemplate.TEMPLATES.find { it.name == templateName }
                 if (template != null) data.provider.providerType = template.providerType
             }
-            listModel.contentsChanged(data)
+            if (notifyModel) {
+                listModel.contentsChanged(data)
+            }
         }
     }
 
@@ -396,10 +405,12 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
     /* ---------- 默认模型 ---------- */
 
     private fun refreshModelCombos() {
+        displayToModelMap.clear()
         val allModels = mutableListOf<String>()
         providerData.filter { it.provider.isEnabled }.forEach { data ->
             data.provider.models.forEach { model ->
                 val display = "${model}  (${data.provider.name})"
+                displayToModelMap[display] = model
                 allModels.add(display)
             }
         }
@@ -414,7 +425,9 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         }
     }
 
-    private fun extractModelFromDisplay(display: String): String = display.substringBeforeLast(" (").trim()
+    private fun extractModelFromDisplay(display: String): String =
+        displayToModelMap[display] ?: display.substringBeforeLast(" (").trim()
+
     private fun findDisplayForModel(model: String): String? {
         for (i in 0 until defaultModelCombo.itemCount) {
             val item = defaultModelCombo.getItemAt(i)
@@ -451,8 +464,7 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         testButton.isEnabled = false
         testButton.text = "测试中..."
         testSpinner.isVisible = true
-        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        scope.launch {
+        coroutineScope.launch {
             val result = testProviderConnection(provider, apiKey, testModel)
             SwingUtilities.invokeLater {
                 testSpinner.isVisible = false
@@ -507,8 +519,7 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
         fetchModelsButton.isEnabled = false
         fetchModelsButton.text = "获取中..."
         fetchSpinner.isVisible = true
-        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        scope.launch {
+        coroutineScope.launch {
             val result = tryFetchModels(provider, apiKey)
             SwingUtilities.invokeLater {
                 fetchSpinner.isVisible = false
@@ -567,7 +578,7 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
     /* ---------- Configurable 接口 ---------- */
 
     fun isModified(): Boolean {
-        saveCurrentEditToData()
+        saveCurrentEditToData(notifyModel = false)
         val config = PluginConfig.getInstance()
         if (tempDefaultModel != config.defaultModel) return true
         if (tempDefaultProviderId != config.defaultProviderId) return true
@@ -682,6 +693,11 @@ class ProviderSettingsPanel : JPanel(BorderLayout()) {
             loadDataToEdit(firstData)
             (detailCards.layout as CardLayout).show(detailCards, "edit")
         }
+    }
+
+    fun dispose() {
+        coroutineScope.cancel()
+        logger.info("ProviderSettingsPanel #$panelId disposed")
     }
 }
 

@@ -25,6 +25,7 @@ import java.io.File
  */
 class SettingsBridgeHandler(
     private val onMessage: (Map<String, Any?>) -> Unit,
+    private val project: com.intellij.openapi.project.Project? = null,
 ) {
     private val logger = Logger.getLogger<SettingsBridgeHandler>()
 
@@ -77,25 +78,44 @@ class SettingsBridgeHandler(
 
     private fun updateSettings(raw: Any) {
         val repo = SettingsRepository.getInstance()
-        val json = DefaultSettingsJson.encodeToString(toJsonElement(raw))
-        try {
-            val parsed = DefaultSettingsJson.decodeFromString(SettingsFile.serializer(), json)
-            val ok = repo.save(parsed)
-            if (ok) {
-                onMessage(mapOf("type" to "settings_saved"))
-                sendData()
-            } else {
-                sendError("保存失败,请检查文件权限")
+        val parsed = try {
+            when (raw) {
+                is kotlinx.serialization.json.JsonElement ->
+                    DefaultSettingsJson.decodeFromJsonElement(SettingsFile.serializer(), raw)
+
+                else -> {
+                    val json = DefaultSettingsJson.encodeToString(toJsonElement(raw))
+                    DefaultSettingsJson.decodeFromString(SettingsFile.serializer(), json)
+                }
             }
         } catch (e: Exception) {
             logger.error("Failed to parse settings update", e)
             sendError("解析失败: ${e.message}")
+            return
+        }
+        val ok = repo.save(parsed)
+        if (ok) {
+            onMessage(mapOf("type" to "settings_saved"))
+            sendData()
+        } else {
+            sendError("保存失败,请检查文件权限")
         }
     }
 
     private fun openFolder() {
         ApplicationManager.getApplication().invokeLater {
-            val path = SettingsRepository.getInstance().getPath()?.parent ?: return@invokeLater
+            val repo = SettingsRepository.getInstance()
+            // 防御:如果 repo 还没初始化完 (getPath() == null),主动触发一次 reload 让它写盘并设置 path
+            if (repo.getPath() == null) {
+                logger.warn("settings_open_folder: SettingsRepository.getPath() == null, forcing reload")
+                repo.reload()
+            }
+            val path = repo.getPath()?.parent
+            if (path == null) {
+                logger.error("settings_open_folder: settings path unavailable after reload; cannot open folder")
+                onMessage(mapOf("type" to "settings_error", "message" to "无法定位 settings.json 所在目录"))
+                return@invokeLater
+            }
             OpenSettingsFolderAction.openInOs(path.toFile())
         }
     }
@@ -104,126 +124,32 @@ class SettingsBridgeHandler(
         ApplicationManager.getApplication().invokeLater {
             val path = SettingsRepository.getInstance().getPath()?.toFile() ?: return@invokeLater
             val vf = LocalFileSystem.getInstance().findFileByIoFile(path)
-            val project = com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
-            if (vf != null && project != null) {
-                FileEditorManager.getInstance(project).openTextEditor(
-                    OpenFileDescriptor(project, vf, 0),
+            val targetProject =
+                project ?: com.intellij.openapi.project.ProjectManager.getInstance().openProjects.firstOrNull()
+            if (vf != null && targetProject != null) {
+                FileEditorManager.getInstance(targetProject).openTextEditor(
+                    OpenFileDescriptor(targetProject, vf, 0),
                     false
                 )
             } else {
-                logger.warn("settings.json not found in VFS: $path (project=${project != null}, vf=${vf != null})")
+                logger.warn("settings.json not found in VFS: $path (project=${targetProject != null}, vf=${vf != null})")
             }
         }
     }
 
     /**
-     * 把 SettingsFile 转换为 Map(供 JS 端消费)
-     */
-    private fun settingsToMap(s: SettingsFile): Map<String, Any?> = mapOf(
-        "\$schema" to s.schema,
-        "version" to s.version,
-        "providers" to s.providers.map { p ->
-            mapOf(
-                "id" to p.id,
-                "name" to p.name,
-                "type" to p.type,
-                "baseUrl" to p.baseUrl,
-                "enabled" to p.enabled,
-                "apiKeyRef" to p.apiKeyRef,
-                "models" to p.models.map { m ->
-                    mapOf(
-                        "id" to m.id,
-                        "label" to m.label,
-                        "contextSize" to m.contextSize,
-                        "supportsTools" to m.supportsTools,
-                        "supportsVision" to m.supportsVision,
-                        "isDefault" to m.isDefault,
-                    )
-                },
-                "metadata" to p.metadata,
-            )
-        },
-        "defaults" to mapOf(
-            "providerId" to s.defaults.providerId,
-            "model" to s.defaults.model,
-            "mode" to s.defaults.mode,
-            "codingModel" to s.defaults.codingModel,
-            "reasoningModel" to s.defaults.reasoningModel,
-            "visionModel" to s.defaults.visionModel,
-        ),
-        "agent" to mapOf(
-            "maxIterations" to s.agent.maxIterations,
-            "maxTokens" to s.agent.maxTokens,
-            "maxDurationSeconds" to s.agent.maxDurationSeconds,
-            "budgetWarningThreshold" to s.agent.budgetWarningThreshold,
-            "subAgentBudgetRatio" to s.agent.subAgentBudgetRatio,
-            "allowContinueOnExhaustion" to s.agent.allowContinueOnExhaustion,
-            "enablePlanning" to s.agent.enablePlanning,
-            "enableParallelSubAgents" to s.agent.enableParallelSubAgents,
-            "maxParallelSubAgents" to s.agent.maxParallelSubAgents,
-            "enableStreaming" to s.agent.enableStreaming,
-            "maxContextMessages" to s.agent.maxContextMessages,
-            "truncationStrategy" to s.agent.truncationStrategy,
-            "promptRole" to s.agent.promptRole,
-            "autoSaveEnabled" to s.agent.autoSaveEnabled,
-        ),
-        "ui" to mapOf(
-            "theme" to s.ui.theme,
-            "showThinking" to s.ui.showThinking,
-            "compactMode" to s.ui.compactMode,
-            "fontSize" to s.ui.fontSize,
-            "codeBlockTheme" to s.ui.codeBlockTheme,
-            "streamMarkdownLive" to s.ui.streamMarkdownLive,
-            "animationSpeed" to s.ui.animationSpeed,
-            "sidebarCollapsed" to s.ui.sidebarCollapsed,
-            "language" to s.ui.language,
-        ),
-        "editor" to mapOf(
-            "autoAttachSelection" to s.editor.autoAttachSelection,
-            "autoAttachFileContext" to s.editor.autoAttachFileContext,
-            "maxContextFiles" to s.editor.maxContextFiles,
-            "autoSaveOnSend" to s.editor.autoSaveOnSend,
-        ),
-        "shortcuts" to mapOf(
-            "send" to s.shortcuts.send,
-            "newLine" to s.shortcuts.newLine,
-            "stop" to s.shortcuts.stop,
-            "commandPalette" to s.shortcuts.commandPalette,
-            "toggleThinking" to s.shortcuts.toggleThinking,
-            "switchModel" to s.shortcuts.switchModel,
-            "toggleSidebar" to s.shortcuts.toggleSidebar,
-            "newSession" to s.shortcuts.newSession,
-        ),
-        "mcp" to mapOf(
-            "servers" to s.mcp.servers.map { srv ->
-                mapOf(
-                    "id" to srv.id,
-                    "name" to srv.name,
-                    "transport" to srv.transport,
-                    "command" to srv.command,
-                    "args" to srv.args,
-                    "url" to srv.url,
-                    "enabled" to srv.enabled,
-                    "env" to srv.env,
-                )
-            }
-        ),
-        "advanced" to mapOf(
-            "enableTelemetry" to s.advanced.enableTelemetry,
-            "telemetryEndpoint" to s.advanced.telemetryEndpoint,
-            "logLevel" to s.advanced.logLevel,
-            "autoUpdate" to s.advanced.autoUpdate,
-            "checkUpdateIntervalHours" to s.advanced.checkUpdateIntervalHours,
-            "experimentalFeatures" to s.advanced.experimentalFeatures,
-            "customCss" to s.advanced.customCss,
-        ),
-    )
-
-    /**
      * 任意对象转 JsonElement
+     *
+     * 关键:当 value 已经是 JsonElement(从 JBCefJSQuery 来的 `data["settings"]` 就是
+     * `JsonElement`,而非裸 Map)时,直接原样返回。否则走 `else` 分支用 `value.toString()`
+     * 重建会出问题:`JsonPrimitive("en-US").toString()` 对 string 类型返回 `"en-US"`(带引号
+     * 的 JSON 表示),再用这个字符串建 `JsonPrimitive` 编码后变成 `"\"en-US\""`,解码回
+     * 来 language 就成了带引号的 `"en-US"`,跟 select option 的 `value="en-US"`(不带引号)
+     * 严格比较不匹配,select 落到默认第一项,UI 看上去就是“恢复成简体中文”。
      */
     private fun toJsonElement(value: Any?): kotlinx.serialization.json.JsonElement {
         return when (value) {
+            is kotlinx.serialization.json.JsonElement -> value
             is Map<*, *> -> kotlinx.serialization.json.JsonObject(
                 value.entries.associate { (k, v) -> k.toString() to toJsonElement(v) }
             )
@@ -246,5 +172,103 @@ class SettingsBridgeHandler(
             explicitNulls = false
             isLenient = true
         }
+
+        /**
+         * 把 SettingsFile 转换为 Map(供 JS 端消费)
+         * 提取为 companion internal，供 MigrationBridgeHandlerBridge 复用
+         */
+        internal fun settingsToMap(s: SettingsFile): Map<String, Any?> = mapOf(
+            "\$schema" to s.schema,
+            "version" to s.version,
+            "providers" to s.providers.map { p ->
+                mapOf(
+                    "id" to p.id,
+                    "name" to p.name,
+                    "type" to p.type,
+                    "baseUrl" to p.baseUrl,
+                    "enabled" to p.enabled,
+                    "apiKeyRef" to p.apiKeyRef,
+                    "models" to p.models.map { m ->
+                        mapOf(
+                            "id" to m.id,
+                            "label" to m.label,
+                            "contextSize" to m.contextSize,
+                            "supportsTools" to m.supportsTools,
+                            "supportsVision" to m.supportsVision,
+                            "isDefault" to m.isDefault,
+                        )
+                    },
+                    "metadata" to p.metadata,
+                )
+            },
+            "defaults" to mapOf(
+                "providerId" to s.defaults.providerId,
+                "model" to s.defaults.model,
+                "mode" to s.defaults.mode,
+                "codingModel" to s.defaults.codingModel,
+                "reasoningModel" to s.defaults.reasoningModel,
+                "visionModel" to s.defaults.visionModel,
+            ),
+            "agent" to mapOf(
+                "enablePlanning" to s.agent.enablePlanning,
+                "enableParallelSubAgents" to s.agent.enableParallelSubAgents,
+                "maxParallelSubAgents" to s.agent.maxParallelSubAgents,
+                "enableStreaming" to s.agent.enableStreaming,
+                "maxContextMessages" to s.agent.maxContextMessages,
+                "truncationStrategy" to s.agent.truncationStrategy,
+                "promptRole" to s.agent.promptRole,
+                "autoSaveEnabled" to s.agent.autoSaveEnabled,
+            ),
+            "ui" to mapOf(
+                "theme" to s.ui.theme,
+                "showThinking" to s.ui.showThinking,
+                "compactMode" to s.ui.compactMode,
+                "fontSize" to s.ui.fontSize,
+                "codeBlockTheme" to s.ui.codeBlockTheme,
+                "streamMarkdownLive" to s.ui.streamMarkdownLive,
+                "animationSpeed" to s.ui.animationSpeed,
+                "sidebarCollapsed" to s.ui.sidebarCollapsed,
+                "language" to s.ui.language,
+            ),
+            "editor" to mapOf(
+                "autoAttachSelection" to s.editor.autoAttachSelection,
+                "autoAttachFileContext" to s.editor.autoAttachFileContext,
+                "maxContextFiles" to s.editor.maxContextFiles,
+                "autoSaveOnSend" to s.editor.autoSaveOnSend,
+            ),
+            "shortcuts" to mapOf(
+                "send" to s.shortcuts.send,
+                "newLine" to s.shortcuts.newLine,
+                "stop" to s.shortcuts.stop,
+                "commandPalette" to s.shortcuts.commandPalette,
+                "toggleThinking" to s.shortcuts.toggleThinking,
+                "switchModel" to s.shortcuts.switchModel,
+                "toggleSidebar" to s.shortcuts.toggleSidebar,
+                "newSession" to s.shortcuts.newSession,
+            ),
+            "mcp" to mapOf(
+                "servers" to s.mcp.servers.map { srv ->
+                    mapOf(
+                        "id" to srv.id,
+                        "name" to srv.name,
+                        "transport" to srv.transport,
+                        "command" to srv.command,
+                        "args" to srv.args,
+                        "url" to srv.url,
+                        "enabled" to srv.enabled,
+                        "env" to srv.env,
+                    )
+                }
+            ),
+            "advanced" to mapOf(
+                "enableTelemetry" to s.advanced.enableTelemetry,
+                "telemetryEndpoint" to s.advanced.telemetryEndpoint,
+                "logLevel" to s.advanced.logLevel,
+                "autoUpdate" to s.advanced.autoUpdate,
+                "checkUpdateIntervalHours" to s.advanced.checkUpdateIntervalHours,
+                "experimentalFeatures" to s.advanced.experimentalFeatures,
+                "customCss" to s.advanced.customCss,
+            ),
+        )
     }
 }

@@ -90,7 +90,7 @@ object SettingsMigrations {
      * 合并:
      *   - 旧 providers → 新 providers
      *   - 旧 defaultProviderId / defaultModel → 新 defaults
-     *   - 旧 budget / agent 设置 → 新 agent
+     *   - 旧 agent 设置 → 新 agent
      *   - 旧 MCP servers → 新 mcp.servers
      */
     fun buildMigratedSettings(
@@ -99,12 +99,6 @@ object SettingsMigrations {
         oldDefaultModel: String = "",
         oldCodingModel: String = "",
         oldReasoningModel: String = "",
-        oldMaxIterations: Int = 30,
-        oldMaxTokens: Int = 0,
-        oldMaxDuration: Int = 600,
-        oldBudgetWarning: Int = 70,
-        oldSubAgentRatio: Double = 0.5,
-        oldAllowContinue: Boolean = true,
         oldEnableStreaming: Boolean = true,
         oldMaxContextMessages: Int = 50,
         oldTruncationStrategy: String = "HYBRID",
@@ -113,14 +107,8 @@ object SettingsMigrations {
     ): SettingsFile {
         val baseDefaults = DefaultSettings.create()
         val newAgent = baseDefaults.agent.copy(
-            maxIterations = oldMaxIterations.coerceAtLeast(1),
-            maxTokens = oldMaxTokens,
-            maxDurationSeconds = oldMaxDuration,
-            budgetWarningThreshold = oldBudgetWarning.coerceIn(10, 90),
-            subAgentBudgetRatio = oldSubAgentRatio.coerceIn(0.1, 1.0),
-            allowContinueOnExhaustion = oldAllowContinue,
             enableStreaming = oldEnableStreaming,
-            maxContextMessages = oldMaxContextMessages,
+            maxContextMessages = oldMaxContextMessages.coerceAtLeast(1),
             truncationStrategy = oldTruncationStrategy,
             promptRole = oldPromptRole,
         )

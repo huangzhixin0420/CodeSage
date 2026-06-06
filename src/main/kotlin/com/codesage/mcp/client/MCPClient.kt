@@ -264,28 +264,4 @@ class MCPClient(
     fun isConnected(): Boolean = connection?.isActive() == true
 }
 
-/**
- * WebSocket传输实现
- */
-class WebSocketTransport(
-    private val config: MCPServerConfig
-) : MCPTransport {
-    private val logger = Logger.getLogger<WebSocketTransport>()
-    private var connected = false
 
-    override suspend fun connect(): Boolean {
-        connected = true
-        return true
-    }
-
-    override suspend fun disconnect() {
-        connected = false
-    }
-
-    override suspend fun send(message: String): String? {
-        // WebSocket实现
-        return null
-    }
-
-    override fun isConnected(): Boolean = connected
-}

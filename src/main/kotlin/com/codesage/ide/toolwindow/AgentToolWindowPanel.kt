@@ -100,8 +100,8 @@ class AgentToolWindowPanel(
             logger.info("Initializing chatPanel with callbacks...")
             chatPanel.initialize(
                 scope = scope!!,
-                onSendMessage = { message, images ->
-                    logger.info("[AgentToolWindowPanel] onSendMessage called, message length=${message.length}, images=${images.size}, chatMode=${chatPanel.getCurrentChatMode()}")
+                onSendMessage = { message, images, userLanguage ->
+                    logger.info("[AgentToolWindowPanel] onSendMessage called, message length=${message.length}, images=${images.size}, chatMode=${chatPanel.getCurrentChatMode()}, userLanguage=$userLanguage")
                     // T1.5 修复：传用户选中的 chatMode 选区。null = 用户未选 → 后端建议。
                     val chatMode = chatPanel.getCurrentChatMode()
                     // P5.4: 检查当前模型是否支持 vision,不支持则提醒
@@ -110,9 +110,9 @@ class AgentToolWindowPanel(
                         // 不报错,继续发送(部分模型即使标记不支持也可能偶然能看图)
                     }
                     if (chatMode != null) {
-                        core.chatWithTools(message, mode = chatMode, userExplicit = true)
+                        core.chatWithTools(message, mode = chatMode, userExplicit = true, userLanguage = userLanguage)
                     } else {
-                        core.chatWithTools(message, userExplicit = false)
+                        core.chatWithTools(message, userExplicit = false, userLanguage = userLanguage)
                     }
                 },
                 onStop = { core.interrupt() },
@@ -149,14 +149,6 @@ class AgentToolWindowPanel(
                         "request_sessions" -> refreshSessionList()
                     }
                 },
-                onContinueBudget = { extraIterations ->
-                    logger.info("[AgentToolWindowPanel] continue budget invoked, extraIterations=$extraIterations")
-                    core.continueConversation(extraIterations)
-                        ?: kotlinx.coroutines.flow.flow {
-                            emit(com.codesage.agent.core.AgentStreamEvent.Error("无法继续：没有可恢复的已暂停任务"))
-                            emit(com.codesage.agent.core.AgentStreamEvent.Done)
-                        }
-                }
             )
 
             // Initialize model selector UI

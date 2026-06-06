@@ -103,9 +103,10 @@ class ChatView {
     if (!container) return;
     settings.init(container);
     settings.onBack = () => this._hideSettings();
-    // Esc 关闭 settings
+    // Esc 关闭 settings — settings.show() 会把 inline display 置为 ""
+    // 让 CSS 的 display:flex 生效,所以判断 !== "none" 才准确
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && container.style.display === "flex") {
+      if (e.key === "Escape" && container.style.display !== "none") {
         e.preventDefault();
         this._hideSettings();
       }
@@ -117,6 +118,17 @@ class ChatView {
     if (container) {
       container.style.display = "flex";
       settings.show();
+      // 防御:若 1.5s 内 settings_data 还没到,自动重发一次 settings_get
+      // (settings.show() 内部已经发了一次;这里防的是丢包/bridge 时序问题)
+      if (settings._dataLoadWatchdog) clearTimeout(settings._dataLoadWatchdog);
+      settings._dataLoadWatchdog = setTimeout(() => {
+        if (!settings.data) {
+          console.warn(
+            "[CodeSage] settings_data timeout, resending settings_get",
+          );
+          bridge.send({ type: "settings_get" });
+        }
+      }, 1500);
     }
   }
 
@@ -321,10 +333,16 @@ class ChatView {
   }
 
   _bindHeaderButtons() {
-    // Model dropdown
+    // Model dropdown — JS listener ONLY (HTML 上不能同时有 onclick,
+    // 否则会双触发:onclick 打开 + addEventListener 立即关闭,导致下拉被吞)
     this.modelSelectBtn?.addEventListener("click", (e) => {
       e.stopPropagation();
       this.toggleModelDropdown();
+    });
+    // Stop 按钮 — JS listener ONLY (同上,onclick + Escape keydown 会双触发)
+    this.stopBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.stopGeneration();
     });
     // History dropdown click outside
     document.addEventListener("click", (e) => {
@@ -377,7 +395,9 @@ class ChatView {
   }
 
   _onDocClick(e) {
-    const sel = document.getElementById("model-selector");
+    // 原代码查的是 model-selector(不存在),导致 model dropdown 点外面永远关不掉
+    // 改成 model-selector-bottom 才会命中
+    const sel = document.getElementById("model-selector-bottom");
     if (sel && !sel.contains(e.target)) this._closeModelDropdown();
   }
 
@@ -514,12 +534,21 @@ class ChatView {
     this._startAITurn();
     const images = this._pendingImages.slice();
     this._clearPendingImages();
+    // 当前 i18n locale(例 "zh-CN" / "en-US") → 后端会拼进 system prompt,要求模型用相同语言回答
+    let userLanguage = null;
+    try {
+      const fn = window.CodeSage?.i18n?.getLocale;
+      if (typeof fn === "function") userLanguage = fn() || null;
+    } catch (e) {
+      userLanguage = null;
+    }
     bridge.send({
       type: "send_message",
       content: text,
       turnId: state.get("currentTurnId"),
       model: state.get("currentModel"),
       images,
+      userLanguage,
     });
   }
 
@@ -542,8 +571,61 @@ class ChatView {
   }
 
   stopGeneration() {
+    if (!this._isGenerating) return;
+    // 1) 立刻告诉 Kotlin 停 — 协程会被 cancel,后面 text/thinking 等事件不会再到
     bridge.send({ type: "stop_generation" });
-    this._setStatus("就绪", "");
+    // 2) 本地立刻重置 UI,避免“状态显示就绪但按钮还是停止”的不一致
+    //    (之前只 _setStatus,导致按钮 / turn 计时器 / 状态全错位)
+    this._isGenerating = false;
+    this._swapButtons(false);
+    this._setStatus("已停止", "");
+    // 3) 清掉当前 turn 的计时器,标上"已停止"提示
+    const turnId = state.get("currentTurnId");
+    if (turnId) {
+      const turn = this.turns.get(turnId);
+      if (turn) {
+        clearInterval(turn.timer);
+        // 替换闪烁光标为"已停止"小标签,避免用户以为还在输出
+        const streamEl = turn.contentEl;
+        if (streamEl && streamEl.parentElement) {
+          const old = streamEl.parentElement.querySelector(".cursor-blink");
+          if (old) old.remove();
+        }
+        const stopped = document.createElement("span");
+        stopped.className = "cs-stream-stopped";
+        stopped.textContent = " · 已停止";
+        const meta = turn.el?.querySelector(".assistant-time");
+        if (meta) meta.after(stopped);
+        // 清扫本 turn 仍处于 running 的 tool 卡 — 用户点停意味着所有进行中的
+        // 工具也应该被中断,而不是“文字已停但工具还在转圈”
+        this._markRunningToolsStopped(turn, "工具未完成:用户已停止生成");
+      }
+      this.turns.delete(turnId);
+      state.set("currentTurnId", null);
+    }
+  }
+
+  /**
+   * 把指定 turn 下所有 status === "running" 的 tool 卡标为 "stopped"。
+   * 复用 ToolCall.stop() — 会调 _clearWatchdog + 重新渲染 header/body + 自动展开。
+   */
+  _markRunningToolsStopped(turn, reason) {
+    if (!turn?.toolsSlot) return;
+    const toolEls = turn.toolsSlot.querySelectorAll("[data-cs-tool]");
+    let stoppedCount = 0;
+    toolEls.forEach((toolEl) => {
+      const toolId = toolEl.dataset.csTool;
+      const tc = this.toolCalls.get(toolId);
+      if (tc && tc.status === "running") {
+        tc.stop(reason);
+        stoppedCount++;
+      }
+    });
+    if (stoppedCount > 0) {
+      console.info(
+        `[chat] marked ${stoppedCount} tool(s) as stopped in turn (reason: ${reason})`,
+      );
+    }
   }
 
   // ===== Mode (Agent / Ask / Manual) =====
@@ -610,9 +692,10 @@ class ChatView {
 
   // ===== Theme =====
   toggleTheme() {
+    // 之前是 auto→light→dark→auto 的 3 段循环,导致 dark→light 要点 2 次
+    // 改成简单双段:dark ↔ light,auto 视为 light(让用户点一下就有反应)
     const cur = state.get("theme") || "auto";
-    // auto → light → dark → auto
-    const next = cur === "auto" ? "light" : cur === "light" ? "dark" : "auto";
+    const next = cur === "dark" ? "light" : "dark";
     this.setTheme(next);
     bridge.send({ type: "theme_changed", theme: next });
   }
@@ -758,7 +841,7 @@ class ChatView {
 
   // ===== Thinking toggle =====
   toggleThinkingVisibility() {
-    const cur = state.get("showThinking");
+    const cur = state.get("showThinking", true);
     const next = !cur;
     state.set("showThinking", next);
     if (next) {
@@ -771,6 +854,12 @@ class ChatView {
       this.thinkingToggleIcon?.style.setProperty("color", "");
       this.thinkingToggleBtn?.style.setProperty("background", "");
     }
+    // 同步所有已存在的 thinking 元素的显示状态(切换后要立刻看到效果)
+    this.turns.forEach((turn) => {
+      if (turn?.thinking?.el) {
+        turn.thinking.el.style.display = next ? "" : "none";
+      }
+    });
   }
 
   // ===== Model =====
@@ -927,6 +1016,11 @@ class ChatView {
 
   // ===== Chat operations =====
   clearChat() {
+    // 1) 如果正在生成,先停掉 — 否则 turn 计时器 / stop 按钮 / status 状态
+    //    都会卡在"生成中"但消息区已被清空
+    if (this._isGenerating) {
+      this.stopGeneration();
+    }
     this.messagesContainer.innerHTML = "";
     this._showWelcome();
     this.turns.clear();
@@ -987,12 +1081,11 @@ class ChatView {
             <div class="assistant-meta">
                 <span class="assistant-name">CodeSage</span>
                 <span class="assistant-time" data-cs-role="timer">0.0s</span>
-                <span class="budget-status ok" data-cs-role="budget">就绪</span>
             </div>
             <div data-cs-role="thinking-slot"></div>
-            <div data-cs-role="tools-slot" class="tool-list"></div>
             <div data-cs-role="content" class="assistant-content markdown-content">
                 <span class="stream-text" data-cs-role="stream"></span><span class="cursor-blink">▌</span>
+                <div data-cs-role="tools-slot" class="tool-list-inline"></div>
             </div>
             <div class="stream-loading" data-cs-role="loading"><div class="stream-loading-bar"></div></div>
             <div class="turn-actions" data-cs-role="actions" style="opacity:0;">
@@ -1013,7 +1106,9 @@ class ChatView {
       el: div,
       startTime,
       content: "",
+      // content 区域内的 stream span — 文本 delta 只动这里,不动 tools-slot
       contentEl: div.querySelector('[data-cs-role="stream"]'),
+      // tools-slot 现在嵌在 content 内部 — 工具按到达顺序 inline 插入
       toolsSlot: div.querySelector('[data-cs-role="tools-slot"]'),
       thinkingSlot: div.querySelector('[data-cs-role="thinking-slot"]'),
       actionsEl: div.querySelector('[data-cs-role="actions"]'),
@@ -1042,12 +1137,26 @@ class ChatView {
     this._isGenerating = false;
     state.set("currentTurnId", null);
 
-    // Render final markdown
+    // 清扫本 turn 仍处于 running 的 tool 卡 — 避免“AI 答完但工具还在转圈”
+    // (后端可能丢 tool_call_complete/error,或 AI 在工具未结束时就被中断)
+    this._markRunningToolsStopped(turn, "工具未完成:AI 已结束回答");
+
+    // Render final markdown — 但要保留嵌在 content 内的工具卡
     const contentEl = turn.el.querySelector(".assistant-content");
     if (contentEl) {
+      // 工具卡先 detach 出来(避免被 innerHTML 覆盖)
+      const tools = Array.from(contentEl.querySelectorAll("[data-cs-tool]"));
+      tools.forEach((t) => t.remove());
       contentEl.innerHTML = renderMarkdownSync(turn.content);
       enhanceCodeBlocks(contentEl);
       highlightCode(contentEl);
+      // 把工具卡重新追加到 content 末尾(位置由 innerHTML 之后的兄弟元素决定)
+      const toolsSlot = contentEl.querySelector('[data-cs-role="tools-slot"]');
+      if (toolsSlot) {
+        tools.forEach((t) => toolsSlot.appendChild(t));
+      }
+      // 移除闪烁光标
+      contentEl.querySelector(".cursor-blink")?.remove();
     }
 
     if (turn.actionsEl) {
@@ -1077,6 +1186,9 @@ class ChatView {
     const turn = this.turns.get(turnId);
     if (!turn) return;
     turn.content += delta;
+    // 修复:之前 turn.contentEl 是 .assistant-content 整个容器, textContent=
+    // 会把里面嵌入的工具卡(innerHTML)全部干掉。现在只更新 stream-text span,
+    // 让工具卡保留在 content 内部按时间顺序排列
     if (turn.contentEl) turn.contentEl.textContent = turn.content;
     // Hide loading bar
     const loading = turn.el?.querySelector('[data-cs-role="loading"]');
@@ -1089,12 +1201,13 @@ class ChatView {
     if (!turn) return;
     if (!turn.thinking) {
       turn.thinking = new Thinking();
+      // 思考默认折叠(如果 showThinking 也为 false,直接不显示)
+      if (!state.get("showThinking", true)) {
+        turn.thinking.el.style.display = "none";
+      }
       turn.thinkingSlot?.appendChild(turn.thinking.el);
     }
     turn.thinking.appendContent(message + "\n");
-    if (state.get("showThinking")) {
-      // auto-open
-    }
   }
 
   _onThinkingUpdate(turnId, message) {
@@ -1109,7 +1222,7 @@ class ChatView {
     turn.thinking.complete(elapsedMs);
   }
 
-  _onToolCallStart(turnId, toolId, toolName, summary, args) {
+  _onToolCallStart(turnId, toolId, toolName, summary, args, icon) {
     const turn = this.turns.get(turnId);
     if (!turn) return;
     const tc = new ToolCall({
@@ -1118,7 +1231,10 @@ class ChatView {
       name: toolName,
       summary,
       arguments: args,
+      icon,
     });
+    // 工具卡插到 content 内部 (按流式时间顺序 inline 排列 — 解决之前
+    // "所有工具堆在回答最上方"的问题)
     turn.toolsSlot?.appendChild(tc.el);
     this.toolCalls.set(toolId, tc);
     scrollToBottom(this.messagesContainer);
@@ -1131,12 +1247,24 @@ class ChatView {
 
   _onToolCallComplete(turnId, toolId, success, result) {
     const tc = this.toolCalls.get(toolId);
-    if (tc) tc.complete({ success, result });
+    if (!tc) {
+      // 工具卡片还没创建 (理论不会发生) — 记录一下
+      console.warn("[chat] tool_call_complete for unknown tool", toolId);
+      return;
+    }
+    // result 可能是完整 result 对象或 null
+    tc.complete(success, result);
   }
 
   _onToolCallError(turnId, toolId, error) {
     const tc = this.toolCalls.get(toolId);
-    if (tc) tc.fail(error);
+    if (!tc) return;
+    // error 可能是 string, 也可能是 { message: string, stack: string } 这样的对象
+    const errMsg =
+      typeof error === "string"
+        ? error
+        : error?.message || JSON.stringify(error) || "未知错误";
+    tc.fail(errMsg);
   }
 
   _onPlanGenerated(turnId, data) {
@@ -1160,68 +1288,6 @@ class ChatView {
   _onPlanRejected(turnId, data) {
     const plan = this.plans.get(data.planId);
     if (plan) plan.setOverallStatus("rejected");
-  }
-
-  _onBudgetStatus(turnId, data) {
-    const turn = this.turns.get(turnId);
-    if (!turn) return;
-    const el = turn.el.querySelector('[data-cs-role="budget"]');
-    if (!el) return;
-    const cls = (data.status || "ok").toLowerCase();
-    el.className = `budget-status ${cls}`;
-    const parts = [];
-    if (
-      data.remainingIterations != null &&
-      data.remainingIterations < 1000000
-    ) {
-      parts.push(`${data.remainingIterations}轮`);
-    }
-    if (data.remainingTokens != null && data.remainingTokens < 1000000) {
-      parts.push(`${data.remainingTokens}tk`);
-    }
-    if (data.remainingSeconds != null && data.remainingSeconds < 1000000000) {
-      parts.push(`${data.remainingSeconds}s`);
-    }
-    el.textContent = parts.join(" · ") + ` (${data.usagePercent}%)`;
-  }
-
-  _onBudgetExhausted(turnId, data) {
-    this._isGenerating = false;
-    state.set("currentTurnId", null);
-    const turn = this.turns.get(turnId);
-    if (turn) {
-      clearInterval(turn.timer);
-      const contentEl = turn.el.querySelector(".assistant-content");
-      if (contentEl) {
-        const alert = new InlineAlert({
-          variant: "warning",
-          title: "⏸ 任务已暂停",
-          message: data.reason || "已达到预算限制",
-        });
-        const summary = document.createElement("div");
-        summary.style.cssText =
-          "font-size:11px;color:var(--fg-2);margin-top:4px;";
-        summary.textContent = `已执行 ${data.consumedIterations} 轮,耗时 ${data.elapsedSeconds}s`;
-        contentEl.appendChild(alert.el);
-        contentEl.appendChild(summary);
-        if (data.allowContinue) {
-          const continueBtn = document.createElement("button");
-          continueBtn.className = "continue-btn";
-          continueBtn.textContent = "继续执行 (+10 轮)";
-          continueBtn.addEventListener("click", () => {
-            bridge.send({ type: "continue_task", turnId, extraIterations: 10 });
-          });
-          contentEl.appendChild(continueBtn);
-        }
-      }
-      const budget = turn.el.querySelector('[data-cs-role="budget"]');
-      if (budget) {
-        budget.className = "budget-status exhausted";
-        budget.textContent = "已暂停";
-      }
-    }
-    this._setStatus("预算耗尽", "error");
-    this._swapButtons(false);
   }
 
   _onError(turnId, message) {
@@ -1344,6 +1410,7 @@ class ChatView {
           data.toolName,
           data.summary,
           data.arguments,
+          data.icon,
         );
         break;
       case "tool_call_delta":
@@ -1401,19 +1468,6 @@ class ChatView {
         break;
       case "file_references":
         this._addFileReferences(turnId, data.references);
-        break;
-      case "budget_status":
-        this._onBudgetStatus(turnId, data);
-        break;
-      case "budget_exhausted":
-        this._onBudgetExhausted(turnId, data);
-        break;
-      case "budget_extended":
-        this._onBudgetStatus(turnId, {
-          ...data,
-          status: "OK",
-          usagePercent: 0,
-        });
         break;
       case "plan_generated":
         this._onPlanGenerated(turnId, data);

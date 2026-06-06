@@ -41,7 +41,6 @@ class KanbanWorkerConcurrencyTest {
             maxIterations: Int,
             contextFiles: List<String>,
             progressCallback: suspend (String) -> Unit,
-            parentBudget: com.codesage.agent.core.TaskBudget?
         ): SubAgentResult {
             return onSpawn(parentSessionId, taskDescription)
         }

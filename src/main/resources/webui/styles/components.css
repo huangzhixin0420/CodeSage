@@ -131,6 +131,30 @@
     animation: cs-toast-out 160ms var(--ease-in-out) forwards;
 }
 
+/* Toast 内的 action 按钮(例 "打开设置目录")— 点 按钮 不会触发 toast 隐藏,
+   跟 click-to-hide 的 span 互不干扰。 */
+.cs-toast-action {
+    margin-left: var(--space-2);
+    padding: 2px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid currentColor;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-out);
+    flex-shrink: 0;
+}
+
+.cs-toast-action:hover {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.cs-toast.info .cs-toast-action:hover {
+    background: var(--bg-1);
+}
+
 @keyframes cs-toast-in {
     from {
         opacity: 0;
