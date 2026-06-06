@@ -61,18 +61,26 @@ open class SubAgentExecutor(
     /**
      * 生成子 Agent 系统提示
      *
-     * 子 Agent 的 prompt 由两部分组成：
-     * 1. 父 Agent 的 system prompt（让子 Agent 继承项目上下文、工具说明、角色等）
-     * 2. Sub-agent 专用 section（明确任务边界、隔离约束、深度限制）
+     * 设计原则（v2）：**子 Agent 不再继承主 Agent 的 system prompt**。
+     * 子 Agent 应该拥有完全独立的最小化 system prompt：
+     * - 自己的角色定位
+     * - 任务描述
+     * - 可用工具集
+     * - 操作规则（专注、汇报、不再委托、不创建新任务、范围外不动文件）
+     * - 输出格式
+     * - 递归深度限制
      *
-     * 注意：父 prompt 中的 "## Sub-Agent Delegation" 仍然存在，但子 Agent 在
-     * 达到 [MAX_RECURSION_DEPTH] 时不应再继续 spawn。
+     * 这样设计的好处：
+     * 1. 避免主 Agent 的大 prompt（通常 50-200KB，含完整工具说明、IDE 上下文等）
+     *    在多级 spawn 时累积膨胀，触发 LLM API 400 / 2013 错误。
+     * 2. 子 Agent 是"专家"而非"通才"——主 Agent 知道的所有项目背景对子 Agent
+     *    完成单点任务没有帮助，反而稀释信号噪声。
+     * 3. 真正实现"父 Agent 只关心子 Agent 的结论，不在乎过程"。
      */
     private fun generateSubAgentPrompt(
         taskDescription: String,
-        toolset: String,
-        parentPrompt: String
-    ): String = buildSubAgentPrompt(taskDescription, toolset, parentPrompt, depth)
+        toolset: String
+    ): String = buildSubAgentPrompt(taskDescription, toolset, depth)
 
     /**
      * Spawn 一个隔离的子 Agent 执行任务
@@ -116,16 +124,14 @@ open class SubAgentExecutor(
         val toolCount = subToolRegistry.getAllTools().size
         logger.info("[SubAgent] Toolset='$toolset' → $toolCount tools available")
 
-        // 3. 基于父 prompt 构造子 Agent 的 prompt
-        val parentPrompt = parentAgent.getSystemPrompt()
-        val subSystemPrompt = generateSubAgentPrompt(taskDescription, toolset, parentPrompt)
-        // 日志：拆分 prompt 各部分字节数。万一未来发现 sub-agent 被 400，
-        // 能一眼看出是 parent prompt 太大还是 task 太大。
+        // 3. 构造子 Agent 的独立 system prompt（不再继承主 Agent 的 prompt）
+        val subSystemPrompt = generateSubAgentPrompt(taskDescription, toolset)
+        // 日志：记录子 Agent 独立 prompt 的体积。历史曾因继承主 Agent 大 prompt
+        // 累积到 152KB+ 触发 MiniMax 2013 错误，refactor 后 prompt 应 < 2KB。
         logger.info(
             "[SubAgent] prompt size | " +
-                    "parentPrompt=${parentPrompt.length}B, " +
-                    "subAgentSection=${subSystemPrompt.length - parentPrompt.length}B, " +
-                    "subSystemPrompt=${subSystemPrompt.length}B"
+                    "subSystemPrompt=${subSystemPrompt.length}B " +
+                    "(independent, no parent inheritance; toolset=$toolset, depth=$depth)"
         )
 
         // 4. 创建子 AgentCore（注入过滤后的 registry 和子深度）
@@ -357,34 +363,46 @@ open class SubAgentExecutor(
 
         /**
          * 纯函数版：构造子 Agent 的 system prompt（不依赖实例状态），便于测试。
+         *
+         * v2 重构：**不再继承主 Agent 的 prompt**。子 Agent 拥有自己的最小化
+         * system prompt（~1.2KB），专注于"我是谁、要做什么、有什么工具、输出什么"。
          */
         @JvmStatic
         fun buildSubAgentPrompt(
             taskDescription: String,
             toolset: String,
-            parentPrompt: String,
             depth: Int
-        ): String {
-            val subAgentSection = buildString {
-                appendLine()
-                appendLine("---")
-                appendLine()
-                appendLine("## Sub-Agent Context (depth=$depth)")
-                appendLine()
-                appendLine("You are a **specialized sub-agent** spawned by a parent agent. The parent has delegated the following task to you:")
-                appendLine()
-                appendLine("> $taskDescription")
-                appendLine()
-                appendLine("Your operating rules:")
-                appendLine("1. **Stay focused**: ONLY work on the task above. Do not deviate to other concerns.")
-                appendLine("2. **Tool boundary**: You have access to the `$toolset` toolset. Do not attempt tools that are not in your toolset.")
-                appendLine("3. **Report concisely**: The parent agent will read your output verbatim. Be specific about what you did, what you found, and any blockers.")
-                appendLine("4. **No new delegation**: Do not spawn further sub-agents. If you need help, complete what you can and report blockers to the parent.")
-                appendLine("5. **No new tasks**: Do not create or schedule follow-up work; the parent owns the task lifecycle.")
-                appendLine("6. **Toolset: `$toolset`** — if a tool you need is missing, escalate to the parent instead of improvising.")
-            }
-            return parentPrompt + subAgentSection
-        }
+        ): String = buildString {
+            appendLine("You are a specialized sub-agent in the CodeSage multi-agent system.")
+            appendLine()
+            appendLine("## Task")
+            appendLine()
+            appendLine(taskDescription)
+            appendLine()
+            appendLine("## Tools")
+            appendLine()
+            appendLine("You have access to the `$toolset` toolset only. Tool names, descriptions, and parameter schemas are passed separately in the request. Do not attempt to use tools outside this set.")
+            appendLine()
+            appendLine("## Operating Rules")
+            appendLine()
+            appendLine("1. **Focus**: ONLY work on the task above. Do not deviate to other concerns.")
+            appendLine("2. **Tools**: Use only tools in your `$toolset` toolset.")
+            appendLine("3. **Report concisely**: When done, return a clear summary of what you did, what you found, and any blockers.")
+            appendLine("4. **No delegation**: Do not spawn further sub-agents. If you need help, complete what you can and report blockers.")
+            appendLine("5. **No new tasks**: Do not create or schedule follow-up work; the parent owns the task lifecycle.")
+            appendLine("6. **No side effects outside scope**: Modify only files explicitly mentioned in the task.")
+            appendLine()
+            appendLine("## Output Format")
+            appendLine()
+            appendLine("Return a concise result describing:")
+            appendLine("- What you accomplished")
+            appendLine("- Any files you created or modified")
+            appendLine("- Any blockers or issues (if any)")
+            appendLine()
+            appendLine("## Recursion")
+            appendLine()
+            appendLine("You are at depth=$depth of max=$MAX_RECURSION_DEPTH. Further delegation is not allowed.")
+        }.trimEnd()
 
         /** 在所有 toolset 中都保留的工具（汇报、记忆、委托） */
         private val ALWAYS_AVAILABLE: Set<String> = setOf(

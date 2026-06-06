@@ -414,4 +414,238 @@ class EnhancedAgentLoopTest {
     private fun createFakeToolExecutor(): ToolExecutor {
         return ToolExecutor(null)
     }
+
+    // ===== P0 修复：outer catch 强制 break，防止外层 catch 触发后无限循环 =====
+
+    /**
+     * 构造一个在每次 chatStream() 内都抛 NetworkException(HTTP 400) 的 gateway，
+     * 模拟 MiniMax M3 的 "tool call result does not follow tool call (2013)" 错误。
+     * 旧实现：outer catch 的 else 分支只 delay 1 秒继续循环，无限重试。
+     * 新实现：outer catch 强制 break；turn 数量应该有上限。
+     */
+    @Test
+    fun `outer catch should force break, not loop forever on persistent error`(): Unit = runBlocking {
+        val gateway = createRepeatedBadRequestGateway()
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+
+        val contextManager = ContextManager()
+        val session = AgentSession(id = "test_persistent_error")
+
+        val startMs = System.currentTimeMillis()
+        val events = withTimeoutOrNull(15_000) {
+            loop.run(
+                userMessage = "Test",
+                session = session,
+                contextManager = contextManager,
+                currentModel = "test-model",
+                systemPrompt = "You are a test assistant"
+            ).toList()
+        } ?: emptyList()
+        val durationMs = System.currentTimeMillis() - startMs
+
+        // 1. 必须最终 emit Done（不能 hang）
+        assertTrue(events.any { it is AgentStreamEvent.Done }, "Must emit Done even on persistent error")
+
+        // 2. 必须有 Error 事件
+        val errorEvents = events.filterIsInstance<AgentStreamEvent.Error>()
+        assertTrue(errorEvents.isNotEmpty(), "Must emit Error on persistent error")
+
+        // 3. 总耗时应该 < 15s（旧实现如果走 else 分支 delay(1000) 持续重试，
+        //    100ms 任务本身不会 stop，会卡 15s timeout；新版必须主动 break）
+        assertTrue(durationMs < 12_000, "Should not loop forever (duration=$durationMs ms)")
+
+        // 4. 关键：事件数量应该有界。旧实现可能 emit 几十次 Error 事件；
+        //    新实现外层 catch 只触发有限次（<10），最终 Abort。
+        assertTrue(
+            errorEvents.size <= 10,
+            "Should not emit excessive error events (got ${errorEvents.size})"
+        )
+    }
+
+    /**
+     * 验证持续 BAD_REQUEST 错误走 inner onFailure 路径被正确处理，不会冒到 outer catch。
+     * 旧实现：maxRetries[BAD_REQUEST]=1，第一次重试 + 第二次重试 = 2 次后 Abort。
+     * 新实现：行为相同，但 inner onFailure 路径的 try-catch 兜底确保不会冒到 outer。
+     * outerCatchCount 应该保持 0。
+     */
+    @Test
+    fun `persistent BAD_REQUEST should be handled by inner onFailure, not outer catch`(): Unit = runBlocking {
+        val gateway = createRepeatedBadRequestGateway()
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+
+        withTimeoutOrNull(15_000) {
+            loop.run(
+                userMessage = "Test",
+                session = AgentSession(id = "test_inner_handles"),
+                contextManager = ContextManager(),
+                currentModel = "test-model",
+                systemPrompt = "You are a test assistant"
+            ).toList()
+        }
+
+        // 用 reflection 读 outerCatchCount：应该是 0（内层处理掉了）
+        val field = EnhancedAgentLoop::class.java.declaredFields
+            .first { it.name == "outerCatchCount" }
+        field.isAccessible = true
+        val count = field.getInt(loop)
+        assertEquals(0, count, "outerCatchCount should be 0 (inner onFailure handles), was $count")
+    }
+
+    /**
+     * 验证 inner onFailure 的 try-catch 兜底：构造一个会让 `recover()` 自身抛异常的
+     * gateway（通过把 gateway 替换为抛非 BadRequest 异常的方式触发 inner 分支）。
+     *
+     * 这里用一种间接方法：让 gateway 一直抛 RuntimeException（非网络错误），
+     * classify 后可能是 UNKNOWN（maxRetries=2）。第二次 recover 调用也走 inner，
+     * 最终 Abort。整个流程不应让 outer catch 触发——验证 inner 路径本身有兜底。
+     */
+    @Test
+    fun `persistent non-network error should still terminate via Abort`(): Unit = runBlocking {
+        val gateway = createRepeatedRuntimeExceptionGateway()
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+
+        val startMs = System.currentTimeMillis()
+        val events = withTimeoutOrNull(10_000) {
+            loop.run(
+                userMessage = "Test",
+                session = AgentSession(id = "test_inner_abort"),
+                contextManager = ContextManager(),
+                currentModel = "test-model",
+                systemPrompt = "You are a test assistant"
+            ).toList()
+        } ?: emptyList()
+        val durationMs = System.currentTimeMillis() - startMs
+
+        assertTrue(events.any { it is AgentStreamEvent.Done }, "Must terminate with Done")
+        val errorEvents = events.filterIsInstance<AgentStreamEvent.Error>()
+        // 必须以 Abort 结束（maxRetries 限制起作用）
+        assertTrue(errorEvents.isNotEmpty(), "Must emit Error events")
+        assertTrue(durationMs < 8_000, "Should not loop forever (duration=${durationMs}ms)")
+    }
+
+    // ===== P0 修复：cleanupOrphanToolResults 增强 =====
+
+    /**
+     * 旧 cleanup 只丢 orphan tool_result；新增还会清理 assistant 消息里
+     * 完全没有对应 tool_result 的 tool_use（未完成配对）—— 这是 2013 错误的
+     * 另一种根因（assistant 发出 tool_use 但没完成就进入下一轮）。
+     */
+    @Test
+    fun `cleanupOrphanToolResults drops unfulfilled tool_use on assistant message`() {
+        val loop = EnhancedAgentLoop(
+            gateway = createFakeGateway(),
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+        val method = EnhancedAgentLoop::class.java.declaredMethods
+            .first { it.name == "cleanupOrphanToolResults" }
+        method.isAccessible = true
+
+        val messages = listOf(
+            Message.userMessage("hi"),
+            // assistant 声明了 2 个 tool_use，但后续没有任何 tool_result
+            Message(
+                role = Role.ASSISTANT,
+                content = "",
+                toolCalls = listOf(
+                    ToolCall("toolu_unfinished_1", "read_file", "{}"),
+                    ToolCall("toolu_unfinished_2", "read_file", "{}"),
+                )
+            ),
+        )
+        val toolUseIds = setOf("toolu_unfinished_1", "toolu_unfinished_2")
+        val (cleaned, orphanCount) = method.invoke(loop, messages, toolUseIds) as Pair<List<*>, *>
+        @Suppress("UNCHECKED_CAST")
+        val cleanedList = cleaned as List<Message>
+
+        // 全部未完成 → toolCalls 应该被清空，orphanCount = 2
+        assertEquals(2, orphanCount, "Should count 2 unfulfilled tool_uses")
+        assertEquals(2, cleanedList.size, "user + assistant (with toolCalls cleared)")
+        val assistant = cleanedList.last()
+        assertEquals(Role.ASSISTANT, assistant.role)
+        assertTrue(
+            assistant.toolCalls.isNullOrEmpty(),
+            "toolCalls should be cleared on assistant with no tool_results"
+        )
+    }
+
+    /**
+     * 部分完成（assistant 发出 2 个 tool_use，1 个有 tool_result，另一个没有）：
+     * 保守策略下保留 assistant 消息的 tool_calls（因为有 1 个对应上了），
+     * orphan 只清 orphan tool_result。
+     */
+    @Test
+    fun `cleanupOrphanToolResults keeps assistant tool_calls when partial tool_results exist`() {
+        val loop = EnhancedAgentLoop(
+            gateway = createFakeGateway(),
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+        val method = EnhancedAgentLoop::class.java.declaredMethods
+            .first { it.name == "cleanupOrphanToolResults" }
+        method.isAccessible = true
+
+        val messages = listOf(
+            Message(
+                role = Role.ASSISTANT,
+                content = "",
+                toolCalls = listOf(
+                    ToolCall("id_done", "read_file", "{}"),
+                    ToolCall("id_pending", "read_file", "{}"),
+                )
+            ),
+            // 只完成 id_done
+            Message(role = Role.TOOL, content = "ok", toolCallId = "id_done"),
+        )
+        val toolUseIds = setOf("id_done", "id_pending")
+        val (cleaned, orphanCount) = method.invoke(loop, messages, toolUseIds) as Pair<List<*>, *>
+        @Suppress("UNCHECKED_CAST")
+        val cleanedList = cleaned as List<Message>
+
+        // 部分完成：保守保留 toolCalls，orphanCount=0
+        assertEquals(0, orphanCount, "Partial completion should not flag orphans")
+        assertEquals(2, cleanedList.size)
+        val assistant = cleanedList.first { it.role == Role.ASSISTANT }
+        assertEquals(2, assistant.toolCalls?.size, "Should keep both tool_calls")
+    }
+
+    // ===== helpers for new tests =====
+
+    private fun createRepeatedBadRequestGateway(): ModelGateway {
+        return object : ModelGateway() {
+            override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
+            override fun chatStream(request: ChatRequest): Flow<StreamChunk> = flow {
+                throw com.codesage.shared.exceptions.NetworkException(
+                    "HTTP 400 (requestSize=152892B): " +
+                            "{\"type\":\"error\",\"error\":{\"type\":\"bad_request_error\",\"message\":\"invalid params, tool call result does not follow tool call (2013)\",\"http_code\":\"400\"}}"
+                )
+            }
+        }
+    }
+
+    private fun createRepeatedRuntimeExceptionGateway(): ModelGateway {
+        return object : ModelGateway() {
+            override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
+            override fun chatStream(request: ChatRequest): Flow<StreamChunk> = flow {
+                throw RuntimeException("simulated non-network error")
+            }
+        }
+    }
 }

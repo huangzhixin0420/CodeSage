@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test
  *
  * 覆盖：
  * - P0 #1: delegate_task 工具已注册到默认 ToolRegistry
- * - P1 #3: 子 Agent prompt 继承父 prompt + sub-agent section
+ * - P1 #3 (v2): 子 Agent prompt **独立**，不继承父 prompt
  * - P1 #4: createToolRegistryForToolset 按 toolset 实际过滤
  * - P1 #5: 子 Agent 仍注册 memory 工具
  * - P2 #7: 递归深度限制
@@ -34,41 +34,96 @@ class SubAgentExecutorTest {
         assertTrue(all.any { it.name == "read_file" })
     }
 
-    // ===== P1 #3: prompt 构造（纯函数） =====
+    // ===== P1 #3 (v2): prompt 构造（纯函数，独立、不继承父 prompt） =====
 
     @Test
-    fun `buildSubAgentPrompt should include parent prompt verbatim`() {
-        val parentPrompt = "PARENT_PROMPT_MARKER_xyz"
+    fun `buildSubAgentPrompt should NOT include parent prompt - sub-agent has independent context`() {
+        // v2 重构：子 Agent 拥有完全独立的 system prompt，不继承主 Agent 的 prompt。
+        // 之前继承式设计曾因父 prompt 累积到 150KB+ 触发 MiniMax 2013 错误。
+        val parentPrompt = "PARENT_PROMPT_MARKER_xyz_PARENT_SHOULD_NOT_LEAK"
+        // 新签名只接受 (taskDescription, toolset, depth)
         val result = SubAgentExecutor.buildSubAgentPrompt(
             taskDescription = "Implement function foo",
             toolset = "dev",
-            parentPrompt = parentPrompt,
             depth = 0
         )
-        assertTrue(result.contains(parentPrompt), "Sub-agent prompt should include parent prompt")
+        assertFalse(
+            result.contains(parentPrompt),
+            "Sub-agent prompt should NOT inherit parent prompt. " +
+                    "Sub-agent must have independent context, not the parent's full system prompt."
+        )
+        assertFalse(
+            result.contains("PARENT_PROMPT_MARKER"),
+            "Sub-agent prompt must not leak parent content"
+        )
     }
 
     @Test
-    fun `buildSubAgentPrompt should add Sub-Agent Context section with task and depth`() {
+    fun `buildSubAgentPrompt should be minimal - under 2KB`() {
+        // 旧实现：150KB+（继承父 prompt）→ 触发 2013 错误
+        // 新实现：< 2KB（独立最小 prompt）
+        val result = SubAgentExecutor.buildSubAgentPrompt(
+            taskDescription = "Implement a complex function that does many things",
+            toolset = "dev",
+            depth = 0
+        )
+        assertTrue(
+            result.length < 2048,
+            "Sub-agent prompt must be < 2KB (independent). Got ${result.length}B. " +
+                    "If you really need a larger prompt, the design is wrong - sub-agent should focus on its task."
+        )
+    }
+
+    @Test
+    fun `buildSubAgentPrompt should contain task, toolset, depth, rules, output format, recursion`() {
         val result = SubAgentExecutor.buildSubAgentPrompt(
             taskDescription = "TASK_MARKER_abc",
             toolset = "research",
-            parentPrompt = "parent",
             depth = 1
         )
-        assertTrue(result.contains("Sub-Agent Context (depth=1)"), "Should label sub-agent section with depth")
+        // 必备字段
         assertTrue(result.contains("TASK_MARKER_abc"), "Should include the task description")
         assertTrue(result.contains("research"), "Should mention the toolset name")
-        assertTrue(result.contains("No new delegation"), "Should include the 'no new delegation' rule")
-        assertTrue(result.contains("Stay focused"), "Should include focus rule")
+        assertTrue(result.contains("depth=1"), "Should label the recursion depth")
+        // 操作规则（不再用 "No new delegation"，新规则更明确）
+        assertTrue(result.contains("Focus") || result.contains("focus"), "Should include focus rule")
+        assertTrue(result.contains("No delegation") || result.contains("delegation"), "Should include no-delegation rule")
+        assertTrue(result.contains("No new tasks"), "Should include no-new-tasks rule")
+        // 输出格式
+        assertTrue(result.contains("Output Format") || result.contains("Output"), "Should specify output format")
+        // 递归限制
+        assertTrue(result.contains("Recursion") || result.contains("recursion"), "Should include recursion constraint")
+        assertTrue(result.contains("MAX_RECURSION_DEPTH") || result.contains("max="), "Should include max recursion depth value")
     }
 
     @Test
     fun `buildSubAgentPrompt depth value should match input`() {
         for (d in 0..3) {
-            val result = SubAgentExecutor.buildSubAgentPrompt("t", "dev", "p", d)
+            val result = SubAgentExecutor.buildSubAgentPrompt("t", "dev", d)
             assertTrue(result.contains("depth=$d"), "depth=$d should appear in prompt")
         }
+    }
+
+    @Test
+    fun `buildSubAgentPrompt should not mention parent agent identity`() {
+        // 真正的隔离：子 Agent 不应知道"主 Agent"是谁、做什么
+        val result = SubAgentExecutor.buildSubAgentPrompt(
+            taskDescription = "Read all test files",
+            toolset = "dev",
+            depth = 1
+        )
+        // 不应包含 "parent" 这个词作为角色指代（"parent" 可能出现在 recursion
+        // 描述里说"父 Agent"是允许的，但要确认 prompt 不依赖主 Agent 的 context）
+        val lower = result.lowercase()
+        // "spawned by a parent" 这种角色关系描述不应出现
+        assertFalse(
+            lower.contains("spawned by"),
+            "Sub-agent should not be told it was 'spawned by' a parent"
+        )
+        assertFalse(
+            lower.contains("the parent agent will read your output"),
+            "Sub-agent should not be told about parent's reading behavior"
+        )
     }
 
     // ===== P1 #4: 工具集过滤 =====

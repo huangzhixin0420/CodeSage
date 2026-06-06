@@ -75,6 +75,17 @@ class EnhancedAgentLoop(
     @Volatile
     private var interrupted = false
 
+    // 外层 catch 触发计数器：主循环在 try 体内嵌套了多层错误恢复（流式内层 try-catch
+    // → onFailure → recover，onSuccess 阶段的 tool executor 等），理论上所有可恢复错误
+    // 都应该在内层处理完。但若 recover() 自身抛异常、或内层分支误抛，异常会冒到
+    // 外层 catch。原实现的 else 分支只 delay 1 秒后继续循环——这意味着只要外层
+    // recover() 持续返回非 Abort 动作（例如新 reason 的 SimpleRetry），循环就不会结束。
+    //
+    // 防御措施：
+    // 1. 外层 catch 强制 break——它本来就是"未预料的异常"路径，不应该让主循环继续
+    // 2. 再加一层显式次数上限作为兜底（防御性，正常路径应在内层已 abort）
+    private var outerCatchCount = 0
+
 
     /**
      * 运行增强型对话循环（非流式工具调用，流式文本输出）
@@ -420,11 +431,24 @@ class EnhancedAgentLoop(
 
                         logger.info("[Turn $turnNumber] Error classified as: ${classified.reason}, retryable=${classified.retryable}, message=${error.message}")
 
-                        val action = errorRecovery.recover(
-                            agent = agentCore ?: AgentCore(gateway),
-                            classified = classified,
-                            fallbackModels = fallbackModels
-                        )
+                        val action = try {
+                            errorRecovery.recover(
+                                agent = agentCore ?: AgentCore(gateway),
+                                classified = classified,
+                                fallbackModels = fallbackModels
+                            )
+                        } catch (recoverEx: Exception) {
+                            // recover 自身抛异常——把异常降级为 Abort 并跳出内层
+                            // onFailure，让外层 catch 看到 Abort 走 break 路径。
+                            logger.error(
+                                "[Turn $turnNumber] inner recover() threw: " +
+                                        "${recoverEx.javaClass.simpleName}: ${recoverEx.message}",
+                                recoverEx
+                            )
+                            RecoveryAction.Abort(
+                                "错误恢复失败 (${recoverEx.javaClass.simpleName}: ${recoverEx.message?.take(200)})"
+                            )
+                        }
 
                         hooks.onErrorRecovery(classified, action)
 
@@ -514,8 +538,23 @@ class EnhancedAgentLoop(
                 val classified = errorRecovery.classify(e)
                 logger.info("[Turn $turnNumber] Exception classified as: ${classified.reason}, message=${e.message}")
 
-                val action = errorRecovery.recover(agentCore ?: AgentCore(gateway), classified, fallbackModels)
+                val action = try {
+                    errorRecovery.recover(agentCore ?: AgentCore(gateway), classified, fallbackModels)
+                } catch (recoverEx: Exception) {
+                    // recover() 自身抛异常（罕见，例如 agent.switchModel/compressContext 抛
+                    // 网络/IO 错误）。原实现会让异常继续冒到外层 catch 的 else 分支，
+                    // 触发无限循环。这里把异常降级为 Abort，避免在已经错乱的状态上继续重试。
+                    logger.error(
+                        "[Turn $turnNumber] errorRecovery.recover() itself threw: " +
+                                "${recoverEx.javaClass.name}: ${recoverEx.message}",
+                        recoverEx
+                    )
+                    RecoveryAction.Abort(
+                        "错误恢复失败 (${recoverEx.javaClass.simpleName}: ${recoverEx.message?.take(200)})"
+                    )
+                }
 
+                outerCatchCount++
                 when (action) {
                     is RecoveryAction.Abort -> {
                         logger.error("[Turn $turnNumber] Abort after recovery: ${action.message}")
@@ -524,9 +563,19 @@ class EnhancedAgentLoop(
                     }
 
                     else -> {
-                        emitEvent(AgentStreamEvent.Error("发生错误: ${e.message}，正在尝试恢复..."))
-                        // 简单延迟后继续
-                        delay(1000)
+                        // 兜底：理论上 recover 总会返回 Abort（无论内层或外层触发），
+                        // 但万一因为 reason key 重新计数等原因返回了非 Abort，
+                        // 这里也强制 break 而不是继续循环——主循环不应该在未预料的
+                        // 异常路径上无限重试。
+                        outerCatchCount++
+                        logger.error(
+                            "[Turn $turnNumber] Outer catch non-abort action=${action::class.simpleName} " +
+                                    "after $outerCatchCount outer catches; force breaking to avoid loop"
+                        )
+                        emitEvent(AgentStreamEvent.Error(
+                            "未预料的错误恢复动作 (${action::class.simpleName})，强制终止。原始错误: ${e.message}"
+                        ))
+                        break
                     }
                 }
             }
@@ -545,6 +594,7 @@ class EnhancedAgentLoop(
 
         // 每个任务结束后重置错误恢复计数器，避免影响后续任务
         errorRecovery.resetAllCounters()
+        outerCatchCount = 0
 
         // T0.2 修复：释放 EventBatchEmitter 资源，避免协程泄漏
         batchEmitter.shutdown()
@@ -720,33 +770,75 @@ class EnhancedAgentLoop(
     }
 
     /**
-     * 清理 orphan tool_result：tool_result 消息的 toolCallId 必须在 assistant
-     * 消息的 toolCalls[].id 集合里出现过，否则丢掉。
+     * 清理 orphan tool 配对：
+     * 1. orphan tool_result：tool_result 消息的 toolCallId 必须在 assistant
+     *    消息的 toolCalls[].id 集合里出现过，否则丢掉。
+     * 2. 未完成 tool_use：assistant 消息的 toolCalls[].id 里如果有 id 在后续
+     *    tool_result 中找不到对应（这条 assistant 之后没有任何 tool_result
+     *    消息），把这条 assistant 消息的 toolCalls 置空（仅当它没在 textContent
+     *    之外携带有用信息时）。保守起见：只清空 toolCalls 字段，保留 assistant
+     *    文本内容。
      *
      * 为什么需要：中文 LLM 代理 Claude 的提供商（MiniMax、智谱、月之暗面等）
      * 在转 OpenAI/Anthropic 双向格式时偶尔会丢失 tool_call_id 对应关系，导致
-     * 下一个 turn 请求带 "tool result's tool id (X) not found" 400。预防性
-     * 在 EnhancedAgentLoop 请求前清掉孤儿 tool_result，避免触发 API 2013。
+     * 下一个 turn 请求带 "tool result does not follow tool call (2013)" 400。
+     * 预防性在 EnhancedAgentLoop 请求前清掉孤儿 tool_result / 未完成 tool_use，
+     * 避免触发 API 2013。
      *
      * 返回 (cleanedMessages, orphanCount)。cleanedMessages 是丢完后的
-     * 消息列表（顺序、其它消息原封不动）。
+     * 消息列表（顺序、其它消息原封不动）。orphanCount 包含丢弃的 tool_result
+     * 数量 + 清理的未完成 tool_use 数量。
      */
     private fun cleanupOrphanToolResults(
         messages: List<Message>,
         toolUseIds: Set<String>
     ): Pair<List<Message>, Int> {
         var orphanCount = 0
-        val result = messages.map { msg ->
-            if (msg.role == Role.TOOL) {
-                val id = msg.toolCallId
-                if (id.isNullOrBlank() || id !in toolUseIds) {
-                    orphanCount++
-                    null
-                } else {
-                    msg
+
+        // 第一遍：先收集 assistant 消息中所有声明的 tool_use id，
+        // 以及后续 tool_result 实际提供的 id 集合。
+        // 用 map<assistant_index, declared_ids> 跟踪。
+        val assistantDeclaredByIndex = mutableMapOf<Int, Set<String>>()
+        val toolResultIds = mutableSetOf<String>()
+        messages.forEachIndexed { idx, msg ->
+            if (msg.role == Role.ASSISTANT && !msg.toolCalls.isNullOrEmpty()) {
+                assistantDeclaredByIndex[idx] = msg.toolCalls.mapNotNull { it.id.takeIf { id -> id.isNotEmpty() } }.toSet()
+            } else if (msg.role == Role.TOOL) {
+                msg.toolCallId?.takeIf { it.isNotEmpty() }?.let { toolResultIds.add(it) }
+            }
+        }
+
+        // 第二遍：构建 cleanedMessages
+        val result = messages.mapIndexed { idx, msg ->
+            when (msg.role) {
+                Role.TOOL -> {
+                    val id = msg.toolCallId
+                    if (id.isNullOrBlank() || id !in toolUseIds) {
+                        orphanCount++
+                        null
+                    } else {
+                        msg
+                    }
                 }
-            } else {
-                msg
+                Role.ASSISTANT -> {
+                    val declared = assistantDeclaredByIndex[idx] ?: return@mapIndexed msg
+                    // assistant 声明了 tool_use，但 toolResultIds 里完全没有它的对应
+                    // 说明这条 assistant 的 tool_use 没完成。把 toolCalls 清空以避免
+                    // 触发 2013。保留 content 字段（assistant 可能也写了文本）。
+                    val unfulfilled = declared - toolResultIds
+                    if (unfulfilled.isNotEmpty() && unfulfilled.size == declared.size) {
+                        // 全部没完成——这条 assistant 整个 toolCalls 都丢
+                        orphanCount += unfulfilled.size
+                        logger.warn(
+                            "[cleanup] Dropping ${unfulfilled.size} unfulfilled tool_use(s) " +
+                                    "from assistant message at index=$idx: $unfulfilled"
+                        )
+                        msg.copy(toolCalls = null)
+                    } else {
+                        msg
+                    }
+                }
+                else -> msg
             }
         }.filterNotNull()
         return result to orphanCount
