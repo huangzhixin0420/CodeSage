@@ -7,6 +7,7 @@ import com.codesage.agent.tools.ToolExecutor
 import com.codesage.agent.tools.ToolRegistry
 import com.codesage.model.dto.*
 import com.codesage.model.gateway.ModelGateway
+import com.codesage.persistence.ConversationPersistence
 import com.codesage.shared.config.PluginConfig
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.project.Project
@@ -20,6 +21,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import java.io.File
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.util.UUID
 
 /**
  * 子 Agent 执行结果
@@ -134,126 +137,147 @@ open class SubAgentExecutor(
                     "(independent, no parent inheritance; toolset=$toolset, depth=$depth)"
         )
 
-        // 4. 创建子 AgentCore（注入过滤后的 registry 和子深度）
-        val subAgent = AgentCore(
-            gateway = gateway,
-            project = project,
-            skillToolAdapter = skillToolAdapter,
-            toolRegistryOverride = subToolRegistry,
-            subAgentDepth = depth + 1
-        )
-
-        // 配置子 Agent（传入自定义 prompt）
-        subAgent.initialize(
-            AgentConfig(
-                defaultModel = parentAgent.getCurrentModel(),
-                systemPrompt = subSystemPrompt
-            )
-        )
-
-        // 5. 构建任务消息（包含上下文文件）
-        // 读取上下文文件内容并注入到任务描述中
-        val taskMessage = buildString {
-            appendLine(taskDescription)
-            if (contextFiles.isNotEmpty()) {
-                appendLine()
-                appendLine("## Context Files")
-                contextFiles.forEach { filePath ->
-                    appendLine()
-                    appendLine("### $filePath")
-                    try {
-                        val content = readContextFile(filePath)
-                        if (content != null) {
-                            appendLine("```")
-                            // 限制单个文件注入大小，避免超出上下文限制
-                            appendLine(content.take(8000))
-                            if (content.length > 8000) {
-                                appendLine("...[truncated, total ${content.length} chars]")
-                            }
-                            appendLine("```")
-                        } else {
-                            appendLine("[File not found]")
-                        }
-                    } catch (e: Exception) {
-                        appendLine("[Error reading file: ${e.message}]")
-                    }
-                }
-            }
-        }
-
-        // 6. 执行对话循环
-        val outputBuilder = StringBuilder()
-        val toolsUsed = mutableSetOf<String>()
-        var iterationsUsed = 0
-        var success = true
-
+        // 4. 为子 Agent 创建独立的 tmp 持久化目录
+        //    - 即便 skipRestore/skipAutoSave=true 让它永远不被读写，
+        //      也作为防御层：万一未来 P0 修复失效，子 Agent 最多写到自己的 tmp
+        //    - spawn 结束时在 finally 块 deleteRecursively()
+        val subPersistenceDir: File = Files.createTempDirectory(
+            "codesage_subagent_${UUID.randomUUID()}_"
+        ).toFile()
+        val subPersistence = ConversationPersistence(subPersistenceDir)
+        var subAgent: AgentCore? = null
         try {
-            progressCallback("[SubAgent $subSessionId] Starting task (depth=$depth, toolset=$toolset)...")
+            // 4a. 创建子 AgentCore（注入独立 persistence + 过滤后的 registry + 子深度）
+            subAgent = AgentCore(
+                gateway = gateway,
+                project = project,
+                skillToolAdapter = skillToolAdapter,
+                toolRegistryOverride = subToolRegistry,
+                subAgentDepth = depth + 1,
+                conversationPersistenceOverride = subPersistence
+            )
 
-            subAgent.chatWithTools(taskMessage).collect { event ->
-                when (event) {
-                    is AgentStreamEvent.TextDelta -> {
-                        outputBuilder.append(event.delta)
-                    }
+            // 4b. 配置子 Agent（传入自定义 prompt + 跳过 restore/autoSave）
+            subAgent.initialize(
+                AgentConfig(
+                    defaultModel = parentAgent.getCurrentModel(),
+                    systemPrompt = subSystemPrompt
+                ),
+                skipRestore = true,
+                skipAutoSave = true
+            )
 
-                    is AgentStreamEvent.ToolCallStart -> {
-                        toolsUsed.add(event.toolCall.name)
-                        iterationsUsed++
-                        progressCallback("[SubAgent] Using tool: ${event.toolCall.name}")
-                    }
-
-                    is AgentStreamEvent.ToolCallResult -> {
-                        progressCallback("[SubAgent] Tool ${event.toolName} ${if (event.success) "completed" else "failed"}")
-                    }
-
-                    is AgentStreamEvent.Thinking -> {
-                        progressCallback("[SubAgent] ${event.message}")
-                    }
-
-                    is AgentStreamEvent.SubAgentStart -> {
-                        // 子 Agent 自己也想 spawn 会被 MAX_RECURSION_DEPTH 拦截
-                        progressCallback("[SubAgent nested depth=${depth + 1}] Starting: ${event.taskDescription}")
-                    }
-
-                    is AgentStreamEvent.SubAgentProgress -> {
-                        progressCallback("[SubAgent nested depth=${depth + 1}] ${event.message}")
-                    }
-
-                    is AgentStreamEvent.SubAgentComplete -> {
-                        progressCallback("[SubAgent nested depth=${depth + 1}] Completed: ${if (event.success) "success" else "failed"}")
-                    }
-
-                    is AgentStreamEvent.Error -> {
-                        success = false
-                        outputBuilder.appendLine("\n[ERROR] ${event.message}")
-                        progressCallback("[SubAgent] Error: ${event.message}")
-                    }
-
-                    AgentStreamEvent.Done -> {
-                        progressCallback("[SubAgent] Task completed")
-                    }
-
-                    else -> {
-                        // 新事件类型默认处理：忽略
+            // 5. 构建任务消息（包含上下文文件）
+            val taskMessage = buildString {
+                appendLine(taskDescription)
+                if (contextFiles.isNotEmpty()) {
+                    appendLine()
+                    appendLine("## Context Files")
+                    contextFiles.forEach { filePath ->
+                        appendLine()
+                        appendLine("### $filePath")
+                        try {
+                            val content = readContextFile(filePath)
+                            if (content != null) {
+                                appendLine("```")
+                                appendLine(content.take(8000))
+                                if (content.length > 8000) {
+                                    appendLine("...[truncated, total ${content.length} chars]")
+                                }
+                                appendLine("```")
+                            } else {
+                                appendLine("[File not found]")
+                            }
+                        } catch (e: Exception) {
+                            appendLine("[Error reading file: ${e.message}]")
+                        }
                     }
                 }
             }
-        } catch (e: Exception) {
-            success = false
-            logger.error("SubAgent execution failed", e)
-            outputBuilder.appendLine("\n[EXCEPTION] ${e.message}")
+
+            // 6. 执行对话循环
+            val outputBuilder = StringBuilder()
+            val toolsUsed = mutableSetOf<String>()
+            var iterationsUsed = 0
+            var success = true
+
+            try {
+                progressCallback("[SubAgent $subSessionId] Starting task (depth=$depth, toolset=$toolset)...")
+
+                subAgent.chatWithTools(taskMessage).collect { event ->
+                    when (event) {
+                        is AgentStreamEvent.TextDelta -> {
+                            outputBuilder.append(event.delta)
+                        }
+
+                        is AgentStreamEvent.ToolCallStart -> {
+                            toolsUsed.add(event.toolCall.name)
+                            iterationsUsed++
+                            progressCallback("[SubAgent] Using tool: ${event.toolCall.name}")
+                        }
+
+                        is AgentStreamEvent.ToolCallResult -> {
+                            progressCallback("[SubAgent] Tool ${event.toolName} ${if (event.success) "completed" else "failed"}")
+                        }
+
+                        is AgentStreamEvent.Thinking -> {
+                            progressCallback("[SubAgent] ${event.message}")
+                        }
+
+                        is AgentStreamEvent.SubAgentStart -> {
+                            progressCallback("[SubAgent nested depth=${depth + 1}] Starting: ${event.taskDescription}")
+                        }
+
+                        is AgentStreamEvent.SubAgentProgress -> {
+                            progressCallback("[SubAgent nested depth=${depth + 1}] ${event.message}")
+                        }
+
+                        is AgentStreamEvent.SubAgentComplete -> {
+                            progressCallback("[SubAgent nested depth=${depth + 1}] Completed: ${if (event.success) "success" else "failed"}")
+                        }
+
+                        is AgentStreamEvent.Error -> {
+                            success = false
+                            outputBuilder.appendLine("\n[ERROR] ${event.message}")
+                            progressCallback("[SubAgent] Error: ${event.message}")
+                        }
+
+                        AgentStreamEvent.Done -> {
+                            progressCallback("[SubAgent] Task completed")
+                        }
+
+                        else -> {
+                            // 新事件类型默认处理：忽略
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                success = false
+                logger.error("SubAgent execution failed", e)
+                outputBuilder.appendLine("\n[EXCEPTION] ${e.message}")
+            }
+
+            val result = SubAgentResult(
+                success = success,
+                output = outputBuilder.toString(),
+                sessionId = subSessionId,
+                iterationsUsed = iterationsUsed,
+                toolsUsed = toolsUsed.toList()
+            )
+
+            logger.info("[SubAgent] Completed. Success=$success, Tools=${toolsUsed}, Depth=$depth")
+            return result
+        } finally {
+            // 不管成功 / 异常 / 早退，都清理子 Agent 的 tmp 持久化目录
+            try {
+                val deleted = subPersistenceDir.deleteRecursively()
+                if (!deleted) {
+                    logger.warn("[SubAgent] Failed to delete tmp persistence dir: $subPersistenceDir")
+                }
+            } catch (e: Exception) {
+                logger.warn("[SubAgent] Error cleaning up tmp persistence dir: ${e.message}")
+            }
         }
-
-        val result = SubAgentResult(
-            success = success,
-            output = outputBuilder.toString(),
-            sessionId = subSessionId,
-            iterationsUsed = iterationsUsed,
-            toolsUsed = toolsUsed.toList()
-        )
-
-        logger.info("[SubAgent] Completed. Success=$success, Tools=${toolsUsed}, Depth=$depth")
-        return result
     }
 
     /**

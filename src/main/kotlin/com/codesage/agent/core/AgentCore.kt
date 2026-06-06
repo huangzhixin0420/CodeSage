@@ -123,7 +123,14 @@ open class AgentCore(
      * 0 = 顶层 Agent；>0 表示这是第 N 层子 Agent。
      * 用于防止 [delegate_task] 无限递归。
      */
-    private val subAgentDepth: Int = 0
+    private val subAgentDepth: Int = 0,
+    /**
+     * 可选的持久化实例注入。
+     * - 为 null 时使用默认 [ConversationPersistence]（生产默认行为，读写 ~/.codesage/conversations/）
+     * - 子 Agent 场景：传入独立 tmp 目录的持久化，确保不污染父 Agent 的磁盘
+     * - 测试场景：传入 @TempDir 持久化，验证父子隔离
+     */
+    conversationPersistenceOverride: ConversationPersistence? = null
 ) {
     private val logger = Logger.getLogger<AgentCore>()
 
@@ -224,7 +231,8 @@ open class AgentCore(
     private val promptCache: SystemPromptCache = SystemPromptCache()
 
     // 对话持久化
-    private val conversationPersistence: ConversationPersistence = ConversationPersistence()
+    private val conversationPersistence: ConversationPersistence =
+            conversationPersistenceOverride ?: ConversationPersistence()
     private lateinit var sessionRestore: SessionRestore
 
     // 钩子（默认空实现，可通过配置注入）
@@ -240,7 +248,21 @@ open class AgentCore(
     /**
      * 初始化Agent
      */
-    fun initialize(config: AgentConfig) {
+    /**
+     * 初始化 AgentCore。
+     *
+     * @param config Agent 配置
+     * @param skipRestore 跳过从磁盘恢复历史会话。子 Agent 场景用：父 Agent 持久化的会话
+     *   包含父的 tool_call_id，子 Agent 看到会触发 LLM API 400 (2013) 错误。
+     *   详见 SubAgentExecutor.spawn()。
+     * @param skipAutoSave 跳过自动保存订阅。子 Agent 场景用：避免子 Agent 的临时 session
+     *   写回父 Agent 的磁盘目录。
+     */
+    fun initialize(
+        config: AgentConfig,
+        skipRestore: Boolean = false,
+        skipAutoSave: Boolean = false
+    ) {
         currentModel = resolveDefaultModel(config)
         if (currentModel.isBlank()) {
             logger.warn("AgentCore initialized without a valid default model. Please configure a model in CodeSage settings.")
@@ -307,16 +329,24 @@ open class AgentCore(
         // 初始化对话持久化
         sessionRestore = SessionRestore(conversationPersistence, this)
 
-        // 尝试恢复之前的会话
-        restoreSessions(SessionRestore.RestoreOptions(strategy = SessionRestore.RestoreStrategy.RESTORE_ALL))
+        // 尝试恢复之前的会话（子 Agent 场景跳过：避免父 Agent 的 tool_call_id 污染）
+        if (skipRestore) {
+            logger.info("[AgentCore] Skipping session restore (sub-agent lightweight init)")
+        } else {
+            restoreSessions(SessionRestore.RestoreOptions(strategy = SessionRestore.RestoreStrategy.RESTORE_ALL))
+        }
 
         // 如果没有会话，自动创建一个
         if (sessions.isEmpty()) {
             createSession()
         }
 
-        // 启动自动保存
-        sessionRestore.startAutoSave(agentScope)
+        // 启动自动保存（子 Agent 场景跳过：避免临时 session 写回父 Agent 的磁盘）
+        if (skipAutoSave) {
+            logger.info("[AgentCore] Skipping auto-save subscription (sub-agent lightweight init)")
+        } else {
+            sessionRestore.startAutoSave(agentScope)
+        }
 
         // 注册性能指标
         metrics.registerGauge("active_sessions") { sessions.size.toLong() }

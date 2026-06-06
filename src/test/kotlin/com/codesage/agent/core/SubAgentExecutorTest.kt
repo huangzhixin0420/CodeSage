@@ -1,9 +1,15 @@
 package com.codesage.agent.core
 
 import com.codesage.agent.tools.ToolRegistry
+import com.codesage.model.adapter.ModelAdapter
+import com.codesage.model.dto.*
+import com.codesage.model.gateway.ModelGateway
+import com.codesage.persistence.ConversationPersistence
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
 
 /**
  * SubAgentExecutor 单元测试
@@ -305,6 +311,229 @@ class SubAgentExecutorTest {
         assertNotNull(custom)
         // depth 由构造参数传入；subAgentExecutor 内部使用
         // (无法从外部直接断言，但能构造成功即为正向信号)
+    }
+
+    // ===== P0 修复测试 =====
+
+    /**
+     * 创建一个不会触发真实 LLM 调用的 ModelGateway：
+     * getCurrentAdapter 返回一个最小化的 fake adapter，toVendorRequest 返回空 JSON，
+     * fromVendorResponse 返回空 choices。这样 EnhancedAgentLoop 在没真 LLM 时不会 NPE。
+     */
+    private fun createFakeAdapter(): ModelAdapter = object : ModelAdapter {
+        override val providerName: String = "fake"
+        override val supportedModels: List<String> = listOf("test-model")
+        override fun supportsStreaming(): Boolean = false
+        override fun supportsFunctionCalling(): Boolean = true
+        override fun supportsVision(): Boolean = false
+        override fun toVendorRequest(request: ChatRequest): String = "{}"
+        override fun fromVendorResponse(response: String): ChatResponse =
+            ChatResponse("", "", emptyList(), null)
+        override fun parseStreamChunk(chunk: String): StreamChunk? = null
+        override fun getStreamEndpoint(): String = "http://fake"
+        override fun getChatEndpoint(): String = "http://fake"
+        override fun getHeaders(): Map<String, String> = emptyMap()
+    }
+
+    private fun createFakeGateway(): ModelGateway = object : ModelGateway() {
+        override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
+    }
+
+    /**
+     * Test 1 (P0 核心): 子 Agent skipRestore=true 时不应看到父 Agent 持久化的会话
+     *
+     * 旧实现：AgentCore.initialize() 默认调 restoreSessions(RESTORE_ALL) 把父 Agent
+     * 磁盘上所有 session 拉进自己的 sessions map。子 Agent 拿到一个不属于自己的 session，
+     * 包含父的 tool_call_id，发到 LLM 触发 2013 错误。
+     *
+     * 验证：skipRestore=true 后，子 Agent 的 history 只有 1 条 system message，
+     * 且 session id 与父的不同。
+     */
+    @Test
+    fun `sub-agent with skipRestore must not see parent's persisted sessions`(
+        @TempDir tempDir: Path
+    ) = runBlocking {
+        val parentPersistence = ConversationPersistence(tempDir.resolve("parent").toFile())
+        val subPersistence = ConversationPersistence(tempDir.resolve("sub").toFile())
+        val gateway = createFakeGateway()
+
+        // 1. 父 Agent 初始化 + 强制保存一个 session 到磁盘
+        val parentCore = AgentCore(
+            gateway = gateway,
+            conversationPersistenceOverride = parentPersistence
+        )
+        parentCore.initialize(AgentConfig(systemPrompt = "parent prompt"))
+        val parentSession = parentCore.getCurrentSession()!!
+        val parentHistory = parentCore.getCurrentHistory()
+        parentPersistence.saveSessionSync(parentSession, parentHistory)
+        assertTrue(
+            parentPersistence.loadAllSessions().isNotEmpty(),
+            "parent should have persisted at least one session"
+        )
+
+        // 2. 子 Agent 用独立 persistence + skipRestore + skipAutoSave
+        val subCore = AgentCore(
+            gateway = gateway,
+            conversationPersistenceOverride = subPersistence
+        )
+        subCore.initialize(
+            AgentConfig(systemPrompt = "isolated sub prompt"),
+            skipRestore = true,
+            skipAutoSave = true
+        )
+
+        // 3. 验证：子 Agent 的 session id 不在父的 session id 集合里
+        val subSessionId = subCore.getCurrentSession()?.id
+        assertNotNull(subSessionId)
+        assertNotEquals(parentSession.id, subSessionId, "sub-agent must not reuse parent's session id")
+
+        // 4. 验证：子 Agent 的 history 只有 1 条 system message
+        val subHistory = subCore.getCurrentHistory()
+        assertEquals(
+            1, subHistory.size,
+            "sub agent should have only 1 system message, but got ${subHistory.size}: ${subHistory.map { it.role }}"
+        )
+        assertEquals(Role.SYSTEM, subHistory[0].role)
+        assertEquals("isolated sub prompt", subHistory[0].content)
+    }
+
+    /**
+     * Test 2 (P0 核心): 子 Agent skipAutoSave=true 时不应写到自己的持久化目录
+     *
+     * 旧实现：AgentCore.initialize() 默认启动 sessionRestore.startAutoSave()，
+     * 任何 saveSession 都会落到磁盘。子 Agent 写到父的 ~/.codesage/conversations/ 就污染了。
+     *
+     * 验证：skipAutoSave=true 后，子 Agent 跑过几轮后 tmp 目录里没有任何 session 文件。
+     */
+    @Test
+    fun `sub-agent with skipAutoSave must not write to its own persistence`(
+        @TempDir tempDir: Path
+    ) = runBlocking {
+        val subPersistence = ConversationPersistence(tempDir.toFile())
+        val gateway = createFakeGateway()
+
+        val subCore = AgentCore(
+            gateway = gateway,
+            conversationPersistenceOverride = subPersistence
+        )
+        subCore.initialize(
+            AgentConfig(systemPrompt = "sub"),
+            skipRestore = true,
+            skipAutoSave = true
+        )
+
+        // 触发 auto-save 的关键路径：AgentCore 的 chat() 内部走 chatWithTools，
+        // finally 块里 conversationPersistence.saveSession() 会被异步调度。
+        // fake gateway 会让 LLM 调用快速结束（空响应），触发 save 路径。
+        try {
+            subCore.chat("test")
+        } catch (e: Exception) {
+            // fake gateway 可能抛异常，吞掉 — 我们只关心副作用（写盘）
+        }
+
+        // 验证：tmp 持久化目录里没有任何 session json 文件
+        val files = tempDir.toFile().listFiles { f -> f.extension == "json" }
+        assertTrue(
+            files.isNullOrEmpty(),
+            "sub agent should not write to its own persistence, but found: ${files?.map { it.name }}"
+        )
+    }
+
+    /**
+     * Test 3 (P0 regression): 父 Agent 的 restoreSessions 仍正常工作
+     *
+     * 防止 P0 修复误伤父 Agent 的常规启动路径。
+     */
+    @Test
+    fun `parent agent restoreSessions still works - regression for P0 fix`(
+        @TempDir tempDir: Path
+    ) = runBlocking {
+        val persistence = ConversationPersistence(tempDir.toFile())
+        val gateway = createFakeGateway()
+
+        // 1. 第一个父 Agent 跑过 + 保存
+        val parent1 = AgentCore(
+            gateway = gateway,
+            conversationPersistenceOverride = persistence
+        )
+        parent1.initialize(AgentConfig(systemPrompt = "p1"))
+        val p1SessionId = parent1.getCurrentSession()?.id
+        assertNotNull(p1SessionId)
+        persistence.saveSessionSync(parent1.getCurrentSession()!!, parent1.getCurrentHistory())
+
+        // 2. 第二个父 Agent 实例模拟"重启"，默认 skipRestore=false
+        val parent2 = AgentCore(
+            gateway = gateway,
+            conversationPersistenceOverride = persistence
+        )
+        parent2.initialize(AgentConfig(systemPrompt = "p2"))
+
+        // 3. 验证：父 Agent 仍能从磁盘恢复自己之前的 session
+        val restoredSessionIds = parent2.getSessions().map { it.id }
+        assertTrue(
+            p1SessionId in restoredSessionIds,
+            "parent agent should still restore its own persisted sessions; " +
+                "got: $restoredSessionIds, expected to contain: $p1SessionId"
+        )
+    }
+
+    /**
+     * Test 4 (P0 集成): 完整 SubAgentExecutor.spawn() 流程不污染父 Agent 磁盘
+     *
+     * 这是端到端验证：走 SubAgentExecutor.spawn 完整路径（创建 tmp 持久化、initialize、
+     * 跑任务、清理），父 Agent 的持久化目录应该完全不变。
+     */
+    @Test
+    fun `SubAgentExecutor spawn does not pollute parent persistence`(
+        @TempDir tempDir: Path
+    ) = runBlocking {
+        val parentPersistence = ConversationPersistence(tempDir.resolve("parent").toFile())
+        val gateway = createFakeGateway()
+
+        // 父 Agent + 保存
+        val parentCore = AgentCore(
+            gateway = gateway,
+            conversationPersistenceOverride = parentPersistence
+        )
+        parentCore.initialize(AgentConfig(systemPrompt = "parent"))
+        persistence_saveSessionSync_bridge(parentCore, parentPersistence)
+        val parentSessionCountBefore = parentPersistence.loadAllSessions().size
+        val parentSessionIdBefore = parentCore.getCurrentSession()?.id
+        assertNotNull(parentSessionIdBefore)
+
+        // 走完整 SubAgentExecutor.spawn
+        val subExecutor = SubAgentExecutor(parentCore)
+        val result = subExecutor.spawn(
+            parentSessionId = parentSessionIdBefore!!,
+            taskDescription = "isolated sub task",
+            toolset = "dev"
+        )
+
+        // 验证 1: 父的磁盘 session 数量没变
+        val parentSessionCountAfter = parentPersistence.loadAllSessions().size
+        assertEquals(
+            parentSessionCountBefore, parentSessionCountAfter,
+            "SubAgentExecutor.spawn must not write to parent's persistence; " +
+                "before=$parentSessionCountBefore, after=$parentSessionCountAfter"
+        )
+
+        // 验证 2: 父的 session id 没出现在子 agent 的最终 result 里（防止父 session 泄漏到子 context）
+        assertFalse(
+            result.output.contains(parentSessionIdBefore),
+            "sub-agent output should not leak parent session id; got: ${result.output.take(200)}"
+        )
+    }
+
+    /**
+     * 辅助函数：给 parentCore 触发 saveSessionSync（不依赖 async save 调度）
+     */
+    private suspend fun persistence_saveSessionSync_bridge(
+        core: AgentCore,
+        persistence: ConversationPersistence
+    ) {
+        val session = core.getCurrentSession() ?: return
+        val history = core.getCurrentHistory()
+        persistence.saveSessionSync(session, history)
     }
 
     // ===== 工具方法 =====

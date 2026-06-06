@@ -161,6 +161,16 @@ open class ModelGateway(
                     "requestSize=${vendorRequest.length}B, " +
                     "bodyPreview=${vendorRequest.take(500)}"
         )
+        // 子 Agent 触发的请求 > 8KB 视为可疑（独立 prompt ~1.2KB + 任务 ~1KB + 工具 schema ~2-4KB = 4-6KB）
+        // 历史上曾因父 Agent 历史被 restore 进子 Agent 导致 requestSize 膨胀到 39KB+ 触发 MiniMax 2013 错误
+        if (vendorRequest.length > 8 * 1024) {
+            logger.warn(
+                "[Gateway.chatStream] Suspiciously large request " +
+                    "size=${vendorRequest.length}B, " +
+                    "firstMessageRoles=${request.messages.take(3).map { it.role }}; " +
+                    "this may indicate session contamination from parent agent"
+            )
+        }
 
         val req = Request.Builder()
             .url(adapter.getStreamEndpoint())
