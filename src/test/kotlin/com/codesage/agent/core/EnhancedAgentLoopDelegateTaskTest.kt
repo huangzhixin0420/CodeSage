@@ -122,6 +122,127 @@ class EnhancedAgentLoopDelegateTaskTest {
         assertEquals(0, fakeSubAgentExecutor.spawnCallCount)
     }
 
+    /**
+     * P1 #1: delegate_task 工具的 tool result 现在是纯文本，不是 JSON
+     *
+     * 老的实现把 sub-agent 的 output 包装成 JSON:
+     *   {"success":true,"output":"...","session_id":"...","iterations_used":3,"tools_used":[...]}
+     *
+     * 新实现（参考 Claude Code）直接返回 sub-agent 的自然语言最终 turn:
+     *   "Done. Result: ...\nFiles: ...\nBlockers: ..."
+     *
+     * 父 LLM 看到 tool result 时不再需要解析 JSON，可以直接当 user message 解读。
+     */
+    @Test
+    fun `delegate_task tool result should be plain text not JSON`() = runBlocking {
+        val parent = AgentCore()
+        parent.initialize(AgentConfig(defaultModel = "test-model", systemPrompt = "parent"))
+
+        // 模拟子 agent 返回的最终 turn 文本（已遵守 Final-Turn Contract）
+        val expectedFinalText = "**Result**: implemented the feature\n**Files**: Foo.kt\n**Blockers**: none"
+        val expectedResult = SubAgentResult(
+            success = true,
+            output = expectedFinalText,
+            sessionId = "sub_test_plain",
+            iterationsUsed = 3,
+            toolsUsed = listOf("read_file", "write_file")
+        )
+        val fakeSubAgentExecutor = FakeSubAgentExecutor(parent, expectedResult)
+
+        val gateway = createGatewayThatCallsDelegateTaskThenFinalizes(
+            arguments = """{"task_description":"Implement Foo","toolset":"dev"}"""
+        )
+
+        val testContextManager = ContextManager()
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = ToolExecutor(null),
+            stateFlow = kotlinx.coroutines.flow.MutableStateFlow(AgentState.IDLE),
+            subAgentExecutor = fakeSubAgentExecutor
+        )
+
+        val events = loop.run(
+            userMessage = "Implement Foo",
+            session = AgentSession(id = "session_plain"),
+            contextManager = testContextManager,
+            currentModel = "test-model",
+            systemPrompt = "parent"
+        ).toList()
+
+        // ToolCallResult 事件的 result 字段应当是子 agent 的纯文本，
+        // 不应以 "{" 开头（JSON 特征）
+        val toolResults = events.filterIsInstance<AgentStreamEvent.ToolCallResult>()
+        val delegateResult = toolResults.firstOrNull { it.toolName == "delegate_task" }
+        assertNotNull(delegateResult, "Should have tool result for delegate_task")
+        assertFalse(
+            delegateResult!!.result.trim().startsWith("{"),
+            "delegate_task tool result should NOT be JSON, got: ${delegateResult.result.take(200)}"
+        )
+        // 应当包含子 agent 的最终 turn 文本
+        assertTrue(
+            delegateResult.result.contains("**Result**"),
+            "delegate_task tool result should contain the sub-agent's final turn markdown, got: ${delegateResult.result}"
+        )
+        // 父 LLM 视角下，loop.run 结束后 contextManager 里的 tool_message 应当持有纯文本
+        val contextMessages = testContextManager.getContext()
+        val toolMessages = contextMessages.filter { it.role == Role.TOOL }
+        assertTrue(toolMessages.isNotEmpty(), "should have a tool message in context")
+        val lastToolMessage = toolMessages.last()
+        assertFalse(
+            lastToolMessage.content.trim().startsWith("{"),
+            "tool_message content in parent context should NOT be JSON, got: ${lastToolMessage.content.take(200)}"
+        )
+        assertTrue(lastToolMessage.content.contains("**Result**"))
+    }
+
+    /**
+     * P1 #2: SubAgentComplete 事件现在带 iterationsUsed 和 toolsUsed（给 UI 用）
+     */
+    @Test
+    fun `SubAgentComplete event should carry iterationsUsed and toolsUsed metadata`() = runBlocking {
+        val parent = AgentCore()
+        parent.initialize(AgentConfig(defaultModel = "test-model", systemPrompt = "parent"))
+
+        val expectedResult = SubAgentResult(
+            success = true,
+            output = "Done.",
+            sessionId = "sub_test_meta",
+            iterationsUsed = 7,
+            toolsUsed = listOf("read_file", "grep_code", "write_file")
+        )
+        val fakeSubAgentExecutor = FakeSubAgentExecutor(parent, expectedResult)
+
+        val gateway = createGatewayThatCallsDelegateTaskThenFinalizes(
+            arguments = """{"task_description":"Some task","toolset":"dev"}"""
+        )
+
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = ToolExecutor(null),
+            stateFlow = kotlinx.coroutines.flow.MutableStateFlow(AgentState.IDLE),
+            subAgentExecutor = fakeSubAgentExecutor
+        )
+
+        val events = loop.run(
+            userMessage = "Some task",
+            session = AgentSession(id = "session_meta"),
+            contextManager = ContextManager(),
+            currentModel = "test-model",
+            systemPrompt = "parent"
+        ).toList()
+
+        val completion = events.filterIsInstance<AgentStreamEvent.SubAgentComplete>().first()
+        assertEquals(7, completion.iterationsUsed,
+            "SubAgentComplete event should carry iterationsUsed=7, got: ${completion.iterationsUsed}")
+        assertEquals(
+            listOf("read_file", "grep_code", "write_file"),
+            completion.toolsUsed,
+            "SubAgentComplete event should carry toolsUsed"
+        )
+    }
+
     // ===== helpers =====
 
     /**

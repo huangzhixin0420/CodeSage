@@ -297,7 +297,10 @@ internal fun getProjectStructureTool() = Tool(
 internal fun delegateTaskTool() = Tool(
     name = "delegate_task",
     description = "Spawn an isolated sub-agent to handle a specific workstream in parallel. " +
-            "Use when a task can be decomposed into independent sub-tasks.",
+            "Use when a task can be decomposed into independent sub-tasks. " +
+            "The sub-agent runs with a fresh session and isolated context. " +
+            "Returns the sub-agent\'s natural-language summary (plain text in its final turn) describing what it did. " +
+            "You can ask follow-up questions or request changes; metadata like iteration count is delivered via stream events, not in this result.",
     parameters = ToolParameters(
         properties = mapOf(
             "task_description" to ToolProperty(

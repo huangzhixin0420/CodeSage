@@ -196,7 +196,11 @@ open class SubAgentExecutor(
             }
 
             // 6. 执行对话循环
+            // outputBuilder = 全量文本（仅用于 fallback 诊断，UI 不展示）
+            // currentTurnText = 最后一个 turn 的文本（tool call 之间的内容），
+            //                    循环结束后持有"最终 turn" = 子 Agent 的摘要
             val outputBuilder = StringBuilder()
+            var currentTurnText = StringBuilder()
             val toolsUsed = mutableSetOf<String>()
             var iterationsUsed = 0
             var success = true
@@ -207,10 +211,14 @@ open class SubAgentExecutor(
                 subAgent.chatWithTools(taskMessage).collect { event ->
                     when (event) {
                         is AgentStreamEvent.TextDelta -> {
+                            currentTurnText.append(event.delta)
                             outputBuilder.append(event.delta)
                         }
 
                         is AgentStreamEvent.ToolCallStart -> {
+                            // 新一轮 tool call 开始 = 之前的文本是"中间思考"，
+                            // 清空 currentTurnText 让它只持有从现在起的最终 turn 文本
+                            currentTurnText = StringBuilder()
                             toolsUsed.add(event.toolCall.name)
                             iterationsUsed++
                             progressCallback("[SubAgent] Using tool: ${event.toolCall.name}")
@@ -257,9 +265,18 @@ open class SubAgentExecutor(
                 outputBuilder.appendLine("\n[EXCEPTION] ${e.message}")
             }
 
+            // 最终 turn = currentTurnText（循环结束时没新 tool call，持有的就是最后一段）
+            // 兜底逻辑委托给纯函数 extractFinalTurnSummary，便于单测
+            val output = extractFinalTurnSummary(
+                finalTurnText = currentTurnText.toString(),
+                allText = outputBuilder.toString(),
+                iterationsUsed = iterationsUsed,
+                logger = logger
+            )
+
             val result = SubAgentResult(
                 success = success,
-                output = outputBuilder.toString(),
+                output = output,
                 sessionId = subSessionId,
                 iterationsUsed = iterationsUsed,
                 toolsUsed = toolsUsed.toList()
@@ -386,6 +403,38 @@ open class SubAgentExecutor(
         const val MAX_RECURSION_DEPTH: Int = 2
 
         /**
+         * 纯函数版：提取子 Agent 的"最终 turn"输出文本。
+         *
+         * 语义：
+         * - 子 Agent 的 loop 会 emit 多个 turn 的 text（中间思考 + 最终摘要）
+         * - 父 LLM 只看最终 turn（见 buildSubAgentPrompt 的 Final-Turn Output Contract）
+         * - 本函数把 [finalTurnText]（最后一个 turn 的累积文本）作为首选
+         *   兜底：当 finalTurnText 为空时（子 agent 没写摘要，最后一个 turn 又调了 tool），
+         *   退化到 [allText]（所有 turn 的全量文本）+ warn 日志
+         *   再兜底：都没内容时返回 "(sub-agent produced no output)"
+         *
+         * 抽成纯函数（不依赖实例）方便单测覆盖各种事件序列。
+         */
+        @JvmStatic
+        fun extractFinalTurnSummary(
+            finalTurnText: String,
+            allText: String,
+            iterationsUsed: Int,
+            logger: com.intellij.openapi.diagnostic.Logger
+        ): String = when {
+            finalTurnText.isNotBlank() -> finalTurnText
+            allText.isNotBlank() -> {
+                logger.warn(
+                    "[SubAgent] final turn was empty after ${iterationsUsed} iterations; " +
+                        "falling back to all accumulated text (length=${allText.length}). " +
+                        "Sub-agent did not honor the Final-Turn Output Contract."
+                )
+                allText
+            }
+            else -> "(sub-agent produced no output)"
+        }
+
+        /**
          * 纯函数版：构造子 Agent 的 system prompt（不依赖实例状态），便于测试。
          *
          * v2 重构：**不再继承主 Agent 的 prompt**。子 Agent 拥有自己的最小化
@@ -416,12 +465,21 @@ open class SubAgentExecutor(
             appendLine("5. **No new tasks**: Do not create or schedule follow-up work; the parent owns the task lifecycle.")
             appendLine("6. **No side effects outside scope**: Modify only files explicitly mentioned in the task.")
             appendLine()
-            appendLine("## Output Format")
+            appendLine("## Final-Turn Output Contract")
             appendLine()
-            appendLine("Return a concise result describing:")
-            appendLine("- What you accomplished")
-            appendLine("- Any files you created or modified")
-            appendLine("- Any blockers or issues (if any)")
+            appendLine("When you have finished all work and have no more tool calls to make, your FINAL assistant turn (the last text you emit before the loop ends) must contain ONLY a concise plain-text summary using this structure:")
+            appendLine()
+            appendLine("  **Result**: <one-sentence summary of what you did>")
+            appendLine("  **Files**: <comma-separated paths created/modified, or \"none\">")
+            appendLine("  **Blockers**: <issues, or \"none\">")
+            appendLine()
+            appendLine("Hard rules for the final turn:")
+            appendLine("- Plain text only. Do NOT include JSON, YAML, or fenced code blocks.")
+            appendLine("- Do NOT call any tools in the final turn.")
+            appendLine("- Do NOT add follow-up suggestions, next steps, or 'I can also do X'.")
+            appendLine("- Do NOT repeat earlier intermediate reasoning.")
+            appendLine()
+            appendLine("Earlier turns (between tool calls) may contain whatever you need to think aloud. The parent agent only reads your FINAL turn.")
             appendLine()
             appendLine("## Recursion")
             appendLine()

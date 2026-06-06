@@ -739,24 +739,17 @@ class EnhancedAgentLoop(
                 AgentStreamEvent.SubAgentComplete(
                     sessionId = result.sessionId,
                     success = result.success,
-                    output = result.output
+                    output = result.output,
+                    iterationsUsed = result.iterationsUsed,
+                    toolsUsed = result.toolsUsed
                 )
             )
 
-            kotlinx.serialization.json.Json.encodeToString(
-                kotlinx.serialization.json.JsonObject.serializer(),
-                kotlinx.serialization.json.JsonObject(
-                    mapOf(
-                        "success" to kotlinx.serialization.json.JsonPrimitive(result.success),
-                        "output" to kotlinx.serialization.json.JsonPrimitive(result.output),
-                        "session_id" to kotlinx.serialization.json.JsonPrimitive(result.sessionId),
-                        "iterations_used" to kotlinx.serialization.json.JsonPrimitive(result.iterationsUsed),
-                        "tools_used" to kotlinx.serialization.json.JsonArray(
-                            result.toolsUsed.map { kotlinx.serialization.json.JsonPrimitive(it) }
-                        )
-                    )
-                )
-            )
+            // P1: 返回纯文本摘要（不再 JSON 包装）。
+            // 父 LLM 收到的是子 agent 的自然语言最终 turn（见 buildSubAgentPrompt 的
+            // "Final-Turn Output Contract"）。iterations / tools 等元数据通过
+            // SubAgentComplete 事件给 UI，不进父 LLM context。
+            result.output
         } catch (e: Exception) {
             emit(
                 AgentStreamEvent.SubAgentComplete(
@@ -765,7 +758,8 @@ class EnhancedAgentLoop(
                     output = e.message ?: "Unknown error"
                 )
             )
-            "{\"success\":false,\"error\":\"SubAgent execution failed: ${e.message}\"}"
+            // P1: 失败也走纯文本兜底，不返回 JSON
+            "SubAgent execution failed: ${e.message}"
         }
     }
 

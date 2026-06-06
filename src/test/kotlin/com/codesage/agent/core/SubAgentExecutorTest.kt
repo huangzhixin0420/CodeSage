@@ -536,6 +536,107 @@ class SubAgentExecutorTest {
         persistence.saveSessionSync(session, history)
     }
 
+    // ===== P1 修复测试 =====
+
+    /**
+     * P1 #1: buildSubAgentPrompt 强化为 "Final-Turn Output Contract"
+     *
+     * 老 prompt 里的 "## Output Format" 只是软建议，LLM 经常把中间思考也当成 output。
+     * 新 prompt 用了 "Final-Turn Output Contract" + "Hard rules" 提升为协议级约束。
+     */
+    @Test
+    fun `buildSubAgentPrompt should enforce final-turn plain-text contract`() {
+        val prompt = SubAgentExecutor.buildSubAgentPrompt("t", "dev", 0)
+        // Final-Turn Contract 段
+        assertTrue(prompt.contains("Final-Turn Output Contract"),
+            "prompt should have a 'Final-Turn Output Contract' section, got: ${prompt.take(300)}...")
+        // 强约束词
+        assertTrue(prompt.contains("Hard rules for the final turn"))
+        assertTrue(prompt.contains("Plain text only"))
+        assertTrue(prompt.contains("Do NOT include JSON"))
+        assertTrue(prompt.contains("Do NOT call any tools in the final turn"))
+        assertTrue(prompt.contains("Do NOT add follow-up suggestions"))
+        // 摘要结构
+        assertTrue(prompt.contains("**Result**"))
+        assertTrue(prompt.contains("**Files**"))
+        assertTrue(prompt.contains("**Blockers**"))
+    }
+
+    /**
+     * P1 #2: buildSubAgentPrompt 仍然 < 2KB
+     *
+     * Final-Turn Contract 加了 ~300B，仍应在 2KB 内。
+     */
+    @Test
+    fun `buildSubAgentPrompt with final-turn contract should stay under 2KB`() {
+        val prompt = SubAgentExecutor.buildSubAgentPrompt(
+            taskDescription = "Implement a complex function that does many things",
+            toolset = "dev",
+            depth = 0
+        )
+        assertTrue(
+            prompt.length < 2048,
+            "Sub-agent prompt must stay < 2KB even with Final-Turn Contract. Got ${prompt.length}B."
+        )
+    }
+
+    /**
+     * P1 #3: extractFinalTurnSummary — 正常情况（final turn 有内容）
+     */
+    @Test
+    fun `extractFinalTurnSummary should return finalTurnText when non-blank`() {
+        val summary = SubAgentExecutor.extractFinalTurnSummary(
+            finalTurnText = "Done. Result: implemented.\nFiles: foo.kt",
+            allText = "I will read the file.\nDone. Result: implemented.\nFiles: foo.kt",
+            iterationsUsed = 3,
+            logger = com.intellij.openapi.diagnostic.Logger.getInstance("test")
+        )
+        assertEquals("Done. Result: implemented.\nFiles: foo.kt", summary)
+    }
+
+    /**
+     * P1 #4: extractFinalTurnSummary — final turn 为空（子 agent 没写摘要）
+     *        兜底到 allText
+     */
+    @Test
+    fun `extractFinalTurnSummary should fall back to allText when finalTurnText is blank`() {
+        val summary = SubAgentExecutor.extractFinalTurnSummary(
+            finalTurnText = "",
+            allText = "I will read the file.\nThen I will write.",
+            iterationsUsed = 2,
+            logger = com.intellij.openapi.diagnostic.Logger.getInstance("test")
+        )
+        assertEquals("I will read the file.\nThen I will write.", summary)
+    }
+
+    /**
+     * P1 #5: extractFinalTurnSummary — 都为空时返回 sentinel
+     */
+    @Test
+    fun `extractFinalTurnSummary should return sentinel when both are blank`() {
+        val summary = SubAgentExecutor.extractFinalTurnSummary(
+            finalTurnText = "",
+            allText = "",
+            iterationsUsed = 0,
+            logger = com.intellij.openapi.diagnostic.Logger.getInstance("test")
+        )
+        assertEquals("(sub-agent produced no output)", summary)
+    }
+
+    /**
+     * P1 #6: extractFinalTurnSummary — finalTurnText 优先于 allText（即使 allText 更长）
+     */
+    @Test
+    fun `extractFinalTurnSummary should prefer finalTurnText over allText even when shorter`() {
+        val summary = SubAgentExecutor.extractFinalTurnSummary(
+            finalTurnText = "Short summary",
+            allText = "A".repeat(10000),
+            iterationsUsed = 1,
+            logger = com.intellij.openapi.diagnostic.Logger.getInstance("test")
+        )
+        assertEquals("Short summary", summary)
+    }
+
     // ===== 工具方法 =====
 
     /**

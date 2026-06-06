@@ -87,7 +87,16 @@ sealed class AgentStreamEvent {
     data class SubAgentComplete(
         val sessionId: String,
         val success: Boolean,
-        val output: String
+        val output: String,
+        /**
+         * 子 Agent 实际执行的轮次数（tool call 触发 +1）。UI 展示用，**不**进父 LLM context。
+         * 可选字段：老调用方传 0 / emptyList 即可。
+         */
+        val iterationsUsed: Int = 0,
+        /**
+         * 子 Agent 实际调用的工具名列表（去重）。UI 展示用，**不**进父 LLM context。
+         */
+        val toolsUsed: List<String> = emptyList()
     ) : AgentStreamEvent()
 
     /**
