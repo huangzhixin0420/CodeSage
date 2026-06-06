@@ -209,8 +209,14 @@ class ToolExecutor(
                 }
             }
         }
-        // 所有重试耗尽
-        val errorMsg = lastException?.message ?: "Unknown error after $maxRetries retries"
+        // H10 修复：防御性检查 lastException 不为 null
+        if (lastException == null) {
+            // 理论上只有 maxRetries=0 且 first call 异常时才可能（已 break），
+            // 但保险起见加一个分支避免静默返回"Unknown error"。
+            logger.warn("[ToolExecutor] retry loop exited with no exception captured")
+            return ToolResult.Error("Execution failed after ${maxRetries + 1} attempts: no error captured")
+        }
+        val errorMsg = lastException.message ?: "Unknown error"
         return ToolResult.Error("Execution failed after ${maxRetries + 1} attempts: $errorMsg")
     }
 
@@ -230,11 +236,25 @@ class ToolExecutor(
 
     /**
      * 判断错误是否可重试
+     *
+     * H10 修复：
+     * - 显式排除 [java.nio.file.AccessDeniedException]（永久错误，重试无意义）
+     * - 显式排除 [java.nio.file.NoSuchFileException] / NotDirectoryException（永久错误）
+     * - IOException 子类中区分"瞬时"vs"永久"，避免权限错误浪费 3x 延迟
      */
     private fun isRetryableError(error: Throwable): Boolean {
         return when (error) {
-            is IOException -> true
             is TimeoutException -> true
+            is java.nio.file.AccessDeniedException -> false
+            is java.nio.file.NoSuchFileException -> false
+            is java.nio.file.NotDirectoryException -> false
+            is java.nio.file.FileAlreadyExistsException -> false
+            is java.io.FileNotFoundException -> false
+            is IOException -> {
+                // 其它 IOException（SocketException、ConnectException、UnknownHostException 等）
+                // 视为瞬时错误，可重试
+                true
+            }
             else -> {
                 val msg = error.message?.lowercase() ?: ""
                 // Git 索引锁、文件被占用等临时错误

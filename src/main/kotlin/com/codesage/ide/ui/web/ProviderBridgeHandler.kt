@@ -1,6 +1,7 @@
 package com.codesage.ide.ui.web
 
 import com.codesage.shared.config.PluginConfig
+import com.codesage.shared.security.SsrfGuard
 import com.codesage.shared.utils.Logger
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -115,7 +116,20 @@ class ProviderBridgeHandler(
      *   - 5xx/超时/连接失败:服务不可达,ok=false
      */
     private fun testConnection(baseUrl: String, apiKey: String, model: String): TestResult {
-        val url = normalizeBaseUrl(baseUrl) + "/v1/models"
+        val probeUrl = normalizeBaseUrl(baseUrl) + "/v1/models"
+
+        // H15 修复：先做 SSRF 防护，block 直接返回错误，避免打到内网/loopback
+        val ssrfCheck = SsrfGuard.check(probeUrl)
+        if (ssrfCheck is SsrfGuard.CheckResult.Blocked) {
+            return TestResult(
+                ok = false,
+                latencyMs = 0L,
+                httpStatus = 0,
+                error = "SSRF blocked: ${ssrfCheck.reason}".take(200)
+            )
+        }
+
+        val url = probeUrl
         val start = System.currentTimeMillis()
         val request = Request.Builder()
             .url(url)

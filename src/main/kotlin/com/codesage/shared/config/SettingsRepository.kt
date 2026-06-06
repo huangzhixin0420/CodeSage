@@ -12,7 +12,9 @@ import kotlinx.serialization.encodeToString
 import java.nio.file.*
 import java.nio.file.StandardWatchEventKinds.*
 import java.nio.file.attribute.BasicFileAttributes
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.path.*
 
@@ -47,15 +49,28 @@ class SettingsRepository {
 
     @Volatile
     private var settingsPath: Path? = null
+
     @Volatile
     private var watchService: WatchService? = null
+
     @Volatile
     private var watchJob: Job? = null
 
+    @Volatile
+    private var disposed = false
+
+    private val initFuture = CompletableFuture<Unit>()
+    private val watchingStarted = AtomicBoolean(false)
+
     init {
         ApplicationManager.getApplication().executeOnPooledThread {
-            runCatching { initializeFile() }
-                .onFailure { logger.error("SettingsRepository init failed", it) }
+            try {
+                initializeFile()
+            } catch (e: Exception) {
+                logger.error("SettingsRepository init failed", e)
+            } finally {
+                initFuture.complete(Unit)
+            }
         }
     }
 
@@ -66,10 +81,26 @@ class SettingsRepository {
 
     /** 异步刷新(从文件重新读) */
     fun reload(): SettingsFile {
+        awaitInit()
         val path = settingsPath ?: resolvePath().also { settingsPath = it }
         return try {
             val file = path.toFile()
             if (!file.exists()) {
+                val defaults = DefaultSettings.create()
+                current.set(defaults)
+                return defaults
+            }
+            // OOM 防护: 文件超过 1 MB 时不再尝试读。
+            // 注意:这里必须用 logger.warn,不能用 logger.error —— IntelliJ Platform 的
+            // Logger.error(String) 重载会直接抛 Throwable 把日志调用本身变成抛异常,
+            // 污染 IDE 日志并打断调用方。生产代码报“可恢复”问题用 warn / info 即可。
+            // 顺便自动备份旧文件 + 回退默认,不让用户卡在“文件太大读不了”的状态。
+            val fileSize = file.length()
+            if (fileSize > 1_000_000) {
+                logger.warn(
+                    "Settings file too large ($fileSize bytes at $path) — backing up and falling back to defaults to prevent OOM"
+                )
+                backupCorrupted() // 复用既有的 .bak.<ts> rename 逻辑
                 val defaults = DefaultSettings.create()
                 current.set(defaults)
                 return defaults
@@ -96,6 +127,11 @@ class SettingsRepository {
      * @return true 成功
      */
     fun save(settings: SettingsFile): Boolean {
+        awaitInit()
+        if (disposed) {
+            logger.warn("SettingsRepository already disposed, save ignored")
+            return false
+        }
         return try {
             val path = settingsPath ?: resolvePath().also { settingsPath = it }
             path.parent?.createDirectories()
@@ -111,7 +147,9 @@ class SettingsRepository {
             )
             current.set(settings)
             logger.info("Settings saved: ${settings.providers.size} providers")
-            scope.launch { _changes.emit(settings) }
+            if (scope.isActive) {
+                scope.launch { _changes.emit(settings) }
+            }
             true
         } catch (e: Exception) {
             logger.error("Settings save failed", e)
@@ -120,15 +158,54 @@ class SettingsRepository {
         }
     }
 
-    /** 更新并保存(基于当前值) */
-    fun update(transform: (SettingsFile) -> SettingsFile): Boolean {
-        val updated = transform(current.get())
-        return save(updated)
+    /** 更新并保存(基于当前值) — CAS 循环保证原子性
+     *
+     * C8 修复：
+     * 1. 加 [maxAttempts] 上限防止 transform 持续抛异常时死循环
+     * 2. transform 抛异常时不修改 current 状态
+     * 3. save 失败时回滚 current 到 old，保持内存与磁盘一致
+     */
+    fun update(
+        transform: (SettingsFile) -> SettingsFile,
+        maxAttempts: Int = 10
+    ): Boolean {
+        require(maxAttempts > 0) { "maxAttempts must be > 0" }
+        var attempts = 0
+        while (attempts < maxAttempts) {
+            attempts++
+            val old = current.get()
+            val updated = try {
+                transform(old)
+            } catch (e: Exception) {
+                // transform 抛异常时不修改 current，向上抛给调用方
+                throw e
+            }
+            if (updated === old) return true // 无变化
+            if (current.compareAndSet(old, updated)) {
+                val saveResult = try {
+                    save(updated)
+                } catch (e: Exception) {
+                    // save 失败时回滚内存到 old，避免内存与磁盘不一致
+                    current.compareAndSet(updated, old)
+                    throw e
+                }
+                if (!saveResult) {
+                    // save 返回 false 时回滚
+                    current.compareAndSet(updated, old)
+                }
+                return saveResult
+            }
+            // CAS 失败，重试（基于最新 current 值重新计算）
+        }
+        // 超过 maxAttempts：可能并发极高或 transform 不稳定
+        throw IllegalStateException(
+            "SettingsRepository.update: CAS loop exceeded $maxAttempts attempts"
+        )
     }
 
     /** 启动文件监听(可重复调用,内部去重) */
     fun startWatching() {
-        if (watchJob?.isActive == true) return
+        if (watchingStarted.getAndSet(true)) return
         watchJob = scope.launch { watchLoop() }
     }
 
@@ -136,9 +213,11 @@ class SettingsRepository {
     fun stopWatching() {
         watchJob?.cancel()
         watchJob = null
+        watchingStarted.set(false)
     }
 
     fun dispose() {
+        disposed = true
         stopWatching()
         watchService?.close()
         watchService = null
@@ -170,6 +249,15 @@ class SettingsRepository {
         return Paths.get(home, ".codesage", "settings.json")
     }
 
+    private fun awaitInit() {
+        if (initFuture.isDone) return
+        try {
+            initFuture.get(5, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            logger.warn("SettingsRepository initialization wait timed out, proceeding anyway: ${e.message}")
+        }
+    }
+
     private fun initializeFile() {
         val path = resolvePath()
         settingsPath = path
@@ -192,13 +280,16 @@ class SettingsRepository {
     }
 
     private fun saveNonAtomic(settings: SettingsFile): Boolean {
+        if (disposed) return false
         return try {
             val path = settingsPath ?: return false
             path.parent?.createDirectories()
             val text = DefaultSettings.JSON.encodeToString(settings)
             path.writeText(text, Charsets.UTF_8)
             current.set(settings)
-            scope.launch { _changes.emit(settings) }
+            if (scope.isActive) {
+                scope.launch { _changes.emit(settings) }
+            }
             true
         } catch (e: Exception) {
             logger.error("Settings non-atomic save failed", e)
@@ -232,9 +323,13 @@ class SettingsRepository {
         try {
             dir.register(watchSvc, ENTRY_CREATE, ENTRY_MODIFY, ENTRY_DELETE)
             logger.info("Watching settings dir: $dir")
+            // 在循环外累积 dirty 标记:一次 watchSvc.take() 后把 pollEvents() 拿到的所有事件
+            // 都看作"文件被改了",在一轮处理里最多 reload 一次
             while (currentCoroutineContext().isActive) {
                 val key = withContext(Dispatchers.IO) { watchSvc.take() }
                 val events = key.pollEvents()
+                var dirty = false
+                var deleted = false
                 for (event in events) {
                     val kind = event.kind()
                     if (kind == OVERFLOW) continue
@@ -242,10 +337,14 @@ class SettingsRepository {
                     if (filename != path.fileName) continue
                     if (kind == ENTRY_DELETE) {
                         logger.info("Settings file deleted externally, keeping in-memory state")
-                        continue
+                        deleted = true
+                    } else {
+                        dirty = true
                     }
-                    // 短暂 debounce:文件保存时可能多次 modify
-                    delay(150)
+                }
+                if (dirty && !deleted) {
+                    // debounce:多次 modify 合并为一次 reload
+                    delay(300)
                     val newSettings = withContext(Dispatchers.IO) { reload() }
                     _changes.emit(newSettings)
                 }

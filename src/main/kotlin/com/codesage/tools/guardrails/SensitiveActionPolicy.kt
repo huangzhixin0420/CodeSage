@@ -90,14 +90,31 @@ object SensitiveActionPolicy {
 
     /**
      * 评估删除文件操作
+     *
+     * C4 修复：之前用 `relativePath.contains(".git")` 这种 substring 匹配做防护，
+     * 可被 `xgit`、`.git_bak` 等伪路径绕过。改用以下组合：
+     * 1. 路径规范化：File.canonicalPath 解析 `..` 和符号链接
+     * 2. canonicalPath.startsWith(projectRoot) 强制路径必须在 project 内
+     * 3. 路径段精确匹配：path 段必须**完全等于** PROTECTED_PATHS 中的任一项
+     *    （用 Path.startsWith(protectedDir) 替代 contains，避免 `xgit` 绕过）
      */
     fun evaluateDelete(path: String, projectRoot: String?): PolicyDecision {
         val normalizedPath = normalizePath(path, projectRoot)
         val file = File(normalizedPath)
         val relativePath = projectRoot?.let { file.relativePath(it) } ?: path
 
-        // 检查是否是受保护路径（绝对禁止）
-        if (PROTECTED_PATHS.any { relativePath.contains(it) }) {
+        // C4: 路径必须在 projectRoot 内（canonical 比较），否则按"路径穿越"直接拒绝
+        if (projectRoot != null && !isPathInsideProject(normalizedPath, projectRoot)) {
+            return PolicyDecision(
+                verdict = PolicyDecision.Verdict.BLOCKED,
+                riskLevel = RiskLevel.DANGEROUS,
+                reason = "Path traversal attempt: $path resolves outside project root"
+            )
+        }
+
+        // C4: 路径段精确匹配。relativePath.split("/") 拆段后做 set 相交，
+        // 避免 `contains(".git")` 误判 `xgit`、`.git_bak`、`.github/`。
+        if (isProtectedPath(relativePath)) {
             return PolicyDecision(
                 verdict = PolicyDecision.Verdict.BLOCKED,
                 riskLevel = RiskLevel.DANGEROUS,
@@ -132,11 +149,52 @@ object SensitiveActionPolicy {
     }
 
     /**
+     * C4 修复：判断 [normalizedPath] 是否在 [projectRoot] 内。
+     * 走 canonical path 比较，避免符号链接、`..` 绕过。
+     */
+    private fun isPathInsideProject(normalizedPath: String, projectRoot: String): Boolean {
+        val canonicalRoot = try {
+            File(projectRoot).canonicalPath
+        } catch (e: Exception) {
+            return false
+        }
+        val canonicalPath = try {
+            File(normalizedPath).canonicalPath
+        } catch (e: Exception) {
+            return false
+        }
+        // canonical 比较，避免前缀碰撞（如 projectRoot="/a" 匹配 "/abc"）
+        return canonicalPath == canonicalRoot ||
+                canonicalPath.startsWith(canonicalRoot + File.separator) ||
+                canonicalPath.startsWith(canonicalRoot + "/")
+    }
+
+    /**
+     * C4 修复：路径段精确匹配。
+     * 把 relativePath 拆成段（按 `/` 和 `\`），任一段与 PROTECTED_PATHS 完全相等即为保护路径。
+     * 避免 `.git_bak`、`xgit` 这种 substring 误判。
+     */
+    private fun isProtectedPath(relativePath: String): Boolean {
+        if (relativePath.isEmpty()) return false
+        val segments = relativePath.split('/', '\\').filter { it.isNotEmpty() }
+        return segments.any { it in PROTECTED_PATHS }
+    }
+
+    /**
      * 评估写入文件操作
      */
     fun evaluateWrite(path: String, projectRoot: String?, content: String? = null): PolicyDecision {
         val normalizedPath = normalizePath(path, projectRoot)
         val relativePath = projectRoot?.let { File(normalizedPath).relativePath(it) } ?: path
+
+        // C4: 路径必须在 projectRoot 内
+        if (projectRoot != null && !isPathInsideProject(normalizedPath, projectRoot)) {
+            return PolicyDecision(
+                verdict = PolicyDecision.Verdict.BLOCKED,
+                riskLevel = RiskLevel.DANGEROUS,
+                reason = "Path traversal attempt: $path resolves outside project root"
+            )
+        }
 
         // 检查受保护写入模式（绝对禁止）
         if (PROTECTED_WRITE_PATTERNS.any { it.matches(relativePath) }) {
@@ -243,8 +301,19 @@ object SensitiveActionPolicy {
         val relSrc = projectRoot?.let { File(normalizedSrc).relativePath(it) } ?: source
         val relDst = projectRoot?.let { File(normalizedDst).relativePath(it) } ?: destination
 
-        // 检查源是否是受保护路径（绝对禁止）
-        if (PROTECTED_PATHS.any { relSrc.contains(it) }) {
+        // C4: source 和 destination 都必须在 projectRoot 内
+        if (projectRoot != null &&
+            (!isPathInsideProject(normalizedSrc, projectRoot) || !isPathInsideProject(normalizedDst, projectRoot))
+        ) {
+            return PolicyDecision(
+                verdict = PolicyDecision.Verdict.BLOCKED,
+                riskLevel = RiskLevel.DANGEROUS,
+                reason = "Path traversal attempt in move: $source -> $destination"
+            )
+        }
+
+        // 检查源是否是受保护路径（绝对禁止）—— C4: 改为路径段精确匹配
+        if (isProtectedPath(relSrc)) {
             return PolicyDecision(
                 verdict = PolicyDecision.Verdict.BLOCKED,
                 riskLevel = RiskLevel.DANGEROUS,

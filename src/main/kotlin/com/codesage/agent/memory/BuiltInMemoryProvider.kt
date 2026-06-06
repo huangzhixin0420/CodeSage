@@ -145,27 +145,41 @@ class BuiltInMemoryProvider : MemoryProvider {
             }
 
             // 3. 格式化为 <memory-context> 块
+            // H1 修复：
+            // - 单条 memory 截断到 [PREFETCH_ITEM_MAX_LEN] (4KB)，防止单条记录（用户曾粘贴
+            //   上 MB 日志）撑爆 system prompt 请求体
+            // - 转义 `</memory-context>` 关闭标签，防止用户内容里包含这个子串污染 prompt 解析
             val builder = StringBuilder()
             builder.appendLine("<memory-context>")
 
             if (memories.isNotEmpty()) {
                 builder.appendLine("## Relevant Memories")
                 memories.forEach { mem ->
-                    builder.appendLine("- [${mem.type}] ${mem.content}")
+                    val sanitized = sanitizeMemoryContent(mem.content)
+                    builder.appendLine("- [${mem.type}] $sanitized")
                 }
             }
 
             if (recentTurns.isNotEmpty()) {
                 builder.appendLine("## Recent Conversation")
                 recentTurns.forEach { turn ->
-                    builder.appendLine("User: ${turn.userMsg.take(200)}")
-                    builder.appendLine("Assistant: ${turn.assistantMsg.take(200)}")
+                    val userSanitized = sanitizeMemoryContent(turn.userMsg)
+                    val assistantSanitized = sanitizeMemoryContent(turn.assistantMsg)
+                    builder.appendLine("User: $userSanitized")
+                    builder.appendLine("Assistant: $assistantSanitized")
                 }
             }
 
             builder.appendLine("</memory-context>")
 
-            val result = builder.toString()
+            // 总长度二次保护：即使单条截断，多条累积也可能超过 16KB
+            val resultRaw = builder.toString()
+            val result = if (resultRaw.length > PREFETCH_TOTAL_MAX_LEN) {
+                resultRaw.take(PREFETCH_TOTAL_MAX_LEN) + "\n[...truncated...]"
+            } else {
+                resultRaw
+            }
+
             prefetchCache[cacheKey] = result
             result
         } catch (e: Exception) {
@@ -781,4 +795,22 @@ class BuiltInMemoryProvider : MemoryProvider {
             "{\"success\":true,\"results\":[]}"
         }
     }
+
+    /**
+     * H1 修复：单条 memory 内容做长度截断 + 转义 `</memory-context>` 关闭标签。
+     * 防止用户曾粘贴的超大日志 / 包含 prompt 注入片段的内容污染 system prompt。
+     */
+    private fun sanitizeMemoryContent(content: String): String {
+        return content
+            .take(PREFETCH_ITEM_MAX_LEN)
+            .replace("</memory-context>", "<\\/memory-context>")
+    }
+
+    companion object {
+        /** 单条 memory 注入的最大字符数（H1 修复） */
+        private const val PREFETCH_ITEM_MAX_LEN: Int = 4 * 1024
+        /** prefetch 整段的最大字符数（H1 修复） */
+        private const val PREFETCH_TOTAL_MAX_LEN: Int = 16 * 1024
+    }
 }
+

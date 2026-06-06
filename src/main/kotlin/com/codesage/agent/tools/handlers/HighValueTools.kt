@@ -1,6 +1,7 @@
 package com.codesage.agent.tools.handlers
 
 import com.codesage.agent.tools.UnifiedTool
+import com.codesage.shared.serialization.JsonArgDecoders
 import com.codesage.model.dto.ToolCategory
 import com.codesage.model.dto.ToolParameters
 import com.codesage.model.dto.ToolProperty
@@ -60,12 +61,14 @@ class CreatePullRequestTool : UnifiedTool(
     )
 
     override suspend fun execute(args: JsonObject): com.codesage.agent.tools.ToolResult {
-        val title = args["title"]?.toString()?.removeSurrounding("\"") ?: ""
-        val body = args["body"]?.toString()?.removeSurrounding("\"") ?: ""
-        val repo = args["repo"]?.toString()?.removeSurrounding("\"")
-        val base = args["base"]?.toString()?.removeSurrounding("\"") ?: "main"
-        val head = args["head"]?.toString()?.removeSurrounding("\"")
-        val draft = args["draft"]?.toString()?.removeSurrounding("\"")?.toBoolean() ?: false
+        // C2 修复：用 JsonArgDecoders 安全反序列化，避免 `toString().removeSurrounding("\"")` 的 magic pattern。
+        // 之前 LLM 返回 `"value":null` 时会被 `toString() = "null"` 当成字符串传入 ProcessBuilder。
+        val title = JsonArgDecoders.stringArg(args, "title")
+        val body = JsonArgDecoders.stringArg(args, "body")
+        val repo = JsonArgDecoders.stringArgOrNull(args, "repo")
+        val base = JsonArgDecoders.stringArg(args, "base", default = "main")
+        val head = JsonArgDecoders.stringArgOrNull(args, "head")
+        val draft = JsonArgDecoders.boolArg(args, "draft", default = false)
 
         val cmd = mutableListOf("gh", "pr", "create", "--title", title, "--body", body, "--base", base)
         repo?.let { cmd.addAll(listOf("--repo", it)) }
@@ -104,8 +107,8 @@ class RunLinterTool : UnifiedTool(
     )
 
     override suspend fun execute(args: JsonObject): com.codesage.agent.tools.ToolResult {
-        val workingDir = args["working_dir"]?.toString()?.removeSurrounding("\"")
-        val fix = args["fix"]?.toString()?.removeSurrounding("\"")?.toBoolean() ?: false
+        val workingDir = JsonArgDecoders.stringArgOrNull(args, "working_dir")
+        val fix = JsonArgDecoders.boolArg(args, "fix", default = false)
 
         val dir = workingDir ?: System.getProperty("user.dir")
         val fixArg = if (fix) " --fix" else ""
@@ -168,7 +171,8 @@ class StartDebuggerTool(private val project: com.intellij.openapi.project.Projec
             )
         }
         // 真实实现需要 IntelliJ 的 XDebuggerManager；这里返回占位
-        val sessionName = args["session_name"]?.toString()?.removeSurrounding("\"") ?: "CodeSage session"
+        // C2 修复：用 JsonArgDecoders 安全反序列化
+        val sessionName = JsonArgDecoders.stringArg(args, "session_name", default = "CodeSage session")
         return com.codesage.agent.tools.ToolResult.Success(
             buildJsonObject {
                 put("status", "initialized")
@@ -213,7 +217,7 @@ class DatabaseSchemaTool : UnifiedTool(
     )
 
     override suspend fun execute(args: JsonObject): com.codesage.agent.tools.ToolResult {
-        val jdbcUrl = args["jdbc_url"]?.toString()?.removeSurrounding("\"") ?: ""
+        val jdbcUrl = JsonArgDecoders.stringArg(args, "jdbc_url")
         // 当前实现：返回占位 JSON，因为没有具体 driver
         return com.codesage.agent.tools.ToolResult.Success(
             buildJsonObject {
@@ -259,11 +263,11 @@ class GitWorktreeTool : UnifiedTool(
     )
 
     override suspend fun execute(args: JsonObject): com.codesage.agent.tools.ToolResult {
-        val action = args["action"]?.toString()?.removeSurrounding("\"") ?: ""
-        val path = args["path"]?.toString()?.removeSurrounding("\"")
-        val branch = args["branch"]?.toString()?.removeSurrounding("\"")
-        val commit = args["commit"]?.toString()?.removeSurrounding("\"")
-        val workingDir = args["working_dir"]?.toString()?.removeSurrounding("\"")
+        val action = JsonArgDecoders.stringArg(args, "action")
+        val path = JsonArgDecoders.stringArgOrNull(args, "path")
+        val branch = JsonArgDecoders.stringArgOrNull(args, "branch")
+        val commit = JsonArgDecoders.stringArgOrNull(args, "commit")
+        val workingDir = JsonArgDecoders.stringArgOrNull(args, "working_dir")
             ?: System.getProperty("user.dir")
 
         val cmd = mutableListOf("git", "worktree", action)
@@ -331,9 +335,9 @@ class SymbolSearchTool(private val project: com.intellij.openapi.project.Project
             )
         }
 
-        val query = args["query"]?.toString()?.removeSurrounding("\"") ?: ""
-        val typeFilter = args["type"]?.toString()?.removeSurrounding("\"")
-        val maxResults = args["max_results"]?.toString()?.removeSurrounding("\"")?.toIntOrNull() ?: 20
+        val query = JsonArgDecoders.stringArg(args, "query")
+        val typeFilter = JsonArgDecoders.stringArgOrNull(args, "type")
+        val maxResults = JsonArgDecoders.intArg(args, "max_results", default = 20)
 
         val symbolIndex = com.codesage.analysis.SymbolIndex(project)
         val results = symbolIndex.fuzzySearch(query, limit = maxResults)

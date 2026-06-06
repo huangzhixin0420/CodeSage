@@ -784,16 +784,15 @@ open class AgentCore(
                 } else {
                     logger.info("[Session ${session.id}] chatWithTools flow completed with $eventCount events in ${duration}ms")
                 }
-                // 无论预算是否耗尽，都保存 budget 引用以支持中断后继续
-                if (taskBudget.isExhausted() || loop.isInterrupted()) {
-                    lastExhaustedBudget = taskBudget
-                    val reason = if (loop.isInterrupted()) "interrupted" else taskBudget.exhaustedReason()
-                    logger.info("[Session ${session.id}] Conversation paused (reason=$reason), saved for potential continuation.")
-                }
-
-                // 保存会话历史（异步）
+                // M9 修复：保存会话失败时打 error 日志，不要静默吞所有异常
                 agentScope.launch {
-                    conversationPersistence.saveSession(session, contextManager.getContext())
+                    try {
+                        conversationPersistence.saveSession(session, contextManager.getContext())
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e // 取消异常需要传播
+                    } catch (e: Exception) {
+                        logger.error("[AgentCore] Failed to save session ${session.id} asynchronously", e)
+                    }
                 }
 
                 metrics.recordTimer("chat_duration", duration)
@@ -1137,9 +1136,15 @@ open class AgentCore(
 
         logger.info("Session migrated: $oldSessionId -> ${newSession.id}, messages=${nonSystemMessages.size}")
 
-        // 保存旧会话
+        // M9 修复：保存旧会话失败时打 error 日志
         agentScope.launch {
-            conversationPersistence.saveSession(oldSessionInfo.session, oldSessionInfo.contextManager.getContext())
+            try {
+                conversationPersistence.saveSession(oldSessionInfo.session, oldSessionInfo.contextManager.getContext())
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                logger.error("[AgentCore] Failed to save old session $oldSessionId during migration", e)
+            }
         }
 
         return Pair(oldSessionId, newSession.id)

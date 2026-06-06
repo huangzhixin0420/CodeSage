@@ -1,5 +1,7 @@
 package com.codesage.agent.tools
 
+import com.codesage.shared.security.ShellInjectionDetector
+import com.codesage.shared.security.SsrfGuard
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.Dispatchers
@@ -187,6 +189,12 @@ class ExtendedTools(private val project: Project?) {
         val workingDir = resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
         val timeout = args["timeout"]?.jsonPrimitive?.longOrNull?.coerceIn(1000L, 300000L) ?: 60000L
 
+        // C6 修复：检测 shell 注入意图（在 ToolGuardrails 之外多一层防御）
+        val injectionReason = ShellInjectionDetector.detect(command)
+        if (injectionReason != null) {
+            return@withContext ToolResult.Error("Shell injection blocked: $injectionReason")
+        }
+
         // 注意：exec_shell 的安全检查已统一委托给 ToolGuardrails。
         // ExtendedTools 不再执行独立的命令拦截，避免双重标准导致的不一致用户体验。
         // 绝对危险的操作（如 rm -rf /）由 SensitiveActionPolicy 统一评估为 BLOCKED 并拒绝，
@@ -264,19 +272,11 @@ class ExtendedTools(private val project: Project?) {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private val blockedUrlPatterns = listOf(
-        Regex("""127\.0\.0\.1"""),
-        Regex("""localhost""", RegexOption.IGNORE_CASE),
-        Regex("""\[::1\]"""),
-        Regex("""^https?://10\.""", RegexOption.IGNORE_CASE),
-        Regex("""^https?://172\.(1[6-9]|2[0-9]|3[01])\.""", RegexOption.IGNORE_CASE),
-        Regex("""^https?://192\.168\.""", RegexOption.IGNORE_CASE),
-        Regex("""^https?://169\.254\.""", RegexOption.IGNORE_CASE),
-        Regex("""^file://""", RegexOption.IGNORE_CASE),
-        Regex("""^ftp://""", RegexOption.IGNORE_CASE),
-        Regex("""^http://0\.0\.0\.0""", RegexOption.IGNORE_CASE),
-        Regex("""^http://\[?::""", RegexOption.IGNORE_CASE)
-    )
+    // C5 修复：SSRF 防护已迁移到 [com.codesage.shared.security.SsrfGuard]。
+    // 旧实现用 11 个 Regex 拼凑，可被以下绕过：十进制/八进制 IP、子域名欺骗、DNS rebinding、
+    // 危险 scheme、URL 片段注入等。改用 InetAddress 解析 + 段位白名单。
+    @Deprecated("已迁移到 SsrfGuard")
+    private val blockedUrlPatterns: List<Regex> = emptyList()
 
     suspend fun httpRequest(args: JsonObject): ToolResult = withContext(Dispatchers.IO) {
         val url = args["url"]?.jsonPrimitive?.content
@@ -286,9 +286,13 @@ class ExtendedTools(private val project: Project?) {
         val timeout = args["timeout"]?.jsonPrimitive?.intOrNull?.coerceIn(1000, 60000) ?: 30000
         val headers = args["headers"]?.jsonObject
 
-        // SSRF 防护
-        if (isBlockedUrl(url)) {
-            return@withContext ToolResult.Error("Access denied: URL points to internal/private network")
+        // C5 修复：使用 SsrfGuard 做 DNS 解析 + 段位检查，错误消息携带具体原因
+        // ssrfProtectionEnabled 关闭时跳过（保持原有测试可绕过本地地址拦截的能力）
+        if (ssrfProtectionEnabled) {
+            val ssrfCheck = SsrfGuard.check(url)
+            if (ssrfCheck is SsrfGuard.CheckResult.Blocked) {
+                return@withContext ToolResult.Error("Access denied: ${ssrfCheck.reason}")
+            }
         }
 
         val requestBuilder = Request.Builder().url(url)
@@ -367,7 +371,7 @@ class ExtendedTools(private val project: Project?) {
 
     private fun isBlockedUrl(url: String): Boolean {
         if (!ssrfProtectionEnabled) return false
-        return blockedUrlPatterns.any { it.containsMatchIn(url) }
+        return !SsrfGuard.isSafe(url)
     }
 
     // === Data Processing Tools ===

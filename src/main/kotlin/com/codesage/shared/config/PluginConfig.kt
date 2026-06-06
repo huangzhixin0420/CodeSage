@@ -246,12 +246,15 @@ class PluginConfig : PersistentStateComponent<PluginConfigState> {
     private var state = PluginConfigState()
 
     override fun getState(): PluginConfigState {
-        logger.info("getState called, providers count=${state.providers.size}, ids=${state.providers.map { it.id }}")
+        // M22 修复：getState 在 IDE 启动和配置变更时频繁调用，INFO 级别会污染日志
+        logger.debug("getState called, providers count=${state.providers.size}")
         return state
     }
 
     override fun loadState(newState: PluginConfigState) {
-        logger.info("loadState called, newState providers count=${newState.providers.size}, ids=${newState.providers.map { it.id }}")
+        // M22 修复：loadState 的常规路径走 DEBUG，保留异常路径的 WARN
+        // 旧实现即使 providers=0 也打 INFO，会让用户误以为"配置丢失"
+        logger.debug("loadState called, newState providers count=${newState.providers.size}")
         state = newState
         // 清理无效数据：过滤掉 id 为空的 provider
         val removed = state.providers.filter { !it.isValid() }

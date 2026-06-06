@@ -20,6 +20,30 @@ class ToolGuardrails(
     private val logger = Logger.getLogger<ToolGuardrails>()
 
     /**
+     * C3 修复：已知安全的工具白名单。未在此列表中的工具一律要求用户确认。
+     *
+     * 包括：只读工具（read_file, search_code, list_directory 等）和分析类工具
+     * （symbol_search, parse_json 等），不修改文件、不执行 shell、不访问网络。
+     */
+    private val KNOWN_SAFE_TOOLS = setOf(
+        // 文件系统（只读）
+        "read_file", "read_multiple_files", "list_directory",
+        "file_exists", "get_file_info", "get_project_structure",
+        // 搜索 / 分析
+        "search_code", "grep_code", "find_files", "find_files_recursive",
+        "symbol_search", "semantic_search",
+        // Git（只读）
+        "git_status", "git_diff", "git_log", "git_branch", "git_show",
+        // HTTP（受 SSRF 防护）
+        "http_request",
+        // 数据处理
+        "parse_json", "format_json", "encode_base64", "decode_base64",
+        "hash_md5", "hash_sha256",
+        // 知识库
+        "memory_search", "memory_get", "skill_list"
+    )
+
+    /**
      * 用户许可类型
      */
     enum class Permission {
@@ -241,11 +265,29 @@ class ToolGuardrails(
                 policy.evaluateWrite(path, projectRoot)
             }
 
-            else -> SensitiveActionPolicy.PolicyDecision(
-                verdict = SensitiveActionPolicy.PolicyDecision.Verdict.ALLOWED,
-                riskLevel = SensitiveActionPolicy.RiskLevel.SAFE,
-                reason = "Tool: $toolName"
-            )
+            else -> {
+                // C3 修复：白名单反转。
+                // 旧逻辑：未在白名单的工具默认 ALLOWED —— 任何 LLM 注册的自定义工具都直接通过，
+                //          可能被 prompt injection 诱导执行恶意工具。
+                // 新逻辑：默认 REQUIRES_CONFIRMATION；只有 [KNOWN_SAFE_TOOLS] 中的工具直接放行。
+                // 注意：这里只是为了解决 review C3 的白名单反转问题。如果用户在 PluginConfig 里
+                // 显式启用了某个工具，建议由 ToolRegistry 在注册时把 allow 状态写到 Tool metadata，
+                // Guardrails 直接读 metadata（不与具体工具名硬编码）。
+                if (toolName in KNOWN_SAFE_TOOLS) {
+                    SensitiveActionPolicy.PolicyDecision(
+                        verdict = SensitiveActionPolicy.PolicyDecision.Verdict.ALLOWED,
+                        riskLevel = SensitiveActionPolicy.RiskLevel.SAFE,
+                        reason = "Known safe tool: $toolName"
+                    )
+                } else {
+                    logger.warn("[ToolGuardrails] Unknown tool name: $toolName, requiring confirmation")
+                    SensitiveActionPolicy.PolicyDecision(
+                        verdict = SensitiveActionPolicy.PolicyDecision.Verdict.REQUIRES_CONFIRMATION,
+                        riskLevel = SensitiveActionPolicy.RiskLevel.CAUTION,
+                        reason = "Unknown tool \'$toolName\', explicit user confirmation required"
+                    )
+                }
+            }
         }
     }
 

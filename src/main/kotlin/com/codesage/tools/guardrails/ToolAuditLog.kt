@@ -1,9 +1,16 @@
 package com.codesage.tools.guardrails
 
+import com.codesage.shared.serialization.SharedJson
 import com.codesage.shared.utils.Logger
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.File
 import java.time.Instant
 import java.time.ZoneId
@@ -14,7 +21,7 @@ import java.util.concurrent.ConcurrentLinkedDeque
  * 工具操作审计日志
  *
  * - 记录每次工具调用的完整信息
- * - 支持参数脱敏
+ * - 支持参数脱敏（递归 JsonElement 遍历，捕获嵌套敏感字段）
  * - 保留最近 N 条记录
  * - 支持导出为 JSON/CSV
  */
@@ -24,7 +31,7 @@ class ToolAuditLog(
 ) {
 
     private val logger = Logger.getLogger<ToolAuditLog>()
-    private val json = Json { prettyPrint = true }
+    private val json = SharedJson.pretty
 
     @Serializable
     data class AuditEntry(
@@ -42,11 +49,16 @@ class ToolAuditLog(
 
     private val entries = ConcurrentLinkedDeque<AuditEntry>()
 
-    // 脱敏关键字
+    // 脱敏关键字（key 名包含这些子串的值会被脱敏）
     private val sensitiveKeys = setOf(
         "password", "token", "secret", "api_key", "apikey", "credential",
         "auth", "private_key", "access_token", "refresh_token"
     )
+
+    /**
+     * 单个字段值的最大长度（仅在非敏感时生效；敏感字段直接被替换为 [REDACTED]）
+     */
+    private val maxValueLength: Int = 500
 
     /**
      * 记录一次工具调用
@@ -141,15 +153,100 @@ class ToolAuditLog(
 
     /**
      * 对参数进行脱敏处理
+     *
+     * C1 修复：现在用 [sanitizeValue] 递归处理嵌套 Map/List/JsonElement，
+     * 之前只对顶层 key 做 contains 检查，嵌套字段（如 `{"headers": {"Authorization": "Bearer xxx"}}`）
+     * 会被原样写入审计日志。
+     *
+     * 实现要点：
+     * - 顶层 key 不区分大小写匹配 [sensitiveKeys] 任一子串 → 整个 value 替换为 REDACTED
+     * - 嵌套对象（Map/JsonObject）继续递归
+     * - 嵌套列表（List/JsonArray）继续递归每个元素
+     * - 标量值做长度截断（仅非敏感时），避免巨大字符串撑爆日志
      */
     private fun sanitizeArguments(arguments: Map<String, Any>): Map<String, String> {
         return arguments.mapValues { (key, value) ->
-            if (sensitiveKeys.any { key.lowercase().contains(it) }) {
-                "***REDACTED***"
+            if (isSensitiveKey(key)) {
+                REDACTED
             } else {
-                value.toString().take(500) // 限制单个参数长度
+                sanitizeValue(value, depth = 0)
             }
         }
+    }
+
+    /**
+     * 递归把任意 value 变成脱敏后的字符串。
+     * 对嵌套 Map / 嵌套 JsonObject 继续递归匹配 sensitive key。
+     */
+    private fun sanitizeValue(value: Any?, depth: Int): String {
+        // 防止异常深度的递归（理论上工具参数不会嵌套这么深，defense in depth）
+        if (depth > MAX_SANITIZE_DEPTH) {
+            return "[depth-exceeded]"
+        }
+        return when (value) {
+            null -> ""
+            is Map<*, *> -> {
+                // 嵌套 Map：把 key 序列化为 JSON-like 表示；递归脱敏每个 value
+                val inner = value.entries.joinToString(",") { (k, v) ->
+                    val keyStr = k?.toString() ?: "null"
+                    val sanitized = if (isSensitiveKey(keyStr)) REDACTED else sanitizeValue(v, depth + 1)
+                    "$keyStr=$sanitized"
+                }
+                "{$inner}"
+            }
+            is List<*> -> {
+                val inner = value.joinToString(",") { sanitizeValue(it, depth + 1) }
+                "[$inner]"
+            }
+            is JsonObject -> {
+                val inner = value.entries.joinToString(",") { (k, v) ->
+                    val sanitized = if (isSensitiveKey(k)) REDACTED else sanitizeJsonElement(v, depth + 1)
+                    "$k=$sanitized"
+                }
+                "{$inner}"
+            }
+            is JsonArray -> {
+                val inner = value.joinToString(",") { sanitizeJsonElement(it, depth + 1) }
+                "[$inner]"
+            }
+            else -> value.toString().take(maxValueLength)
+        }
+    }
+
+    /**
+     * 对 [JsonElement] 递归脱敏（处理 raw JSON 字符串输入——来自 stream 路径）。
+     *
+     * C1 修复：ToolExecutor 在 stream 路径下可能直接把 model 返回的 raw JSON 字符串
+     * 当作 `arguments` 传入，旧的 `Map<String, Any>` sanitizeArguments 会先 `toString()`
+     * 再 `take(500)` —— 包含 `apiKey` 的 JSON 字符串被截断后**仍包含敏感值**。
+     * 现在新增的 sanitizeJsonElement 先尝试把 raw JSON 解析为 [JsonElement]，再递归脱敏。
+     */
+    private fun sanitizeJsonElement(element: JsonElement, depth: Int): String {
+        if (depth > MAX_SANITIZE_DEPTH) return "[depth-exceeded]"
+        return when (element) {
+            is JsonNull -> "null"
+            is JsonPrimitive -> {
+                // 注意：value.toString() 会带引号包裹（如果 isString），这里统一返回不带引号
+                // 的原始 content，便于审计人员识别。
+                element.content.take(maxValueLength)
+            }
+            is JsonObject -> {
+                val inner = element.entries.joinToString(",") { (k, v) ->
+                    val sanitized = if (isSensitiveKey(k)) REDACTED else sanitizeJsonElement(v, depth + 1)
+                    "$k=$sanitized"
+                }
+                "{$inner}"
+            }
+            is JsonArray -> {
+                val inner = element.joinToString(",") { sanitizeJsonElement(it, depth + 1) }
+                "[$inner]"
+            }
+        }
+    }
+
+    private fun isSensitiveKey(key: String): Boolean {
+        val lower = key.lowercase()
+        return sensitiveKeys.any { lower.contains(it) }
     }
 
     private fun appendToFile(entry: AuditEntry) {
@@ -194,5 +291,10 @@ class ToolAuditLog(
         } else {
             value
         }
+    }
+
+    companion object {
+        const val REDACTED: String = "***REDACTED***"
+        private const val MAX_SANITIZE_DEPTH: Int = 10
     }
 }

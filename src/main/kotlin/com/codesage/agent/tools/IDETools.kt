@@ -1,5 +1,6 @@
 package com.codesage.agent.tools
 
+import com.codesage.shared.security.ShellInjectionDetector
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
@@ -403,6 +404,12 @@ class IDETools(private val project: Project?) {
             ?: return@withContext ToolResult.Error("Missing 'command' parameter")
         val workingDir = resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
         val timeout = args["timeout"]?.jsonPrimitive?.longOrNull ?: 30000L
+
+        // C6 修复：检测 shell 注入意图（Base64-eval / curl|sh / printf / 反弹 shell 等）
+        val injectionReason = ShellInjectionDetector.detect(command)
+        if (injectionReason != null) {
+            return@withContext ToolResult.Error("Shell injection blocked: $injectionReason")
+        }
 
         try {
             val processBuilder = ProcessBuilder(

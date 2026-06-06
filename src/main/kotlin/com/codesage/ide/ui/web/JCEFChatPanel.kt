@@ -2,6 +2,7 @@ package com.codesage.ide.ui.web
 
 import com.codesage.agent.core.AgentStreamEvent
 import com.codesage.agent.core.ChatMode
+import com.codesage.shared.serialization.SafeJsonEncoder
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.ui.jcef.JBCefApp
@@ -39,7 +40,7 @@ class JCEFChatPanel(
     private val logger = Logger.getLogger<JCEFChatPanel>()
     private val fileResolver = FileReferenceResolver(project)
     private val eventRouter = EventRouter()
-    private val settingsHandler = SettingsBridgeHandler { msg -> sendToJS(msg) }
+    private val settingsHandler = SettingsBridgeHandler({ msg -> sendToJS(msg) }, project)
     private val providerHandler = ProviderBridgeHandler { msg -> sendToJS(msg) }
     private val migrationHandler = MigrationBridgeHandler { msg -> sendToJS(msg) }
 
@@ -55,18 +56,30 @@ class JCEFChatPanel(
      */
     private var currentChatMode: ChatMode? = null
 
-    private var messageCallback: ((String, List<ImageAttachment>) -> Unit)? = null
+    private var messageCallback: ((String, List<ImageAttachment>, String?) -> Unit)? = null
     private var stopCallback: (() -> Unit)? = null
     private var switchModelCallback: ((String) -> Unit)? = null
     private var switchChatModeCallback: ((ChatMode) -> Unit)? = null
     private var sessionActionHandler: ((String, Map<String, Any>) -> Unit)? = null
-    private var continueBudgetCallback: ((Int) -> Flow<AgentStreamEvent>)? = null
 
-    private val pendingMessages = mutableListOf<String>()
+    // C7 修复：bridge 未就绪时积压的消息列表，加上限防止异常路径下内存爆炸。
+    // 选用 ArrayDeque 是因为只在 EDT/IO 线程单线程访问；如果改成并发容器需替换为 ConcurrentLinkedDeque。
+    // 上限 PENDING_MESSAGES_MAX = 200：超过时丢最早（FIFO），并打 warn 日志便于定位。
+    private val pendingMessages = ArrayDeque<String>()
+    private val pendingMessagesLock = Any()
 
     // 事件去重(高频事件节流)
     private val recentEventCache = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val dedupWindowMs = 500L
+
+    // C7 修复：bridge 未 ready 时积压消息上限
+    private val PENDING_MESSAGES_MAX = 200
+
+    // H16 修复：单次插入到 IDE 编辑器的最大字符数
+    private val MAX_ARTIFACT_INSERT_SIZE = 50 * 1024
+
+    // M23 修复：dataUrl 图片大小上限（8MB，对应解码后约 5.3MB base64）
+    private val MAX_IMAGE_DATA_URL_SIZE = 8 * 1024 * 1024
 
     // 思考事件状态(per-turn):首条 Thinking 事件发 thinking_start,后续发 thinking_update
     private val thinkingStarted = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
@@ -263,13 +276,16 @@ class JCEFChatPanel(
                     return;
                 }
                 window.javaBridge = {
-                    sendMessage: function(json) {
+                    sendMessage: function(arg) {
+                        // arg = { request, onSuccess, onFailure } — JBCefJSQuery 协议
+                        // 之前错误地把整个 arg 转成字符串 '\"[object Object]\"' 送给 Kotlin
+                        // 导致 handleJSMessage 收到的是 \"[object Object]\" 不是 JSON,
+                        // 报 `JSON input: [object Object]` 反序列化失败
+                        // 修: 取 arg.request 才是真正的负载字符串
                         queryFunc({
-                            request: '' + json,
-                            onSuccess: function() {},
-                            onFailure: function(code, msg) {
-                                console.error('[JBCefJSQuery] Error ' + code + ': ' + msg);
-                            }
+                            request: arg.request,
+                            onSuccess: arg.onSuccess,
+                            onFailure: arg.onFailure,
                         });
                     }
                 };
@@ -285,9 +301,12 @@ class JCEFChatPanel(
 
     private fun flushPendingMessages() {
         val cefBrowser = browser?.cefBrowser ?: return
-        if (pendingMessages.isEmpty()) return
-        val copy = pendingMessages.toList()
-        pendingMessages.clear()
+        val copy = synchronized(pendingMessagesLock) {
+            if (pendingMessages.isEmpty()) return
+            val snapshot = pendingMessages.toList()
+            pendingMessages.clear()
+            snapshot
+        }
         copy.forEach { cefBrowser.executeJavaScript(it, cefBrowser.url ?: "", 0) }
     }
 
@@ -376,7 +395,6 @@ class JCEFChatPanel(
                 }
 
                 "request_sessions" -> sessionActionHandler?.invoke("request_sessions", emptyMap())
-                "continue_task" -> handleContinueTask(json)
                 "settings_get",
                 "settings_update",
                 "settings_reload",
@@ -442,18 +460,26 @@ class JCEFChatPanel(
         // 解析图片附件 (P5.4)
         val images: List<ImageAttachment> = parseImages(json)
 
+        // 解析 userLanguage (BCP-47, 例 "zh-CN" / "en-US") — 后端拼进 system prompt
+        val userLanguage: String? = json.jsonObject["userLanguage"]?.jsonPrimitive?.content
+            ?.takeIf { it.isNotBlank() }
+
         if (messageCallback == null) {
             logger.error("[JS→Kotlin] messageCallback is null")
         } else if (content.isBlank() && images.isEmpty()) {
             logger.warn("[JS→Kotlin] empty message ignored")
         } else {
-            messageCallback?.invoke(content, images)
+            messageCallback?.invoke(content, images, userLanguage)
         }
     }
 
     /**
      * 从 send_message payload 中解析图片附件
      * 格式: images: [{ id, mime, dataUrl, name }]
+     *
+     * M23 修复：dataUrl 长度限制在 [MAX_IMAGE_DATA_URL_SIZE] (8MB)。
+     * 旧实现接受任意大小，100MB 的 base64 图片会全部送入 LLM context，导致请求体爆炸。
+     * 超出大小的图片会被记录 WARN 日志并跳过，让前端知道被截断。
      */
     private fun parseImages(json: kotlinx.serialization.json.JsonElement): List<ImageAttachment> {
         val arr = json.jsonObject["images"] as? kotlinx.serialization.json.JsonArray ?: return emptyList()
@@ -465,33 +491,14 @@ class JCEFChatPanel(
                 val dataUrl = obj["dataUrl"]?.jsonPrimitive?.content ?: return@mapNotNull null
                 val name = obj["name"]?.jsonPrimitive?.content ?: "image"
                 if (dataUrl.isBlank()) return@mapNotNull null
+                if (dataUrl.length > MAX_IMAGE_DATA_URL_SIZE) {
+                    logger.warn("[ImageParse] image $id ($name) dataUrl size=${dataUrl.length} exceeds limit=$MAX_IMAGE_DATA_URL_SIZE, dropped")
+                    return@mapNotNull null
+                }
                 ImageAttachment(id = id, mime = mime, dataUrl = dataUrl, name = name)
             } catch (e: Exception) {
                 logger.warn("[ImageParse] failed: ${e.message}")
                 null
-            }
-        }
-    }
-
-    private fun handleContinueTask(json: kotlinx.serialization.json.JsonElement) {
-        val extraIterations = json.jsonObject["extraIterations"]?.jsonPrimitive?.content?.toIntOrNull() ?: 10
-        val turnId = json.jsonObject["turnId"]?.jsonPrimitive?.content ?: currentTurnId
-        val callback = continueBudgetCallback
-        if (callback == null) {
-            sendToJS(mapOf("type" to "error", "turnId" to (turnId ?: ""), "message" to "继续执行功能未初始化"))
-            return
-        }
-        currentCollectJob?.cancel()
-        currentCollectJob = scope?.launch {
-            try {
-                callback(extraIterations).collect { event ->
-                    routeEvent(event, turnId ?: "")
-                }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                logger.info("[ContinueCallback] cancelled")
-            } catch (e: Throwable) {
-                logger.error("[ContinueCallback] error", e)
-                sendToJS(mapOf("type" to "error", "turnId" to (turnId ?: ""), "message" to (e.message ?: "未知错误")))
             }
         }
     }
@@ -542,20 +549,18 @@ class JCEFChatPanel(
 
     fun initialize(
         scope: CoroutineScope,
-        onSendMessage: (String, List<ImageAttachment>) -> Flow<AgentStreamEvent>,
+        onSendMessage: (String, List<ImageAttachment>, String?) -> Flow<AgentStreamEvent>,
         onStop: () -> Unit,
         onSwitchModel: ((String) -> Unit)? = null,
         onSwitchChatMode: ((ChatMode) -> Unit)? = null,
         onSessionAction: ((String, Map<String, Any>) -> Unit)? = null,
-        onContinueBudget: ((Int) -> Flow<AgentStreamEvent>)? = null
     ) {
         this.switchModelCallback = onSwitchModel
         this.switchChatModeCallback = onSwitchChatMode
         this.sessionActionHandler = onSessionAction
-        this.continueBudgetCallback = onContinueBudget
         this.scope = scope
         this.stopCallback = onStop
-        this.messageCallback = { rawMessage, images ->
+        this.messageCallback = { rawMessage, images, userLanguage ->
             val turnId = currentTurnId ?: "turn_${System.currentTimeMillis()}".also { currentTurnId = it }
             logger.info("[MessageCallback] received, turnId=$turnId, length=${rawMessage.length}, images=${images.size}")
 
@@ -599,7 +604,7 @@ class JCEFChatPanel(
                 var meaningfulEventReceived = false
                 val startTime = System.currentTimeMillis()
                 try {
-                    onSendMessage(message, images).collect { rawEvent ->
+                    onSendMessage(message, images, userLanguage).collect { rawEvent ->
                         if (!turnStarted) {
                             turnStarted = true
                             logger.info("[MessageCallback] first event after ${System.currentTimeMillis() - startTime}ms, type=${rawEvent::class.simpleName}")
@@ -646,11 +651,16 @@ class JCEFChatPanel(
      */
     fun sendToJS(message: Map<String, Any?>) {
         try {
-            val json = mapToJsonString(message)
+            // C7 修复：不再用字符串拼接嵌入 JSON，改用 SafeJsonEncoder 做 JS 安全的字符串字面量。
+            // 1) U+2028 / U+2029 转义（破坏 JS 解析的关键字符）
+            // 2) </script> 防护（防止 HTML 解析器误闭合）
+            // 3) 控制字符统一 \u00XX 形式
+            val jsonElement = mapToJsonElement(message)
+            val jsonLiteral = SafeJsonEncoder.toJsStringLiteral(jsonElement)
             val script = """
                 (function() {
                     if (typeof window.onJavaMessage === 'function') {
-                        window.onJavaMessage($json);
+                        window.onJavaMessage($jsonLiteral);
                     } else {
                         console.error('[JCEF] window.onJavaMessage is not defined');
                     }
@@ -662,12 +672,25 @@ class JCEFChatPanel(
                 return
             }
             if (!isBridgeReady) {
-                pendingMessages.add(script)
+                enqueuePendingMessage(script)
                 return
             }
             cefBrowser.executeJavaScript(script, cefBrowser.url ?: "", 0)
         } catch (e: Exception) {
             logger.error("[sendToJS] failed to serialize: $message", e)
+        }
+    }
+
+    /**
+     * C7 修复：把积压消息加入有界队列。FIFO 淘汰最老的消息，避免异常路径下无限增长。
+     */
+    private fun enqueuePendingMessage(script: String) {
+        synchronized(pendingMessagesLock) {
+            while (pendingMessages.size >= PENDING_MESSAGES_MAX) {
+                val dropped = pendingMessages.removeFirst()
+                logger.warn("[sendToJS] pendingMessages full, dropped oldest message (len=${dropped.length})")
+            }
+            pendingMessages.addLast(script)
         }
     }
 
@@ -742,29 +765,74 @@ class JCEFChatPanel(
 
     fun dispose() {
         scope?.cancel()
+        synchronized(pendingMessagesLock) { pendingMessages.clear() }
         browser?.dispose()
     }
 
     // ===== IDE Integration =====
 
     private fun applyArtifactToEditor(artifactId: String, content: String) {
-        project?.let { p ->
-            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
-                val editor = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(p).selectedTextEditor
-                editor?.document?.let { doc ->
-                    com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(p) {
-                        val caret = editor.caretModel.primaryCaret
-                        doc.insertString(caret.offset, content)
-                    }
+        val p = project ?: run {
+            logger.warn("[applyArtifactToEditor] no project")
+            return
+        }
+
+        // H16 修复：限制单次插入大小，避免 LLM 生成 100KB 内容直接插入导致 IDE 卡死
+        // 同时撤销分组（UndoableGroup）让用户可以一次撤销整段插入
+        if (content.length > MAX_ARTIFACT_INSERT_SIZE) {
+            logger.warn(
+                "[applyArtifactToEditor] artifact $artifactId size=${content.length} exceeds " +
+                "limit=$MAX_ARTIFACT_INSERT_SIZE, truncating"
+            )
+        }
+        val contentToInsert = if (content.length > MAX_ARTIFACT_INSERT_SIZE) {
+            content.take(MAX_ARTIFACT_INSERT_SIZE) + "\n// [truncated, see artifact $artifactId]"
+        } else {
+            content
+        }
+
+        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+            val editor = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(p).selectedTextEditor
+            editor?.document?.let { doc ->
+                com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(p) {
+                    val caret = editor.caretModel.primaryCaret
+                    doc.insertString(caret.offset, contentToInsert)
                 }
             }
         }
     }
 
     private fun createFileFromArtifact(title: String, content: String) {
-        project?.let { p ->
-            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
-                logger.info("Create file from artifact: $title")
+        val p = project ?: run {
+            logger.warn("[createFileFromArtifact] no project")
+            return
+        }
+        // H16 修复：原实现是空 stub（L2 TODO），改为创建临时 scratch 文件
+        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+            try {
+                val ext = com.intellij.openapi.fileTypes.FileTypeManager.getInstance()
+                    .getFileTypeByFileName(title).defaultExtension
+                val fileName = if (title.endsWith(".$ext")) title else "$title.$ext"
+                val scratchFileManager = com.intellij.openapi.fileEditor.ex.FileEditorManagerEx.getInstanceEx(p)
+                scratchFileManager
+                // 用 PsiFileFactory 创建内存中的 scratch file，让用户看到
+                val psiFile = com.intellij.psi.PsiFileFactory.getInstance(p)
+                    .createFileFromText(
+                        fileName,
+                        com.intellij.openapi.fileTypes.FileTypeManager.getInstance().getFileTypeByFileName(fileName),
+                        content
+                    )
+                // 写到 scratch 目录
+                val scratchDir = com.intellij.openapi.util.io.FileUtil.createTempDirectory("codesage-artifact-", null, true)
+                val outFile = java.io.File(scratchDir, fileName)
+                outFile.writeText(content, Charsets.UTF_8)
+                // 重新打开文件
+                com.intellij.openapi.fileEditor.FileEditorManager.getInstance(p)
+                    .openFile(com.intellij.openapi.vfs.LocalFileSystem.getInstance()
+                        .refreshAndFindFileByIoFile(outFile) ?: return@invokeLater, true)
+                logger.info("[createFileFromArtifact] created scratch file: ${outFile.absolutePath}")
+            } catch (e: Exception) {
+                logger.error("[createFileFromArtifact] failed for $title", e)
             }
         }
     }

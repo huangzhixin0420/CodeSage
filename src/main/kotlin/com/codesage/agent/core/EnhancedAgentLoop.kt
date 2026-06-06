@@ -618,13 +618,32 @@ class EnhancedAgentLoop(
 
     /**
      * 解析工具执行结果中的 success 字段
+     *
+     * H8 修复：原实现用 `content != "false"` 做判定，会把以下情况误判为 success：
+     * - `{"success": 0}` → content="0"，判定成功（语义是失败）
+     * - `{"success": "0"}` → content="0"，判定成功
+     * - `{"success": null}` → `as? JsonPrimitive` 失败 → 走 elvis → 判定成功（最严重）
+     * - `{"success": false}` 走 `booleanOrNull` 才是唯一正确路径
+     *
+     * 正确判定规则：
+     * 1. JSON 解析失败 → false
+     * 2. 没有 "success" 字段 → false（不假定存在）
+     * 3. success 是字面量 `false` → false
+     * 4. success 是字面量 `true` → true
+     * 5. 其它（数字、字符串、null） → false（保守，避免误判）
      */
     private fun parseToolSuccess(toolResult: String): Boolean {
         return try {
             val element = kotlinx.serialization.json.Json.parseToJsonElement(toolResult)
             val jsonObj = element as? kotlinx.serialization.json.JsonObject
-            val successPrimitive = jsonObj?.get("success") as? kotlinx.serialization.json.JsonPrimitive
-            successPrimitive?.content != "false"
+                ?: return false
+            val successElement = jsonObj["success"]
+                ?: return false
+            val prim = successElement as? kotlinx.serialization.json.JsonPrimitive
+                ?: return false
+            // booleanOrNull 仅当 literal 是 true/false 时返回非 null
+            // 字符串 "true"/"false"、数字 0/1、null 全部返回 null（→ false）
+            prim.booleanOrNull ?: false
         } catch (e: Exception) {
             // 非 JSON 或解析失败时，保守判定为失败
             false
