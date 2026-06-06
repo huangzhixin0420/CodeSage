@@ -170,7 +170,6 @@ open class AgentCore(
     }
 
     private var systemPrompt: String = AgentConfig.DEFAULT_SYSTEM_PROMPT
-    private var currentBudgetConfig: TaskBudget.BudgetConfig? = null
 
     // 可观测性（T7.2：提前初始化供 ToolExecutor 使用）
     private val tracer: ExecutionTracer = ExecutionTracer()
@@ -237,9 +236,6 @@ open class AgentCore(
     // 当前正在运行的 chat Job，用于中断
     private val currentChatJob = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Job?>(null)
 
-    // 最近一次耗尽预算的任务（用于继续执行）
-    @Volatile
-    private var lastExhaustedBudget: TaskBudget? = null
 
     /**
      * 初始化Agent
@@ -249,7 +245,6 @@ open class AgentCore(
         if (currentModel.isBlank()) {
             logger.warn("AgentCore initialized without a valid default model. Please configure a model in CodeSage settings.")
         }
-        currentBudgetConfig = config.budgetConfig
 
         // 检测项目语言和框架
         val (projectLanguage, projectFramework, projectRoot) = detectProjectContext()
@@ -708,24 +703,7 @@ open class AgentCore(
             message = userMessage
         )
 
-        // 从配置读取并创建任务级预算（优先使用 AgentConfig 中的配置，否则从 PluginConfig 读取）
-        val budgetConfig = currentBudgetConfig ?: PluginConfig.getInstance().let { pluginConfig ->
-            TaskBudget.BudgetConfig(
-                maxIterations = pluginConfig.maxIterationsPerTask,
-                maxTokens = pluginConfig.maxTokensPerTask,
-                maxDurationMs = pluginConfig.maxDurationSecondsPerTask * 1000L,
-                enableIteration = pluginConfig.enableIterationBudget,
-                enableToken = pluginConfig.enableTokenBudget,
-                enableTime = pluginConfig.enableTimeBudget,
-                warningThresholdPercent = pluginConfig.budgetWarningThreshold
-            )
-        }
-        val taskBudget = TaskBudget(budgetConfig)
-        logger.info("[Session ${session.id}] TaskBudget created: ${taskBudget.summary()}")
-
-        // 新任务开始时清空上一次的耗尽预算记录
-        lastExhaustedBudget = null
-
+        // Budget system removed (fixup commit)
         // 为每个任务创建独立的 EnhancedAgentLoop（确保预算隔离）
         val loop = EnhancedAgentLoop(
             gateway = gateway,
@@ -739,7 +717,6 @@ open class AgentCore(
             memoryNudger = memoryNudger,
             subAgentExecutor = subAgentExecutor,
             agentCore = this,
-            budget = taskBudget
         )
 
         val effectiveModel = resolveModelForMode(routing.effective)
@@ -804,7 +781,6 @@ open class AgentCore(
                     durationMs = duration,
                     metadata = mapOf(
                         "eventCount" to eventCount.toString(),
-                        "budgetExhausted" to taskBudget.isExhausted().toString(),
                         "interrupted" to loop.isInterrupted().toString()
                     )
                 )
@@ -815,105 +791,13 @@ open class AgentCore(
     /**
      * 检查当前是否可以继续上一次因预算耗尽而暂停的对话
      */
-    fun canContinue(): Boolean = lastExhaustedBudget?.isExhausted() == true
-
-    /**
-     * 继续上一次因预算耗尽而暂停的对话
-     *
-     * @param extraIterations 追加的迭代次数
-     * @return 流式事件流，如果无法继续则返回 null
-     */
+    fun canContinue(): Boolean = false  // Budget system removed
+    /** 继续上一次对话：预算系统已删除，方法保留以兼容旧调用方，始终返回 null */
     fun continueConversation(extraIterations: Int): Flow<AgentStreamEvent>? {
-        val budget = lastExhaustedBudget ?: run {
-            logger.warn("No exhausted budget to continue from")
-            return null
-        }
-        if (!budget.isExhausted()) {
-            logger.warn("Last budget is not exhausted, cannot continue")
-            return null
-        }
-
-        val sessionInfo = currentSessionId.get()?.let { sessions[it] } ?: run {
-            logger.warn("No active session to continue")
-            return null
-        }
-
-        // 追加预算
-        budget.extendIterations(extraIterations)
-        logger.info("[Session ${sessionInfo.session.id}] Budget extended by $extraIterations iterations. New remaining: ${budget.remainingIterations()}")
-
-        _state.value = AgentState.THINKING
-        sessionInfo.session.lastActivityAt = System.currentTimeMillis()
-
-        // 创建续跑循环，复用已扩展的预算
-        val loop = EnhancedAgentLoop(
-            gateway = gateway,
-            toolRegistry = toolRegistry,
-            toolExecutor = toolExecutor,
-            skillToolAdapter = skillToolAdapter,
-            errorRecovery = errorRecovery,
-            hooks = hooks,
-            stateFlow = _state,
-            memoryManager = memoryManager,
-            memoryNudger = memoryNudger,
-            subAgentExecutor = subAgentExecutor,
-            agentCore = this,
-            budget = budget
-        )
-
-        val traceCtx = tracer.startTrace("continue_conversation", sessionInfo.session.id)
-        val startTime = System.currentTimeMillis()
-        val flow = loop.run(
-            userMessage = "", // 续跑模式下不添加新用户消息
-            session = sessionInfo.session,
-            contextManager = sessionInfo.contextManager,
-            currentModel = currentModel,
-            systemPrompt = systemPrompt,
-            isContinuation = true
-        )
-
-        return kotlinx.coroutines.flow.flow {
-            val job = currentCoroutineContext()[kotlinx.coroutines.Job]
-            currentChatJob.set(job)
-            currentLoop.set(loop)
-            var eventCount = 0
-            try {
-                flow.collect { event ->
-                    eventCount++
-                    emit(event)
-                }
-            } finally {
-                currentChatJob.compareAndSet(job, null)
-                currentLoop.compareAndSet(loop, null)
-                val duration = System.currentTimeMillis() - startTime
-                if (budget.isExhausted()) {
-                    logger.info("[Session ${sessionInfo.session.id}] Continuation ended, budget still exhausted")
-                } else {
-                    // 如果预算未耗尽，说明任务正常完成，清空记录
-                    lastExhaustedBudget = null
-                }
-                agentScope.launch {
-                    conversationPersistence.saveSession(sessionInfo.session, sessionInfo.contextManager.getContext())
-                }
-                metrics.recordTimer("continue_duration", duration)
-                traceCtx.end()
-                structuredLogger.logAgentEvent(
-                    event = "continue_complete",
-                    sessionId = sessionInfo.session.id,
-                    traceId = traceCtx.traceId,
-                    durationMs = duration,
-                    metadata = mapOf(
-                        "eventCount" to eventCount.toString(),
-                        "budgetExhausted" to budget.isExhausted().toString()
-                    )
-                )
-            }
-        }
+        logger.warn("continueConversation: budget system removed, no continuation available")
+        return null
     }
 
-    /**
-     * 中断当前对话
-     */
     fun interrupt() {
         val job = currentChatJob.getAndSet(null)
         job?.cancel()
@@ -1036,9 +920,6 @@ open class AgentCore(
                 is AgentStreamEvent.SubAgentStart -> result.appendLine("[子Agent启动: ${event.taskDescription}]")
                 is AgentStreamEvent.SubAgentProgress -> result.appendLine("[子Agent进度: ${event.message}]")
                 is AgentStreamEvent.SubAgentComplete -> result.appendLine("[子Agent完成: ${if (event.success) "成功" else "失败"}]")
-                is AgentStreamEvent.BudgetStatus -> result.appendLine("[预算状态: ${event.status}, 剩余${event.remainingIterations}轮]")
-                is AgentStreamEvent.BudgetExhausted -> result.appendLine("[预算耗尽: ${event.reason}]")
-                is AgentStreamEvent.BudgetExtended -> result.appendLine("[预算已追加: +${event.extraIterations}轮]")
                 is AgentStreamEvent.PlanGenerated -> result.appendLine("[计划生成: ${event.description} (${event.steps.size} 步)]")
                 is AgentStreamEvent.PlanModified -> result.appendLine("[计划已修改: ${event.planId} (${event.steps.size} 步)]")
                 is AgentStreamEvent.PlanApproved -> result.appendLine("[计划已批准: ${event.planId}]")
@@ -1332,8 +1213,6 @@ data class AgentConfig(
     val systemPrompt: String = AgentConfig.DEFAULT_SYSTEM_PROMPT,
     val temperature: Double = 0.7,
     val maxTokens: Int? = null,
-    /** 任务级预算配置 */
-    val budgetConfig: TaskBudget.BudgetConfig = TaskBudget.BudgetConfig()
 ) {
     companion object {
         val DEFAULT_SYSTEM_PROMPT = """

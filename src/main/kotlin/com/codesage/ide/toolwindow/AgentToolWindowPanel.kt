@@ -110,9 +110,9 @@ class AgentToolWindowPanel(
                         // 不报错,继续发送(部分模型即使标记不支持也可能偶然能看图)
                     }
                     if (chatMode != null) {
-                        core.chatWithTools(message, mode = chatMode, userExplicit = true, userLanguage = userLanguage)
+                        core.chatWithTools(message, mode = chatMode, userExplicit = true)
                     } else {
-                        core.chatWithTools(message, userExplicit = false, userLanguage = userLanguage)
+                        core.chatWithTools(message, userExplicit = false)
                     }
                 },
                 onStop = { core.interrupt() },

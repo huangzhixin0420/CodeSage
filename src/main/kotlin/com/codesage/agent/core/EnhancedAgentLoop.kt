@@ -14,6 +14,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.serialization.json.booleanOrNull
 
 /**
  * 对话阶段枚举
@@ -56,7 +57,6 @@ class EnhancedAgentLoop(
     private val memoryNudger: MemoryNudger? = null,
     private val subAgentExecutor: SubAgentExecutor? = null,
     private val agentCore: AgentCore? = null,
-    private val budget: TaskBudget? = null
 ) {
 
     private val logger = Logger.getLogger<EnhancedAgentLoop>()
@@ -75,8 +75,6 @@ class EnhancedAgentLoop(
     @Volatile
     private var interrupted = false
 
-    // 当前任务的预算（用于子 Agent 预算继承）
-    private var currentTaskBudget: TaskBudget? = null
 
     /**
      * 运行增强型对话循环（非流式工具调用，流式文本输出）
@@ -97,12 +95,9 @@ class EnhancedAgentLoop(
     ): Flow<AgentStreamEvent> = channelFlow {
         var session = session
         interrupted = false
-        val taskBudget = budget ?: TaskBudget()
-        currentTaskBudget = taskBudget
         var phase = ConversationPhase.INIT
         var currentModelLocal = currentModel
         var turnNumber = 0
-        var lastBudgetStatus = TaskBudget.BudgetStatus.OK
 
         // 事件发射包装：自动记录到 EventHistory
         suspend fun emitEvent(event: AgentStreamEvent) {
@@ -170,24 +165,9 @@ class EnhancedAgentLoop(
         hooks.onTurnStart(turnNumber, contextAfterInit)
 
         // 主循环
-        while (taskBudget.consumeIteration() && taskBudget.checkTimeBudget() && !interrupted) {
+        while (!interrupted) {
             turnNumber++
-            logger.info("[Turn $turnNumber] Budget remaining: ${taskBudget.remainingIterations()}, model: $currentModelLocal, summary=${taskBudget.summary()}")
-
-            // 预算状态检查与分层预警
-            val currentStatus = taskBudget.status()
-            if (currentStatus != lastBudgetStatus && currentStatus.ordinal >= TaskBudget.BudgetStatus.WARNING.ordinal) {
-                lastBudgetStatus = currentStatus
-                emitEvent(
-                    AgentStreamEvent.BudgetStatus(
-                        status = currentStatus.name,
-                        remainingIterations = taskBudget.remainingIterations(),
-                        remainingTokens = taskBudget.remainingTokens(),
-                        remainingSeconds = (taskBudget.remainingMs() / 1000).toInt(),
-                        usagePercent = taskBudget.usagePercent()
-                    )
-                )
-            }
+            logger.info("[Turn $turnNumber] model: $currentModelLocal")
 
             try {
                 // LLM_CALL: 调用模型
@@ -335,7 +315,6 @@ class EnhancedAgentLoop(
                         // 追踪 Token 消耗
                         response.usage?.let { usage ->
                             val totalTokens = usage.promptTokens + usage.completionTokens
-                            taskBudget.recordTokens(totalTokens)
                             logger.info("[Turn $turnNumber] Token usage: prompt=${usage.promptTokens}, completion=${usage.completionTokens}, total=$totalTokens")
                         }
 
@@ -487,8 +466,6 @@ class EnhancedAgentLoop(
                                         )
                                         logger.info("Session migrated in loop: $oldId -> $newId")
                                     }
-                                    // 退还预算（context 压缩后重置重试计数器，系统重试不占用户预算）
-                                    taskBudget.refundIteration()
                                     emitEvent(AgentStreamEvent.Thinking("上下文已压缩，继续重试..."))
                                     // 继续循环，不 break
                                 } else {
@@ -555,40 +532,12 @@ class EnhancedAgentLoop(
             }
         }
 
-        when {
-            interrupted -> {
-                phase = ConversationPhase.INTERRUPTED
-                emitEvent(
-                    AgentStreamEvent.BudgetExhausted(
-                        reason = "对话被用户中断 (已完成 ${turnNumber} 轮)",
-                        consumedIterations = taskBudget.netConsumedIterations(),
-                        consumedTokens = taskBudget.consumedTokens(),
-                        elapsedSeconds = (taskBudget.elapsedMs() / 1000).toInt(),
-                        allowContinue = true
-                    )
-                )
-            }
-
-            taskBudget.isExhausted() -> {
-                emitEvent(
-                    AgentStreamEvent.BudgetExhausted(
-                        reason = taskBudget.exhaustedReason(),
-                        consumedIterations = taskBudget.netConsumedIterations(),
-                        consumedTokens = taskBudget.consumedTokens(),
-                        elapsedSeconds = (taskBudget.elapsedMs() / 1000).toInt(),
-                        allowContinue = true
-                    )
-                )
-            }
-        }
-
         stateFlow.value = AgentState.IDLE
         emitEvent(AgentStreamEvent.Done)
         if (turnNumber == 0) {
             logger.warn(
                 "[Session ${session.id}] Conversation loop ended without executing any turns! " +
-                        "phase=$phase, interrupted=$interrupted, budgetExhausted=${taskBudget.isExhausted()}, " +
-                        "budgetSummary=${taskBudget.summary()}"
+                        "phase=$phase, interrupted=$interrupted"
             )
         } else {
             logger.info("[Session ${session.id}] Conversation loop ended in phase: $phase after $turnNumber turns")
@@ -722,7 +671,6 @@ class EnhancedAgentLoop(
                 toolset = toolset,
                 maxIterations = maxIterations,
                 contextFiles = contextFiles,
-                parentBudget = currentTaskBudget,
                 progressCallback = { progress ->
                     try {
                         emit(
