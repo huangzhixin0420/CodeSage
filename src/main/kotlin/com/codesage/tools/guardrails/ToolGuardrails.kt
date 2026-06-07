@@ -253,6 +253,14 @@ class ToolGuardrails(
                 policy.evaluateCommand(command)
             }
 
+            "exec_shell" -> {
+                // exec_shell 与 run_command 语义相同（都是执行 shell 命令），
+                // 复用 evaluateCommand 让危险模式（rm -rf、dd、fork 炸弹等）和网络命令
+                // （curl/wget/nc）的确认流程与 run_command 保持一致。
+                val command = args["command"]?.toString() ?: return safeDeny("Missing command")
+                policy.evaluateCommand(command)
+            }
+
             "move_file" -> {
                 val source = args["source"]?.toString() ?: return safeDeny("Missing source")
                 val dest = args["destination"]?.toString() ?: return safeDeny("Missing destination")
@@ -303,7 +311,7 @@ class ToolGuardrails(
         return when (toolName) {
             "delete_file" -> "Delete file: ${args["path"] ?: "unknown"}"
             "write_file" -> "Write to file: ${args["path"] ?: "unknown"}"
-            "run_command" -> "Execute: ${(args["command"] ?: "").toString().take(60)}"
+            "run_command", "exec_shell" -> "Execute: ${(args["command"] ?: "").toString().take(60)}"
             "move_file" -> "Move: ${args["source"] ?: "unknown"} → ${args["destination"] ?: "unknown"}"
             "edit_file" -> "Edit file: ${args["path"] ?: "unknown"}"
             else -> "$toolName(${args.keys.joinToString(", ")})"

@@ -223,4 +223,59 @@ class ToolGuardrailsTest {
         assertTrue(result2 is ToolGuardrails.PreCheckResult.Allowed)
         assertEquals(1, callCount)
     }
+
+    // ===== exec_shell guardrail routing (regression: C3 修复导致 exec_shell 落入 unknown 分支) =====
+
+    @Test
+    fun `exec_shell with safe command is allowed`() = runBlocking {
+        val guardrails = ToolGuardrails()
+        val result = guardrails.preCheck("exec_shell", mapOf("command" to "echo hello"))
+        assertTrue(
+            result is ToolGuardrails.PreCheckResult.Allowed,
+            "Safe exec_shell command should be allowed without confirmation, got: $result"
+        )
+    }
+
+    @Test
+    fun `exec_shell with dangerous command is blocked`() = runBlocking {
+        val guardrails = ToolGuardrails()
+        val result = guardrails.preCheck("exec_shell", mapOf("command" to "rm -rf /"))
+        assertTrue(
+            result is ToolGuardrails.PreCheckResult.Denied,
+            "Dangerous exec_shell command must be blocked, got: $result"
+        )
+        assertTrue(
+            (result as ToolGuardrails.PreCheckResult.Denied).reason.contains("Dangerous", ignoreCase = true),
+            "Block reason should mention danger, got: ${result.reason}"
+        )
+    }
+
+    @Test
+    fun `exec_shell with network command requires confirmation`() = runBlocking {
+        val guardrails = ToolGuardrails() // no callback -> headless auto-deny
+        val result = guardrails.preCheck("exec_shell", mapOf("command" to "curl https://api.github.com"))
+        assertTrue(
+            result is ToolGuardrails.PreCheckResult.Denied,
+            "Network command should require confirmation (denied in headless), got: $result"
+        )
+        assertTrue(
+            (result as ToolGuardrails.PreCheckResult.Denied).reason.contains("Network", ignoreCase = true),
+            "Reason should mention network, got: ${result.reason}"
+        )
+    }
+
+    @Test
+    fun `exec_shell with network command is allowed when user confirms`() = runBlocking {
+        val callback = object : ToolGuardrails.ConfirmationCallback {
+            override suspend fun requestConfirmation(
+                toolName: String,
+                operation: String,
+                reason: String,
+                riskLevel: SensitiveActionPolicy.RiskLevel
+            ): ToolGuardrails.Permission = ToolGuardrails.Permission.ALLOW_ONCE
+        }
+        val guardrails = ToolGuardrails(confirmationCallback = callback)
+        val result = guardrails.preCheck("exec_shell", mapOf("command" to "curl https://api.github.com"))
+        assertTrue(result is ToolGuardrails.PreCheckResult.Allowed)
+    }
 }
