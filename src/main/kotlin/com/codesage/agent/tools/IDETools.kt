@@ -93,29 +93,42 @@ class IDETools(private val project: Project?) {
                     return@Computable ToolResult.Error("Path is a directory: $path")
                 }
 
-                val content = if (virtualFile.length > LARGE_FILE_THRESHOLD && offset == null && limit == null) {
+                val responseFields = mutableMapOf<String, JsonElement>(
+                    "path" to JsonPrimitive(path),
+                    "size" to JsonPrimitive(virtualFile.length),
+                )
+
+                val content: String = if (virtualFile.length > LARGE_FILE_THRESHOLD && offset == null && limit == null) {
                     // 大文件使用 memory-mapped 读取
                     readLargeFile(virtualFile)
                 } else {
-                    var raw = String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
-                    if (offset != null || limit != null) {
-                        val lines = raw.lines()
-                        val start = offset ?: 0
-                        val end = if (limit != null) (start + limit).coerceAtMost(lines.size) else lines.size
-                        raw = lines.subList(start.coerceAtLeast(0), end.coerceAtMost(lines.size)).joinToString("\n")
+                    val raw = String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
+                    val allLines = raw.lines()
+                    val totalLines = allLines.size
+                    responseFields["total_lines"] = JsonPrimitive(totalLines)
+
+                    // offset 越界时显式报错（"offset 1000 out of range: file has
+                    // 986 lines"），比静默返回空字符串更能引导 LLM 自我纠错。
+                    // offset == totalLines 视为合法 EOF，仍走分页路径并返回空
+                    // content。
+                    if (offset != null && offset > totalLines) {
+                        return@Computable ToolResult.Error(
+                            "offset $offset out of range: file has $totalLines lines"
+                        )
                     }
-                    raw
+
+                    if (offset != null || limit != null) {
+                        val start = (offset ?: 0).coerceIn(0, totalLines)
+                        val end = if (limit != null) (start + limit).coerceIn(start, totalLines) else totalLines
+                        responseFields["start_line"] = JsonPrimitive(start)
+                        responseFields["end_line"] = JsonPrimitive(end)
+                        allLines.subList(start, end).joinToString("\n")
+                    } else {
+                        raw
+                    }
                 }
 
-                ToolResult.Success(
-                    JsonObject(
-                        mapOf(
-                            "path" to JsonPrimitive(path),
-                            "content" to JsonPrimitive(content),
-                            "size" to JsonPrimitive(virtualFile.length)
-                        )
-                    )
-                )
+                ToolResult.Success(JsonObject(responseFields))
             } catch (e: Exception) {
                 logger.error("Failed to read file: $path", e)
                 ToolResult.Error("Failed to read file: ${e.message}")

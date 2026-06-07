@@ -176,7 +176,7 @@ class ToolRegistry {
 
 internal fun readFileTool() = Tool(
     name = "read_file",
-    description = "读取指定文件的内容。支持相对项目根目录的路径或绝对路径。可以指定偏移量和读取行数限制。",
+    description = "读取指定文件的内容。支持相对项目根目录的路径或绝对路径。可指定 offset/limit 做分页；响应附带 total_lines / start_line / end_line 用于分页续读和 EOF 判断。offset 越界会返回明确错误（含实际行数）。",
     parameters = ToolParameters(
         properties = mapOf(
             "path" to ToolProperty(
