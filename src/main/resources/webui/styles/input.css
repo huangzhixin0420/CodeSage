@@ -7,7 +7,7 @@
  *   - 自动撑高 (rows 1-8),超过 max-height 出滚动条
  *   - 底部一行工具栏:左 工具按钮 (@/图片/语音) — 中模式选择 — 右发送按钮
  *   - 发送按钮:空闲=主色实心,生成中=警告色 stop 圆按钮
- *   - 输入框聚焦时整体加 1px accent border
+ *   - 输入框聚焦时**不**改边框/阴影(用户偏好:聚焦态与静态完全一致)
  *   - 占位符/快捷键提示
  */
 
@@ -31,34 +31,69 @@
 }
 
 .input-container:focus-within {
-    border-color: var(--accent);
-    box-shadow: var(--shadow-focus);
+    /* 聚焦态与静态完全一致:保持原 border + 阴影,不做任何视觉提示。
+       浏览器原生 caret 闪烁已足够让用户感知"可输入"。 */
+    border-color: var(--border-default);
+    box-shadow: var(--shadow-sm);
 }
 
 .input-attachments {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    padding: var(--space-2) var(--space-3) 0;
+    /* v2.1:上下加 padding,让 chip 与 textarea 之间有呼吸空间,避免被误以为是
+       textarea 自身的一部分(之前的痛点:"点了按钮没反应"其实是有 chip,但挤在一起看不到)。 */
+    padding: var(--space-2) var(--space-3) 4px;
+    min-height: 4px; /* 强制占位,避免有附件时输入框整体跳一下 */
 }
 
 .input-attachment {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 3px 6px 3px 4px;
+    gap: 6px;
+    /* v2.1:从 3-6px 扩到 5-10px,更有质感,缩略图也变大,一眼能看到"这里挂了张图"。 */
+    padding: 5px 10px 5px 5px;
     background: var(--surface-sunken);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
     font-size: var(--text-xs);
     color: var(--fg-secondary);
+    transition: all var(--duration-fast) var(--ease-out);
+    max-width: 240px;
+}
+
+/* v2.1:图片附件给个 accent 描边 + 轻微强调,跟"普通内容"视觉上拉开 */
+.input-attachment:has(.input-attachment-thumb) {
+    border-color: var(--accent-soft);
+    background: var(--accent-soft);
+    color: var(--fg-primary);
+}
+
+.input-attachment:hover {
+    border-color: var(--accent);
 }
 
 .input-attachment-thumb {
-    width: 18px;
-    height: 18px;
+    /* v2.1:从 18 → 28,缩略图大到能看出是什么图 */
+    width: 28px;
+    height: 28px;
     border-radius: var(--radius-xs);
     object-fit: cover;
+    flex-shrink: 0;
+}
+
+/* v2.1:文件名截断省略,避免长文件名撑炸 chip */
+.input-attachment-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 160px;
+}
+
+/* 体积过大(>8MB)时给个 error 色,提醒用户"这张图发出去可能被丢弃" */
+.input-attachment.too-large {
+    border-color: var(--error);
+    color: var(--error-fg);
 }
 
 .input-attachment-remove {
@@ -71,6 +106,7 @@
     color: var(--fg-tertiary);
     font-size: 8px;
     transition: all var(--duration-fast) var(--ease-out);
+    flex-shrink: 0;
 }
 
 .input-attachment-remove:hover {
