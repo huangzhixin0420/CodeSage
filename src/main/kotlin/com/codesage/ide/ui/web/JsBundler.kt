@@ -100,6 +100,36 @@ object JsBundler {
     @JvmStatic
     fun stripForTest(content: String): String = stripModuleSyntax(content)
 
+    @JvmStatic
+    fun topoSortForTest(entry: String, classLoader: ClassLoader): List<String> =
+        topologicalSort(entry, classLoader)
+
+    @JvmStatic
+    fun processFileForTest(content: String): String = processFile(content)
+
+    /**
+     * 跑完整 bundle 并写到 /tmp/codesage_bundle.js,给 JSDOM 跑 e2e 测试用
+     */
+    @JvmStatic
+    fun writeBundleForTest(outPath: String): Long {
+        val classLoader = JsBundler::class.java.classLoader
+        val order = topologicalSort("webui/js/main.js", classLoader)
+        val sb = StringBuilder()
+        sb.appendLine("/* CodeSage JS bundle (test) */")
+        sb.appendLine("window.__bundle__ = window.__bundle__ || {};")
+        sb.appendLine("(function () {")
+        sb.appendLine("'use strict';")
+        for (path in order) {
+            val content = classLoader.getResourceAsStream(path)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: continue
+            sb.appendLine("/* === $path === */")
+            sb.appendLine(processFile(content))
+        }
+        sb.appendLine("})();")
+        val out = java.io.File(outPath)
+        out.writeText(sb.toString())
+        return sb.length.toLong()
+    }
+
     private fun stripModuleSyntax(content: String): String {
         var s = content
         // **重要: 所有 import/export 必须在行首 (^),MULTILINE 模式**

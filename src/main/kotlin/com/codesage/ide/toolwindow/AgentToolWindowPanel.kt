@@ -193,8 +193,13 @@ class AgentToolWindowPanel(
     private fun createNewSession() {
         val core = agentCore ?: return
         core.saveCurrentSession()
-        val session = core.createSession()
-        chatPanel.notifySessionCreated(sessionToMap(session))
+        core.createSession()
+        // v2.0 修复: 旧实现调 chatPanel.notifySessionCreated(单条 session),
+        // 协议发的是 "session" 字段(单数),与前端 main.js 期望的 msg.sessions 不一致,
+        // → setSessions([]) 整个 sidebar 被清空、新会话永远不显示。
+        // 改走 refreshSessionList():它 sendSessions(全量) + notifySessionSwitched(当前)
+        // 完全对齐现有 sidebar 协议,零协议漂移。
+        refreshSessionList()
         chatPanel.clear()
     }
 

@@ -1,116 +1,155 @@
 /**
- * cs-thinking 组件 — 三态:running / completed / collapsed
+ * cs-thinking v2.0 — 思考卡片
+ * ============================
  *
- * 设计文档 §6:
- *   - 思考中:三点呼吸 + 「思考中 · 0.8s」+ 默认展开
- *   - 思考完成:绿勾 + 「思考完成 · 3.4s」+ 1.5s 后折叠
- *   - 折叠:一行 chip
+ * 设计核心 (对比 v1 修复):
+ *   - 默认折叠为单行 chip:"已思考 3.4s · 1247 tokens"
+ *   - 推理中(running)默认展开,带 3 点呼吸 + 实时计时
+ *   - 完成后立刻折叠 (0ms,无 1.5s 延迟)
+ *   - 折叠态:左边一条 accent 边作为视觉提示
+ *   - 展开后:浅色背景 + monospace 文本,可滚动
+ *   - 隐藏:有 showThinking 全局开关
  */
 
 import { escapeHtml } from "../utils.js";
 
-const STATES = {
-  running: {
-    cls: "running",
-    iconHtml: '<span class="thinking-dot thinking-dot-visual"></span>'.repeat(
-      3,
-    ),
-    label: (ms) => `思考中 · ${(ms / 1000).toFixed(1)}s`,
-  },
-  completed: {
-    cls: "completed",
-    iconHtml:
-      '<i class="fas fa-check" style="color:var(--success);font-size:11px;"></i>',
-    label: (ms) => `已思考 ${(ms / 1000).toFixed(1)}s`,
-  },
-  collapsed: {
-    cls: "completed",
-    iconHtml:
-      '<i class="fas fa-check" style="color:var(--fg-3);font-size:11px;"></i>',
-    label: (ms) => `已思考 ${(ms / 1000).toFixed(1)}s`,
-  },
-};
+const RUNNING_DOT_HTML =
+    '<span class="thinking-dot"></span>'.repeat(3);
 
 export class Thinking {
-  /**
-   * @param {object} opts
-   * @param {string} [opts.id] - 唯一 id,用于事件定位
-   */
-  constructor(opts = {}) {
-    this.id =
-      opts.id ||
-      "thinking-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
-    this.state = "running";
-    this.startTime = Date.now();
-    this.content = "";
+    /**
+     * @param {object} opts
+     * @param {string} [opts.id]
+     * @param {boolean} [opts.collapsed] - 初始折叠 (默认 false,展开)
+     */
+    constructor(opts = {}) {
+        this.id =
+            opts.id ||
+            "thinking-" +
+                Date.now() +
+                "-" +
+                Math.random().toString(36).slice(2, 7);
+        this.state = "running";
+        this.startTime = Date.now();
+        this.elapsedMs = 0;
+        this.tokenCount = 0;
+        this.content = "";
 
-    this.el = document.createElement("div");
-    this.el.className = "thinking-card running";
-    this.el.setAttribute("data-cs-thinking", this.id);
+        this.el = document.createElement("div");
+        this.el.className = "thinking-card running";
+        this.el.setAttribute("data-cs-thinking", this.id);
+        this._render();
+    }
 
-    this._render();
-  }
+    _render() {
+        const isRunning = this.state === "running";
+        const iconHtml = isRunning
+            ? RUNNING_DOT_HTML
+            : '<i class="fas fa-check"></i>';
+        const labelText = isRunning
+            ? "思考中"
+            : `已思考 ${(this.elapsedMs / 1000).toFixed(1)}s`;
+        const metaHtml =
+            this.tokenCount > 0
+                ? `<span class="thinking-meta">${this.tokenCount} tokens</span>`
+                : "";
+        const openClass = this.state === "running" ? " open" : "";
+        const chevronClass = this.state === "running" ? " open" : "";
 
-  _render() {
-    const cfg = STATES[this.state];
-    this.el.className = `thinking-card ${cfg.cls}`;
-    this.el.innerHTML = `
-            <div class="thinking-header" data-cs-role="header">
-                <div class="thinking-dots">${cfg.iconHtml}</div>
-                <span class="thinking-label" data-cs-role="label">${escapeHtml(cfg.label(Date.now() - this.startTime))}</span>
-                <i class="fas fa-chevron-down thinking-chevron" data-cs-role="chevron"></i>
+        this.el.classList.toggle("running", isRunning);
+        this.el.classList.toggle("completed", !isRunning);
+
+        this.el.innerHTML = `
+            <div class="thinking-header" data-cs-role="header" role="button" tabindex="0">
+                <div class="thinking-icon">${iconHtml}</div>
+                <div class="thinking-label">
+                    <span class="thinking-label-text">${escapeHtml(labelText)}</span>
+                    ${metaHtml}
+                </div>
+                <i class="fas fa-chevron-down thinking-chevron${chevronClass}" data-cs-role="chevron"></i>
             </div>
-            <div class="thinking-body" data-cs-role="body"></div>
+            <div class="thinking-body${openClass}" data-cs-role="body">
+                <div class="thinking-body-content" data-cs-role="content"></div>
+            </div>
         `;
-    this._bodyEl = this.el.querySelector('[data-cs-role="body"]');
-    this._labelEl = this.el.querySelector('[data-cs-role="label"]');
-    this._headerEl = this.el.querySelector('[data-cs-role="header"]');
-    this._headerEl.addEventListener("click", () => this.toggle());
-    if (this.content) this._bodyEl.textContent = this.content;
-  }
 
-  /** 思考中追加内容 */
-  appendContent(text) {
-    this.content += text;
-    if (this._bodyEl) this._bodyEl.textContent = this.content;
-  }
+        this._bodyEl = this.el.querySelector('[data-cs-role="body"]');
+        this._contentEl = this.el.querySelector('[data-cs-role="content"]');
+        this._labelEl = this.el.querySelector(".thinking-label-text");
+        this._headerEl = this.el.querySelector('[data-cs-role="header"]');
 
-  setContent(text) {
-    this.content = text;
-    if (this._bodyEl) this._bodyEl.textContent = this.content;
-  }
+        if (this._contentEl && this.content) {
+            this._contentEl.textContent = this.content;
+        }
 
-  /** 标记完成 */
-  complete(durationMs) {
-    this.state = "completed";
-    this.durationMs = durationMs ?? Date.now() - this.startTime;
-    this._render();
-    this._bodyEl.textContent = this.content;
-    // 修复:用户反馈「思考默认折叠」— 之前是 1.5s 后自动折叠
-    // 现在直接默认折叠(状态变 "completed" + chevron 默认收起),
-    // 用户点 header 才展开看完整内容
-    this._bodyEl.classList.remove("open");
-    this.el.querySelector('[data-cs-role="chevron"]').classList.remove("open");
-    // 更新为 "collapsed" 视觉态(更柔和的图标)
-    this.el.classList.remove("running");
-    this.el.classList.add("completed", "collapsed");
-  }
+        this._headerEl.addEventListener("click", () => this.toggle());
+        this._headerEl.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                this.toggle();
+            }
+        });
+    }
 
-  toggle() {
-    const isOpen = this._bodyEl.classList.toggle("open");
-    this.el
-      .querySelector('[data-cs-role="chevron"]')
-      .classList.toggle("open", isOpen);
-  }
+    appendContent(text) {
+        this.content += text;
+        if (this._contentEl) this._contentEl.textContent = this.content;
+        // 重新计算 token 估算(粗略:1 token ≈ 4 chars 英文 / 1.5 chars 中文)
+        this.tokenCount = Math.ceil(this.content.length / 3);
+        // 实时更新 header meta
+        if (this.state === "running") {
+            this._updateRunningMeta();
+        }
+    }
 
-  collapse() {
-    this._bodyEl?.classList.remove("open");
-    this.el
-      ?.querySelector('[data-cs-role="chevron"]')
-      ?.classList.remove("open");
-  }
+    setContent(text) {
+        this.content = text;
+        this.tokenCount = Math.ceil(text.length / 3);
+        if (this._contentEl) this._contentEl.textContent = this.content;
+    }
 
-  destroy() {
-    this.el.remove();
-  }
+    _updateRunningMeta() {
+        if (!this._labelEl) return;
+        const elapsed = (Date.now() - this.startTime) / 1000;
+        this._labelEl.textContent = `思考中 · ${elapsed.toFixed(1)}s`;
+    }
+
+    /** 标记完成 — 默认立即折叠 (修复 v1 的 1.5s 延迟) */
+    complete(elapsedMs) {
+        this.state = "completed";
+        this.elapsedMs = elapsedMs ?? Date.now() - this.startTime;
+        this._render();
+        this._bodyEl.textContent = this.content;
+        // 立即折叠
+        this._bodyEl.classList.remove("open");
+        this.el
+            .querySelector('[data-cs-role="chevron"]')
+            ?.classList.remove("open");
+    }
+
+    toggle() {
+        if (!this._bodyEl) return;
+        const isOpen = this._bodyEl.classList.toggle("open");
+        this.el
+            .querySelector('[data-cs-role="chevron"]')
+            ?.classList.toggle("open", isOpen);
+    }
+
+    collapse() {
+        this._bodyEl?.classList.remove("open");
+        this.el
+            ?.querySelector('[data-cs-role="chevron"]')
+            ?.classList.remove("open");
+    }
+
+    expand() {
+        this._bodyEl?.classList.add("open");
+        this.el
+            ?.querySelector('[data-cs-role="chevron"]')
+            ?.classList.add("open");
+    }
+
+    destroy() {
+        this.el.remove();
+    }
 }

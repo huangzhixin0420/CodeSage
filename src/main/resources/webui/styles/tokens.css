@@ -1,209 +1,274 @@
 /**
- * CodeSage Design Tokens
- * 单一设计真相来源,所有颜色/字体/间距/圆角/阴影都在这里
+ * CodeSage Design Tokens v2.0
+ * =============================
+ *
+ * 单一设计真相来源 (single source of truth)。
+ * 任何颜色/字体/间距/圆角/阴影的修改请改这里,不要在组件 CSS 中散落硬编码。
+ *
+ * 设计原则 (v2.0 重设):
+ *   1. 中性灰阶优先 — IDE 友好,严肃专业
+ *   2. 单一品牌强调色 — Sage Emerald (#10b981 系),呼应 "CodeSage" 品牌
+ *   3. 三层 surface 体系 — base / raised / overlay
+ *   4. 暗色主题降低饱和度 — 不刺眼,与 IDE 暗色环境融合
+ *   5. 中等圆角 — 8/10/12,不过分圆润也不尖锐
+ *
  * 命名规范:
- *   -x-bg-* 背景层级
- *   -x-fg-* 文本层级
- *   -x-border-* 边框
- *   -x-accent-* 品牌色
- *   -x-state-* 状态色(success/warning/error/info)
- *   -x-space-N 间距(4,8,12,16,20,24,32,40)
+ *   -x-bg-* / -x-surface-* 背景层级
+ *   -x-fg-* 文本层级 (0 最高对比 → 3 最低)
+ *   -x-border-* 边框 (subtle/hairline/strong)
+ *   -x-accent-* 品牌色 (sage)
+ *   -x-state-* 状态色 (success/warning/error/info)
+ *   -x-space-N 间距 (1=4, 2=8, ..., 10=40)
  *   -x-radius-* 圆角
  *   -x-shadow-* 阴影
  *   -x-font-* 字体
- *   -x-diff-* diff 颜色
+ *   -x-ease-* / -x-duration-* 动效
  */
 
 :root {
-    /* === Backgrounds === */
-    --bg-0: #ffffff;
-    --bg-1: #fafafa;
-    --bg-2: #f4f4f5;
-    --bg-3: #e4e4e7;
-    --bg-hover: #ececf1;
-    --bg-input: #f7f7f8;
-    --bg-overlay: rgba(0, 0, 0, 0.4);
+    /* === Surface System (三层背景) === */
+    --surface-base: #fafaf9;        /* 页面主背景 */
+    --surface-raised: #ffffff;      /* 卡片/对话气泡 */
+    --surface-elevated: #ffffff;    /* 浮层/下拉 */
+    --surface-sunken: #f4f4f5;      /* 输入框/code 区 */
+    --surface-hover: rgba(0, 0, 0, 0.04);
+    --surface-active: rgba(0, 0, 0, 0.06);
+    --surface-overlay: rgba(15, 23, 23, 0.32);
 
-    /* === Foreground / Text === */
-    --fg-0: #18181b;
-    --fg-1: #3f3f46;
-    --fg-2: #71717a;
-    --fg-3: #a1a1aa;
-    --fg-on-accent: #ffffff;
+    /* === Foreground (文本) === */
+    --fg-primary: #0f172a;          /* 标题、对话正文 */
+    --fg-secondary: #475569;        /* 次要文本 */
+    --fg-tertiary: #94a3b8;         /* 辅助/占位 */
+    --fg-muted: #cbd5e1;            /* 极弱文本/禁用 */
+    --fg-inverse: #ffffff;          /* 暗底白字 */
+    --fg-link: #0d9488;             /* 链接色 (teal-600) */
 
-    /* === Borders === */
-    --border: #e4e4e7;
-    --border-subtle: #f0f0f0;
-    --border-strong: #d4d4d8;
+    /* === Border === */
+    --border-subtle: #f1f5f9;       /* 极淡,装饰用 */
+    --border-default: #e2e8f0;      /* 常规 hairline */
+    --border-strong: #cbd5e1;       /* 强调边框 */
+    --border-focus: #10b981;        /* 聚焦环 */
 
-    /* === Accent ===
-       之前是 Indigo (#6366f1) — 太“消费类 App”调
-       改为 slate 灰 — 严肃/专业的开发者调性,
-       状态颜色(success/warning/error)仍保留语义色,
-       只有主品牌色脱蓝 */
-    --accent: #475569;
-    --accent-hover: #334155;
-    --accent-active: #1e293b;
-    --accent-soft: rgba(71, 85, 105, 0.1);
+    /* === Accent (品牌色:Sage Emerald) ===
+       选 sage 呼应品牌,且与 IDE 主流冷色调(蓝/紫)有差异便于识别。
+       主色 #10b981 (emerald-500),hover 深一档,active 再深。 */
+    --accent: #10b981;
+    --accent-hover: #059669;
+    --accent-active: #047857;
+    --accent-soft: rgba(16, 185, 129, 0.08);
+    --accent-medium: rgba(16, 185, 129, 0.16);
     --accent-fg: #ffffff;
+    --accent-ring: rgba(16, 185, 129, 0.32);
 
-    /* === State Colors === */
+    /* === State Colors (语义色) === */
     --success: #10b981;
     --success-soft: rgba(16, 185, 129, 0.1);
+    --success-fg: #047857;
+
     --warning: #f59e0b;
     --warning-soft: rgba(245, 158, 11, 0.1);
+    --warning-fg: #b45309;
+
     --error: #ef4444;
     --error-soft: rgba(239, 68, 68, 0.1);
-    --info: #64748b;
-    --info-soft: rgba(100, 116, 139, 0.1);
+    --error-fg: #b91c1c;
 
-    /* === User Message === */
-    --user-bubble: linear-gradient(135deg, #334155 0%, #475569 100%);
+    --info: #3b82f6;
+    --info-soft: rgba(59, 130, 246, 0.1);
+    --info-fg: #1d4ed8;
 
-    /* === Code === */
-    --code-bg: #1e1e2e;
-    --code-fg: #cdd6f4;
-    --code-header-bg: rgba(255, 255, 255, 0.04);
+    /* === Code Block === */
+    --code-bg: #0f172a;             /* slate-900 */
+    --code-fg: #e2e8f0;             /* slate-200 */
+    --code-comment: #64748b;
+    --code-line-number: #475569;
+    --code-selection: rgba(16, 185, 129, 0.2);
 
     /* === Diff === */
-    --diff-add-bg: #e6ffec;
-    --diff-add-fg: #1a7f37;
-    --diff-remove-bg: #ffebe9;
-    --diff-remove-fg: #cf222e;
-    --diff-add-line-bg: rgba(46, 160, 67, 0.12);
-    --diff-remove-line-bg: rgba(248, 81, 73, 0.12);
+    --diff-add-bg: #ecfdf5;         /* emerald-50 */
+    --diff-add-fg: #065f46;         /* emerald-800 */
+    --diff-add-line: rgba(16, 185, 129, 0.16);
+    --diff-remove-bg: #fef2f2;      /* red-50 */
+    --diff-remove-fg: #991b1b;      /* red-800 */
+    --diff-remove-line: rgba(239, 68, 68, 0.16);
 
-    /* === Tool Status === */
-    --tool-running: var(--warning);
-    --tool-completed: var(--success);
-    --tool-failed: var(--error);
-    --tool-queued: var(--fg-3);
-    --tool-confirm: var(--warning);
+    /* === User Bubble === */
+    --user-bubble-bg: #0f172a;      /* slate-900,与主背景对比明显 */
+    --user-bubble-fg: #f8fafc;
+    --user-bubble-radius: 18px;
 
-    /* === Spacing === */
+    /* === Spacing (4px base) === */
+    --space-0: 0;
     --space-1: 4px;
     --space-2: 8px;
     --space-3: 12px;
     --space-4: 16px;
     --space-5: 20px;
     --space-6: 24px;
+    --space-7: 28px;
     --space-8: 32px;
     --space-10: 40px;
+    --space-12: 48px;
+    --space-16: 64px;
 
-    /* === Radii === */
+    /* === Radius (中等圆角) === */
     --radius-xs: 4px;
     --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
-    --radius-xl: 20px;
-    --radius-full: 9999px;
+    --radius-md: 8px;
+    --radius-lg: 10px;
+    --radius-xl: 12px;
+    --radius-2xl: 16px;
+    --radius-pill: 9999px;
 
-    /* === Shadows === */
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
-    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
-    --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.16);
+    /* === Shadow (克制使用) ===
+       不用大投影,边框为主,shadow 仅在浮层用。 */
+    --shadow-xs: 0 1px 1px rgba(15, 23, 42, 0.04);
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 1px rgba(15, 23, 42, 0.04);
+    --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+    --shadow-lg: 0 12px 28px rgba(15, 23, 42, 0.12);
+    --shadow-xl: 0 20px 48px rgba(15, 23, 42, 0.18);
+    --shadow-focus: 0 0 0 3px var(--accent-ring);
+    --shadow-inner: inset 0 1px 2px rgba(15, 23, 42, 0.04);
 
     /* === Typography === */
-    --font-sans:
-        -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-        "Microsoft YaHei", "Helvetica Neue", Roboto, Helvetica, Arial,
-        sans-serif;
-    --font-mono:
-        "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco, Consolas,
-        "Liberation Mono", monospace;
+    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Roboto, Helvetica,
+        Arial, sans-serif;
+    --font-mono: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco,
+        Consolas, "Liberation Mono", monospace;
 
+    --text-2xs: 10px;
     --text-xs: 11px;
     --text-sm: 12px;
-    --text-base: 14px;
-    --text-md: 15px;
+    --text-base: 13px;       /* IDE 紧凑:比网页小一档 */
+    --text-md: 14px;
     --text-lg: 16px;
     --text-xl: 18px;
     --text-2xl: 22px;
     --text-3xl: 28px;
 
-    --leading-tight: 1.4;
-    --leading-normal: 1.5;
-    --leading-relaxed: 1.6;
-    --leading-prose: 1.7;
+    --leading-tight: 1.35;
+    --leading-snug: 1.45;
+    --leading-normal: 1.55;
+    --leading-relaxed: 1.65;
+    --leading-prose: 1.75;
+
+    --weight-normal: 400;
+    --weight-medium: 500;
+    --weight-semibold: 600;
+    --weight-bold: 700;
 
     /* === Layout === */
-    --header-height: 52px;
-    --max-content-width: 1200px;
+    --header-height: 48px;
+    --sidebar-width: 260px;
+    --sidebar-collapsed-width: 0px;
+    --artifacts-width: 360px;
+    --input-min-height: 56px;
+    --input-max-height: 240px;
+    --content-max-width: 760px;     /* 消息内容最大宽度,可读性 */
+    --content-padding-x: 32px;
 
-    /* === Animation === */
+    /* === Motion === */
     --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
     --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
     --duration-fast: 120ms;
-    --duration-base: 200ms;
-    --duration-slow: 320ms;
+    --duration-base: 180ms;
+    --duration-slow: 260ms;
+    --duration-slower: 380ms;
 
-    /* === Z-Index === */
+    /* === Z-Index Scale === */
     --z-base: 0;
-    --z-dropdown: 100;
-    --z-sticky: 200;
+    --z-elevated: 10;
+    --z-sticky: 100;
+    --z-dropdown: 200;
     --z-modal: 1000;
-    --z-toast: 9999;
-    --z-overlay: 9999;
+    --z-toast: 2000;
+    --z-overlay: 1500;
 }
 
 [data-theme="dark"] {
-    --bg-0: #0f0f10;
-    --bg-1: #1a1a1c;
-    --bg-2: #252528;
-    --bg-3: #34343a;
-    --bg-hover: #2d2d30;
-    --bg-input: #1f1f22;
-    --bg-overlay: rgba(0, 0, 0, 0.6);
+    /* === Dark Surface === */
+    --surface-base: #0b0d0e;        /* 近黑,与 IDE 暗色融合 */
+    --surface-raised: #15171a;      /* 卡片 */
+    --surface-elevated: #1c1f23;    /* 浮层 */
+    --surface-sunken: #0a0b0c;      /* 输入框/code */
+    --surface-hover: rgba(255, 255, 255, 0.05);
+    --surface-active: rgba(255, 255, 255, 0.08);
+    --surface-overlay: rgba(0, 0, 0, 0.7);
 
-    --fg-0: #fafafa;
-    --fg-1: #d4d4d8;
-    --fg-2: #a1a1aa;
-    --fg-3: #71717a;
-    --fg-on-accent: #ffffff;
+    /* === Dark Foreground === */
+    --fg-primary: #f1f5f9;
+    --fg-secondary: #cbd5e1;
+    --fg-tertiary: #94a3b8;
+    --fg-muted: #64748b;
+    --fg-inverse: #0f172a;
+    --fg-link: #2dd4bf;
 
-    --border: #2a2a2e;
-    --border-subtle: #222226;
-    --border-strong: #3f3f46;
+    /* === Dark Border === */
+    --border-subtle: #1e2024;
+    --border-default: #2a2d31;
+    --border-strong: #3a3d42;
 
-    --accent: #94a3b8;
-    --accent-hover: #cbd5e1;
-    --accent-active: #e2e8f0;
-    --accent-soft: rgba(148, 163, 184, 0.15);
-    --accent-fg: #0f0f10;
+    /* === Accent (暗色模式:提亮一档) === */
+    --accent: #34d399;
+    --accent-hover: #6ee7b7;
+    --accent-active: #a7f3d0;
+    --accent-soft: rgba(52, 211, 153, 0.1);
+    --accent-medium: rgba(52, 211, 153, 0.18);
+    --accent-fg: #052e2a;
+    --accent-ring: rgba(52, 211, 153, 0.32);
 
+    /* === State (暗色微调) === */
     --success: #34d399;
     --success-soft: rgba(52, 211, 153, 0.15);
+    --success-fg: #6ee7b7;
+
     --warning: #fbbf24;
     --warning-soft: rgba(251, 191, 36, 0.15);
+    --warning-fg: #fcd34d;
+
     --error: #f87171;
     --error-soft: rgba(248, 113, 113, 0.15);
-    --info: #94a3b8;
-    --info-soft: rgba(148, 163, 184, 0.15);
+    --error-fg: #fca5a5;
 
-    --diff-add-bg: rgba(46, 160, 67, 0.15);
-    --diff-add-fg: #7ee787;
-    --diff-remove-bg: rgba(248, 81, 73, 0.15);
-    --diff-remove-fg: #ffa198;
-    --diff-add-line-bg: rgba(46, 160, 67, 0.18);
-    --diff-remove-line-bg: rgba(248, 81, 73, 0.18);
+    --info: #60a5fa;
+    --info-soft: rgba(96, 165, 250, 0.15);
+    --info-fg: #93c5fd;
 
-    --code-bg: #14141f;
+    /* === Dark Code === */
+    --code-bg: #0a0b0c;
+    --code-fg: #e2e8f0;
+    --code-comment: #64748b;
+    --code-line-number: #475569;
+    --code-selection: rgba(52, 211, 153, 0.2);
 
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+    /* === Dark Diff === */
+    --diff-add-bg: rgba(16, 185, 129, 0.12);
+    --diff-add-fg: #6ee7b7;
+    --diff-add-line: rgba(16, 185, 129, 0.2);
+    --diff-remove-bg: rgba(239, 68, 68, 0.12);
+    --diff-remove-fg: #fca5a5;
+    --diff-remove-line: rgba(239, 68, 68, 0.2);
+
+    /* === Dark User Bubble === */
+    --user-bubble-bg: #1c1f23;
+    --user-bubble-fg: #f1f5f9;
+
+    --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.3);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
-    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
-    --shadow-pop: 0 16px 48px rgba(0, 0, 0, 0.7);
+    --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.6);
+    --shadow-xl: 0 20px 48px rgba(0, 0, 0, 0.7);
 }
 
-/* 减少动画(无障碍) */
+/* === 无障碍:减少动画 === */
 @media (prefers-reduced-motion: reduce) {
     :root {
         --duration-fast: 0ms;
         --duration-base: 0ms;
         --duration-slow: 0ms;
+        --duration-slower: 0ms;
     }
     *,
     *::before,

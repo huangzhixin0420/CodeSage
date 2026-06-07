@@ -1,97 +1,77 @@
 /**
- * cs-toast 组件
- *
- * 用法:
- *   import { toast } from "./components/cs-toast.js";
- *   toast.success("已保存");
- *   toast.error("出错了", 5000);
- *
- * 也支持 command palette 形式:
- *   toast("普通消息");
- *   toast("错误", { variant: "error", duration: 4000 });
+ * Toast v2.0
+ * ==========
  */
 
-const VARIANT_ICONS = {
-  info: '<i class="fas fa-info-circle"></i>',
-  success: '<i class="fas fa-check-circle"></i>',
-  warning: '<i class="fas fa-exclamation-triangle"></i>',
-  error: '<i class="fas fa-times-circle"></i>',
+const VARIANT_META = {
+    success: { icon: "fa-check" },
+    error: { icon: "fa-xmark" },
+    warning: { icon: "fa-triangle-exclamation" },
+    info: { icon: "fa-circle-info" },
 };
 
-function ensureContainer() {
-  let c = document.getElementById("cs-toast-container");
-  if (!c) {
-    c = document.createElement("div");
-    c.id = "cs-toast-container";
-    c.className = "cs-toast-container";
-    document.body.appendChild(c);
-  }
-  return c;
+class ToastManager {
+    constructor() {
+        this.container = null;
+        // 2026-06 E2E 友好: 延迟到第一次 show() 才找 DOM。
+        // 之前在 constructor 调 _ensureContainer() 会让 module-level `new ToastManager()`
+        // 在 document 还没准备好时炸(JSDOM 测试 / 单元测试场景)。
+        this._initialized = false;
+    }
+
+    _ensureContainer() {
+        if (this._initialized && this.container && document.body.contains(this.container)) {
+            return;
+        }
+        this._initialized = true;
+        if (typeof document === "undefined") return;  // 防御: 无 DOM 环境
+        this.container =
+            document.getElementById("cs-toast-container") ||
+            (() => {
+                const d = document.createElement("div");
+                d.id = "cs-toast-container";
+                d.className = "cs-toast-container";
+                document.body.appendChild(d);
+                return d;
+            })();
+    }
+
+    show(message, variant = "info", duration = 3000) {
+        if (!this.container) return;
+        const meta = VARIANT_META[variant] || VARIANT_META.info;
+        const el = document.createElement("div");
+        el.className = `cs-toast ${variant}`;
+        el.innerHTML = `
+            <span class="cs-toast-icon"><i class="fas ${meta.icon}"></i></span>
+            <span class="cs-toast-message">${String(message || "").replace(/</g, "&lt;")}</span>
+        `;
+        this.container.appendChild(el);
+        setTimeout(() => {
+            el.classList.add("dismissing");
+            setTimeout(() => el.remove(), 200);
+        }, duration);
+    }
+
+    success(msg) { this.show(msg, "success"); }
+    error(msg) { this.show(msg, "error", 4500); }
+    warning(msg) { this.show(msg, "warning"); }
+    info(msg) { this.show(msg, "info"); }
 }
 
-function show(message, opts = {}) {
-  const variant = opts.variant || "info";
-  const duration = opts.duration || 3000;
-  const action = opts.action || null; // { label, onClick }
-  const container = ensureContainer();
-  const el = document.createElement("div");
-  el.className = `cs-toast ${variant}`;
-  el.setAttribute("role", "status");
-  el.innerHTML = `${VARIANT_ICONS[variant] || VARIANT_ICONS.info}<span>${message}</span>`;
-  if (action && action.label) {
-    const btn = document.createElement("button");
-    btn.className = "cs-toast-action";
-    btn.type = "button";
-    btn.textContent = action.label;
-    el.appendChild(btn);
-    // 点 action 不触发 toast 隐藏(避免与 button 自身的 click 互相冲)
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      try {
-        if (typeof action.onClick === "function") action.onClick();
-      } catch (err) {
-        console.warn("[toast action] failed:", err);
-      }
-    });
-  }
-  container.appendChild(el);
-  const hide = () => {
-    el.classList.add("leaving");
-    setTimeout(() => el.remove(), 200);
-  };
-  // 只有点击 message 文本部分才隐藏,点 action 按钮不隐藏(见上)
-  el.querySelector("span")?.addEventListener("click", hide);
-  setTimeout(hide, duration);
-  return hide;
+// Lazy singleton — 第一次访问时才创建, 避免 module 顶层触发 DOM 操作
+let _toastInstance = null;
+function _getToast() {
+    if (!_toastInstance) _toastInstance = new ToastManager();
+    return _toastInstance;
 }
-
-export const toast = Object.assign((msg, opts) => show(msg, opts), {
-  info: (msg, optsOrDuration) =>
-    show(
-      msg,
-      typeof optsOrDuration === "number"
-        ? { variant: "info", duration: optsOrDuration }
-        : { variant: "info", ...(optsOrDuration || {}) },
-    ),
-  success: (msg, optsOrDuration) =>
-    show(
-      msg,
-      typeof optsOrDuration === "number"
-        ? { variant: "success", duration: optsOrDuration }
-        : { variant: "success", ...(optsOrDuration || {}) },
-    ),
-  warning: (msg, optsOrDuration) =>
-    show(
-      msg,
-      typeof optsOrDuration === "number"
-        ? { variant: "warning", duration: optsOrDuration }
-        : { variant: "warning", ...(optsOrDuration || {}) },
-    ),
-  error: (msg, optsOrDuration) =>
-    show(
-      msg,
-      typeof optsOrDuration === "number"
-        ? { variant: "error", duration: optsOrDuration }
-        : { variant: "error", ...(optsOrDuration || {}) },
-    ),
+export const toast = new Proxy({}, {
+    get(_, prop) {
+        const t = _getToast();
+        const v = t[prop];
+        return typeof v === "function" ? v.bind(t) : v;
+    },
 });
+if (typeof window !== "undefined") {
+    window.CodeSage = window.CodeSage || {};
+    window.CodeSage.toast = toast;
+}

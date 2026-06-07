@@ -264,6 +264,36 @@ class ToolGuardrailsTest {
         )
     }
 
+    // ===== 2026-06 修复:CodeInsight 工具默认放行(只读 AST 分析) =====
+
+    @Test
+    fun `get_project_stats does not require confirmation (read-only CodeInsight tool)`() = runBlocking {
+        // 历史 bug: get_project_stats 漏在 KNOWN_SAFE_TOOLS 之外,LLM 第一次想用就被
+        // "Unknown tool ... explicit user confirmation required" 拒绝。
+        val guardrails = ToolGuardrails()
+        val result = guardrails.preCheck("get_project_stats", emptyMap())
+        assertTrue(
+            result is ToolGuardrails.PreCheckResult.Allowed,
+            "get_project_stats should be auto-allowed (read-only AST analysis); got: $result"
+        )
+    }
+
+    @Test
+    fun `all CodeInsight tools are auto-allowed`() = runBlocking {
+        // 把整个 CodeInsight 套件都过一遍,任何一个回归到 require-confirmation 就立刻报警
+        val guardrails = ToolGuardrails()
+        for (name in listOf(
+            "analyze_symbol", "find_usages", "get_inheritance_chain",
+            "get_file_summary", "get_project_stats"
+        )) {
+            val result = guardrails.preCheck(name, emptyMap())
+            assertTrue(
+                result is ToolGuardrails.PreCheckResult.Allowed,
+                "$name should be auto-allowed (read-only CodeInsight tool); got: $result"
+            )
+        }
+    }
+
     @Test
     fun `exec_shell with network command is allowed when user confirms`() = runBlocking {
         val callback = object : ToolGuardrails.ConfirmationCallback {

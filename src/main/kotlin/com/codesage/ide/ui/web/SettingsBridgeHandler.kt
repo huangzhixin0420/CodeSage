@@ -55,6 +55,10 @@ class SettingsBridgeHandler(
 
                 "settings_open_folder" -> openFolder()
                 "settings_open_file" -> openFile()
+                // v2.0 修复:对 "open_settings" 这类以前走不通的入口,JCEFChatPanel 改用本 type 转给本 handler,
+                // 本 handler 再通过 onMessage 通道(同 sendToJS)把 open_settings_view 事件回投前端,
+                // 触发 in-web 设置视图。发送通道共享 JCEFChatPanel 的 sendToJS 引用,行为一致。
+                "settings_open_view" -> onMessage(mapOf("type" to "open_settings_view"))
                 else -> logger.debug("Unknown settings message: $type")
             }
         } catch (e: Exception) {

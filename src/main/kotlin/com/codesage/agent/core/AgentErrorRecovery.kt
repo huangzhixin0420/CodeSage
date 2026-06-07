@@ -109,15 +109,27 @@ class AgentErrorRecovery {
         val statusCode = extractStatusCode(message)
 
         return when {
-            // 速率限制
-            statusCode == 429 || message.contains("rate limit") || message.contains("too many requests") ->
+            // 速率限制 / 服务过载 (429 + 529)
+            // 529 业内通用语义: 服务过载(Anthropic / Cloudflare / 自定义 provider 都用),
+            // MiniMax provider 也会返 529 + body="overloaded_error", 语义同 429 too many requests。
+            // 归到 RATE_LIMIT 而不是 PROVIDER_UNAVAILABLE 是为了:
+            //   (a) 走 RATE_LIMIT 的 SimpleRetry 分支 — 即便没 fallback 也会退避后用同模型重试
+            //   (b) 避开 PROVIDER_UNAVAILABLE 那种"无 fallback 就 Abort"的硬退路
+            statusCode == 429 || statusCode == 529 ||
+                    message.contains("rate limit") || message.contains("too many requests") ||
+                    message.contains("overloaded") || message.contains("overload_error") ||
+                    message.contains("\"type\":\"overloaded_error\"") ||
+                    message.contains("当前服务集群负载较高") ->  // MiniMax 中文 body
                 ClassifiedError(
                     reason = FailoverReason.RATE_LIMIT,
                     retryable = true,
                     shouldCompress = false,
+                    // 529: 优先 fallback (集群过载时切到其他 provider 也能缓解),
+                    //      切不过时用同模型 + 退避重试(recover() RATE_LIMIT 分支处理)
                     shouldFallback = true,
-                    statusCode = 429,
-                    originalError = error
+                    statusCode = statusCode ?: 429,
+                    originalError = error,
+                    modelName = model
                 )
 
             // 认证过期
@@ -261,9 +273,10 @@ class AgentErrorRecovery {
                     modelName = model
                 )
 
-            // 提供者不可用
-            statusCode == 503 || statusCode == 502 || statusCode == 500 ||
-                    message.contains("unavailable") || message.contains("maintenance") || message.contains("overload") ->
+            // 提供者不可用 (5xx 但非 429/529)
+            // 注意: 529/overload 已在上面 RATE_LIMIT 分支截胡,这里只处理真正"服务挂了"的情况。
+            statusCode == 503 || statusCode == 502 || statusCode == 500 || statusCode == 504 ||
+                    message.contains("unavailable") || message.contains("maintenance") || message.contains("bad gateway") ->
                 ClassifiedError(
                     reason = FailoverReason.PROVIDER_UNAVAILABLE,
                     retryable = true,
@@ -434,7 +447,17 @@ class AgentErrorRecovery {
                 if (fallback != null) {
                     RecoveryAction.RetryWithModel(fallback, calculateBackoff(currentRetries))
                 } else {
-                    RecoveryAction.Abort("Provider 不可用，且无可用后备模型")
+                    // 2026-06 修复: 之前是 Abort,但用户只配了一个 provider 时 (例如只配 MiniMax-M3),
+                    // 5xx 完全没退路。改为 SimpleRetry — 用同模型 + 指数退避重试。
+                    // maxRetries (PROVIDER_UNAVAILABLE = 3) 控制最多 3 次后最终 Abort,
+                    // 避免无限重试拖累请求。
+                    logger.warn(
+                        "Provider 不可用且无 fallback model, " +
+                        "将在 ${calculateBackoff(currentRetries)}ms 后用同模型重试 " +
+                        "(${currentRetries + 1}/${maxRetries}): " +
+                        "${classified.originalError?.message?.take(200)}"
+                    )
+                    RecoveryAction.SimpleRetry(calculateBackoff(currentRetries))
                 }
             }
 

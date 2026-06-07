@@ -1,340 +1,68 @@
 /**
- * Phase 5 polish: virtual scroll, skeleton, walkthrough, ARIA, animations
- *
- * 用法:在 main.js 引入 ./styles/polish.css
+ * Polish v2.0 — 细节微调
+ * =======================
+ * 一些零碎视觉/无障碍细节
  */
 
-/* ========== Virtual scroll (content-visibility: auto) ========== */
-.messages-container > .message-enter,
-.messages-container > .message-assistant,
-.messages-container > .message-user {
-    content-visibility: auto;
-    contain-intrinsic-size: auto 80px;
-}
-
-/* 容器本身支持平滑滚动,滚动时 GPU 加速 */
-.messages-container {
-    scroll-behavior: smooth;
-    /* 提示浏览器这是滚动容器 */
-    overflow-anchor: none;
-}
-
-/* 旧消息淡出提示(到达顶部时) */
-.cs-load-earlier {
-    text-align: center;
-    padding: var(--space-4) var(--space-2);
-    color: var(--fg-3);
-    font-size: var(--text-xs);
-}
-
-.cs-load-earlier button {
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    color: var(--fg-1);
-    border-radius: var(--radius-full);
-    padding: 4px 14px;
-    font-size: var(--text-xs);
-    cursor: pointer;
-    transition: all var(--duration-fast);
-}
-
-.cs-load-earlier button:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: var(--accent-soft);
-}
-
-/* ========== Skeleton loading ========== */
-.cs-skeleton {
-    background: linear-gradient(
-        90deg,
-        var(--bg-1) 0%,
-        var(--bg-2) 50%,
-        var(--bg-1) 100%
-    );
-    background-size: 200% 100%;
-    animation: skeleton-shimmer 1.5s ease-in-out infinite;
-    border-radius: var(--radius-sm);
-    color: transparent;
-    user-select: none;
-    pointer-events: none;
-}
-
-@keyframes skeleton-shimmer {
-    0% {
-        background-position: 200% 0;
-    }
-    100% {
-        background-position: -200% 0;
-    }
-}
-
-.cs-skeleton-line {
-    height: 14px;
-    margin-bottom: var(--space-2);
-    border-radius: var(--radius-sm);
-}
-
-.cs-skeleton-line.short {
-    width: 40%;
-}
-.cs-skeleton-line.medium {
-    width: 65%;
-}
-.cs-skeleton-line.long {
-    width: 90%;
-}
-
-.cs-skeleton-circle {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-
-.cs-skeleton-card {
-    height: 60px;
-    border-radius: var(--radius-md);
-    margin: var(--space-2) 0;
-}
-
-/* 首次加载时的整页骨架 */
-.cs-app-skeleton {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    padding: var(--space-4);
-    gap: var(--space-3);
-}
-
-.cs-app-skeleton-header {
-    height: var(--header-height);
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-}
-
-/* ========== Walkthrough ========== */
-.cs-walkthrough {
-    text-align: center;
-    padding: var(--space-2) 0;
-}
-
-.cs-walkthrough-icon {
-    width: 80px;
-    height: 80px;
-    border-radius: var(--radius-lg);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin: 0 auto var(--space-4);
-    font-size: 32px;
-    transition: all var(--duration-base) var(--ease-out);
-}
-
-.cs-walkthrough-title {
-    font-size: var(--text-xl);
-    font-weight: 600;
-    color: var(--fg-0);
-    margin: 0 0 var(--space-2);
-}
-
-.cs-walkthrough-desc {
-    font-size: var(--text-sm);
-    color: var(--fg-1);
-    line-height: var(--leading-relaxed);
-    margin: 0 auto var(--space-5);
-    max-width: 380px;
-}
-
-/* walkthrough 额外动作按钮(例 “打开设置目录”)— 描述与 dots 之间 */
-.cs-walkthrough-extra {
-    margin: calc(-1 * var(--space-3)) auto var(--space-4);
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.cs-walkthrough-dots {
-    display: flex;
-    justify-content: center;
-    gap: 8px;
-    margin-bottom: var(--space-5);
-}
-
-.cs-walkthrough-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--bg-3);
-    transition: all var(--duration-base);
-}
-
-.cs-walkthrough-dot.active {
-    background: var(--accent);
-    width: 24px;
-    border-radius: 4px;
-}
-
-.cs-walkthrough-actions {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: var(--space-2);
-}
-
-.cs-walkthrough-actions-right {
-    display: flex;
-    gap: var(--space-2);
-    margin-left: auto;
-}
-
-.cs-walkthrough-counter {
-    text-align: center;
-    color: var(--fg-3);
-    font-size: var(--text-xs);
-    margin-top: var(--space-3);
-    font-variant-numeric: tabular-nums;
-}
-
-/* ========== ARIA / Focus ========== */
-:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-}
-
-/* Skip link for keyboard users */
-.cs-skip-link {
-    position: absolute;
-    top: -40px;
-    left: 8px;
-    background: var(--accent);
-    color: white;
-    padding: 6px 12px;
-    border-radius: var(--radius-sm);
-    z-index: var(--z-toast);
-    text-decoration: none;
-    font-size: var(--text-sm);
-    transition: top var(--duration-base) var(--ease-out);
-}
-
-.cs-skip-link:focus {
-    top: 8px;
-}
-
-/* 屏幕阅读器专用 */
-.sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-}
-
-/* 高对比度焦点(系统偏好) */
-@media (prefers-contrast: more) {
-    :focus-visible {
-        outline-width: 3px;
-    }
-    .cs-toggle-track {
-        border: 1px solid currentColor;
-    }
-}
-
-/* ========== Animation polish (14 节微交互) ========== */
-
-/* 1. 消息进入(已在 animations.css) */
-
-/* 2. 思考折叠/展开(已在 chat.css) */
-
-/* 3. 工具卡片展开(已在 chat.css) */
-
-/* 4. Sidebar 展开/折叠(已在 sidebar.css) */
-
-/* 5. 主题切换(防止白闪) */
-@media (prefers-reduced-motion: no-preference) {
-    body {
-        transition: background-color var(--duration-base) ease;
-    }
-}
-
-/* 6. Toast 进入/离开(已在 components.css) */
-
-/* 7. 按钮按下 */
-button:active:not([disabled]) {
-    transform: scale(0.97);
-    transition: transform 80ms ease-out;
-}
-
-/* 9. 光标闪烁(已在 animations.css) */
-
-/* 10. 加载 shimmer(见 .cs-skeleton) */
-
-/* 11. 错误 shake(可加给 .inline-alert.error) */
-.inline-alert.error {
-    animation: fadeIn var(--duration-base) var(--ease-out);
-}
-
-/* 12. Sub-agent 完成(暂由 cs-tool-call 状态机覆盖) */
-
-/* 13. 复制反馈(在 chat.js 工具栏内) */
-.turn-action-btn.copied {
-    animation: highlight-flash 400ms var(--ease-out);
-}
-
-/* 14. 拖拽文件到输入区(已在 input.css) */
-
-/* ========== 性能:will-change ========== */
-.message-assistant,
-.tool-card,
-.plan-card,
-.thinking-card {
-    will-change: transform;
-}
-
-/* GPU 加速 */
-.chat-header,
-.input-box,
-.cs-sidebar {
-    transform: translateZ(0);
-}
-
-/* ========== Network offline warning polish ========== */
-.cs-offline-retry {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-}
-
-.cs-offline-retry .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--success);
-    animation: pulse 1.5s ease-in-out infinite;
-}
-
-/* ========== 长列表性能(>200 消息) ========== */
-.cs-virtual-top-spacer,
-.cs-virtual-bottom-spacer {
-    flex-shrink: 0;
-    pointer-events: none;
-}
-
-/* ========== Modal polish ========== */
-.cs-modal:focus-visible {
+/* === focus visible 通用 === */
+.cs-button:focus-visible,
+.plan-action-btn:focus-visible,
+.model-option:focus-visible,
+.sidebar-item:focus-visible,
+.input-tool-btn:focus-visible,
+.send-btn:focus-visible {
+    box-shadow: var(--shadow-focus);
     outline: none;
 }
-.cs-modal-header {
-    user-select: none;
+
+/* === 减少子像素抖动 === */
+.tool-card,
+.thinking-card,
+.plan-card,
+.user-bubble,
+.code-block {
+    transform: translateZ(0);
+    backface-visibility: hidden;
 }
 
-/* 防止全屏白色闪一下(主题切换) */
-html {
-    background: var(--bg-0);
-    color: var(--fg-0);
+/* === 暗色模式代码块注释颜色 === */
+[data-theme="dark"] .hljs-comment,
+[data-theme="dark"] .hljs-quote {
+    color: var(--code-comment);
+    font-style: italic;
+}
+
+/* === 滚动条更细更柔和 === */
+.messages-container::-webkit-scrollbar {
+    width: 6px;
+}
+.messages-container::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 3px;
+}
+.messages-container:hover::-webkit-scrollbar-thumb {
+    background: var(--border-default);
+}
+.messages-container:hover::-webkit-scrollbar-thumb:hover {
+    background: var(--border-strong);
+}
+
+/* === 移动端微调 === */
+@media (max-width: 640px) {
+    .header-actions { gap: 0; }
+    .send-btn { width: 36px; height: 36px; }
+}
+
+/* === 打印样式 === */
+@media print {
+    .chat-header,
+    .input-area,
+    .turn-actions,
+    .sidebar-toggle-btn,
+    .sidebar,
+    .cs-artifacts {
+        display: none !important;
+    }
+    body { overflow: visible; height: auto; }
+    .messages-container { overflow: visible; }
 }

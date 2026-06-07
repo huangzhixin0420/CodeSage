@@ -31,3 +31,10 @@ Thumbs.db
 
 # IntelliJ Platform — 全部 IDE 沙箱/artifact/时间戳，开发副产物不入库
 .intellijPlatform/
+
+# Node (JSDOM smoke test deps)
+node_modules/
+
+# Lock file for ephemeral npm install in dev
+# (package.json committed if needed, but lock is per-machine)
+package-lock.json

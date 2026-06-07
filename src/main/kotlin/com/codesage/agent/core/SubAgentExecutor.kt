@@ -377,7 +377,25 @@ open class SubAgentExecutor(
             logger.info("[SubAgent] Completed. Success=$success, Tools=${toolsUsed}, Depth=$depth")
             return result
         } finally {
-            // 不管成功 / 异常 / 早退，都清理子 Agent 的 tmp 持久化目录
+            // 2026-06 修复: 之前直接 deleteRecursively() 会与子 Agent 的异步 saveSession 抢目录 —
+            // 子 Agent 触发的 saveSession 是扔进 ioExecutor 队列的异步任务, 跑到这里时
+            // tmp dir 已被删, 写 .tmp 文件就会 FileNotFoundException (整个对话丢失)。
+            //
+            // 修复策略:
+            //   1. 先 awaitInFlightWrites() 等异步写入完成 (5s 超时)
+            //   2. 再 shutdown() 拒收新任务
+            //   3. 最后 deleteRecursively() 清目录
+            //
+            // writeAtomically 自身也有 mkdirs 兜底, 所以即便超时也只是日志告警, 不会丢数据。
+            try {
+                val drained = subPersistence.awaitInFlightWrites(timeoutMs = 5000L)
+                if (drained > 0) {
+                    logger.info("[SubAgent] Drained $drained in-flight persistence writes before cleanup")
+                }
+                subPersistence.shutdown()
+            } catch (e: Exception) {
+                logger.warn("[SubAgent] Error draining persistence before cleanup: ${e.message}")
+            }
             try {
                 val deleted = subPersistenceDir.deleteRecursively()
                 if (!deleted) {

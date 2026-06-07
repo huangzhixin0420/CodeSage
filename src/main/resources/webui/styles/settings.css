@@ -1,703 +1,586 @@
 /**
- * Settings view styles — 6 大分组 + 表单控件
+ * Settings v2.0
+ * =============
+ * 设置页完整样式:布局容器 + 导航 + 表单组件 + 特殊页(MCP/Shortcuts/迁移向导)
+ *
+ * v2.0.1 修复:历史 CSS 用了一组孤儿类名(cs-nav-item / cs-nav-subtitle)跟 JS 实际渲染的
+ * 类名(cs-settings-nav-item / cs-settings-nav-subtitle)对不上,导致侧边栏导航完全
+ * 无样式;另外 settings.js 用到的大部分表单类(cs-input / cs-select / cs-toggle / cs-slider
+ * / cs-form-field* / cs-shortcuts-table / cs-mcp-* / cs-migration-* / cs-settings-*)
+ * 没有任何 CSS,整个设置页变成"原始 HTML"。
+ * 这里按 settings.js 实际生成的 DOM 把这些样式补齐。
  */
 
-.cs-settings {
+/* ============================================================
+ * 1. 顶层容器:position absolute 覆盖主区,显示/隐藏由 body.cs-settings-open 切换
+ * ============================================================ */
+.cs-settings-root {
     position: absolute;
     inset: 0;
-    background: var(--bg-0);
-    z-index: var(--z-sticky);
-    display: flex;
-    flex-direction: column;
-    animation: fadeIn var(--duration-base) var(--ease-out);
+    z-index: var(--z-elevated, 10);
+    background: var(--surface-base);
+    overflow: hidden;
 }
 
-.cs-settings-shell {
+body.cs-settings-open .main-area > *:not(.chat-header):not(.cs-settings-root) {
+    display: none;
+}
+body.cs-settings-open .cs-settings-root {
     display: flex;
-    flex: 1;
+}
+
+/* ============================================================
+ * 2. Shell + Sidebar 布局
+ * ============================================================ */
+.cs-settings {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    color: var(--fg-primary);
+}
+.cs-settings-shell {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    width: 100%;
+    height: 100%;
     min-height: 0;
 }
-
 .cs-settings-sidebar {
-    width: 260px;
-    background: var(--bg-1);
-    border-right: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
-    flex-shrink: 0;
+    border-right: 1px solid var(--border-default);
+    background: var(--surface-sunken);
+    min-height: 0;
 }
-
 .cs-settings-header {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-    padding: 0 var(--space-3);
-    height: var(--header-height);
+    gap: var(--space-2, 8px);
+    padding: var(--space-3, 12px);
     border-bottom: 1px solid var(--border-subtle);
-    flex-shrink: 0;
 }
-
-.cs-settings-back,
-.cs-settings-reload {
+.cs-settings-header .cs-settings-back,
+.cs-settings-header .cs-settings-reload {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--fg-secondary);
     width: 28px;
     height: 28px;
-    border-radius: var(--radius-sm);
-    border: none;
-    background: transparent;
-    color: var(--fg-2);
+    border-radius: var(--radius-sm, 6px);
     cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 13px;
-    transition: all var(--duration-fast);
+    transition: background var(--duration-fast, 120ms) var(--ease-out);
 }
-
-.cs-settings-back:hover,
-.cs-settings-reload:hover {
-    background: var(--bg-2);
-    color: var(--fg-0);
+.cs-settings-header .cs-settings-back:hover,
+.cs-settings-header .cs-settings-reload:hover {
+    background: var(--surface-hover);
+    color: var(--fg-primary);
 }
-
 .cs-settings-title {
     flex: 1;
-    font-size: var(--text-md);
     font-weight: 600;
-    color: var(--fg-0);
+    text-align: center;
+    color: var(--fg-primary);
+    font-size: var(--text-md);
 }
 
+/* ============================================================
+ * 3. 侧边栏导航项 (修复 v2.0 漂移: cs-nav-item → cs-settings-nav-item)
+ * ============================================================ */
 .cs-settings-nav {
     flex: 1;
     overflow-y: auto;
-    padding: var(--space-2) 0;
+    padding: var(--space-2, 8px);
 }
-
 .cs-settings-nav-item {
     display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-4);
-    color: var(--fg-1);
-    text-decoration: none;
+    align-items: flex-start;
+    gap: var(--space-2, 8px);
+    padding: var(--space-2, 8px) var(--space-3, 12px);
+    border-radius: var(--radius-sm, 6px);
     cursor: pointer;
-    transition: background var(--duration-fast);
-    border-left: 3px solid transparent;
+    color: var(--fg-secondary);
+    text-decoration: none;
+    transition: background var(--duration-fast, 120ms) var(--ease-out);
+    margin-bottom: 2px;
 }
-
 .cs-settings-nav-item:hover {
-    background: var(--bg-2);
-    color: var(--fg-0);
+    background: var(--surface-hover);
+    color: var(--fg-primary);
 }
-
 .cs-settings-nav-item.active {
-    background: var(--accent-soft);
+    background: var(--accent-soft, rgba(16, 185, 129, 0.12));
     color: var(--accent);
-    border-left-color: var(--accent);
 }
-
 .cs-settings-nav-item i {
-    width: 20px;
+    width: 16px;
     text-align: center;
-    font-size: 14px;
-    color: var(--fg-2);
+    margin-top: 2px;
     flex-shrink: 0;
 }
-
-.cs-settings-nav-item.active i {
-    color: var(--accent);
-}
-
 .cs-settings-nav-text {
     flex: 1;
     min-width: 0;
 }
-
 .cs-settings-nav-label {
-    font-size: var(--text-sm);
-    font-weight: 500;
+    font-size: var(--text-sm, 12px);
+    font-weight: var(--weight-medium, 500);
+    line-height: var(--leading-snug, 1.45);
 }
-
 .cs-settings-nav-subtitle {
-    font-size: 10px;
-    color: var(--fg-3);
-    margin-top: 1px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    display: block;
+    font-size: var(--text-2xs, 10px);
+    color: var(--fg-tertiary);
+    margin-top: 2px;
+    line-height: var(--leading-snug, 1.45);
 }
 
+/* ============================================================
+ * 4. Footer
+ * ============================================================ */
 .cs-settings-footer {
     border-top: 1px solid var(--border-subtle);
-    padding: var(--space-3);
-    flex-shrink: 0;
-    background: var(--bg-0);
+    padding: var(--space-2, 8px) var(--space-3, 12px);
+    font-size: var(--text-xs, 11px);
+    color: var(--fg-tertiary);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2, 8px);
 }
-
 .cs-settings-path {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--fg-3);
-    margin-bottom: var(--space-2);
     word-break: break-all;
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs, 10px);
+    color: var(--fg-tertiary);
 }
 
+/* ============================================================
+ * 5. Main 区域
+ * ============================================================ */
 .cs-settings-main {
-    flex: 1;
     overflow-y: auto;
-    padding: var(--space-6) var(--space-8);
-    max-width: 900px;
+    padding: var(--space-5, 20px) var(--space-6, 24px);
+    min-height: 0;
+    background: var(--surface-base);
 }
-
 .cs-settings-h2 {
-    font-size: var(--text-xl);
-    font-weight: 600;
-    color: var(--fg-0);
-    margin: 0 0 var(--space-2);
+    font-size: var(--text-xl, 18px);
+    font-weight: var(--weight-semibold, 600);
+    color: var(--fg-primary);
+    margin: 0 0 4px;
 }
-
 .cs-settings-section-desc {
-    font-size: var(--text-sm);
-    color: var(--fg-2);
-    margin: 0 0 var(--space-5);
-    line-height: var(--leading-relaxed);
+    font-size: var(--text-sm, 12px);
+    color: var(--fg-tertiary);
+    margin: 0 0 var(--space-4, 16px);
+    line-height: var(--leading-snug, 1.45);
 }
-
 .cs-settings-section {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    margin-bottom: var(--space-6);
+    background: var(--surface-raised, var(--surface-base));
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md, 8px);
+    margin-bottom: var(--space-4, 16px);
+    overflow: hidden;
+}
+.cs-settings-section-header {
+    padding: var(--space-3, 12px) var(--space-4, 16px);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-sunken);
+}
+.cs-settings-section-title {
+    margin: 0;
+    font-size: var(--text-md, 14px);
+    font-weight: var(--weight-semibold, 600);
+    color: var(--fg-primary);
 }
 
-.cs-settings-empty {
-    text-align: center;
-    padding: var(--space-10);
-    color: var(--fg-2);
-}
-
-.cs-settings-loading {
-    text-align: center;
-    padding: var(--space-10);
-    color: var(--fg-2);
-}
-
-.cs-settings-loading i {
-    font-size: 28px;
-    color: var(--fg-3);
-    margin-bottom: var(--space-2);
-}
-
-.cs-settings-loading p {
-    margin: var(--space-1) 0;
-    font-size: var(--text-sm);
-}
-
-.cs-settings-onboarding {
-    margin-top: var(--space-4);
-    padding: var(--space-4);
-    background: var(--bg-1);
-    border: 1px dashed var(--border);
-    border-radius: var(--radius-md);
-    text-align: center;
-}
-
-.cs-settings-onboarding-actions {
-    display: flex;
-    gap: var(--space-2);
-    justify-content: center;
-    margin-top: var(--space-3);
-}
-
-/* ========== Form Fields ========== */
+/* ============================================================
+ * 6. 通用 form field (label + desc + control)
+ * ============================================================ */
 .cs-form-field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--space-3) 0;
+    padding: var(--space-3, 12px) var(--space-4, 16px);
     border-bottom: 1px solid var(--border-subtle);
 }
-
 .cs-form-field:last-child {
     border-bottom: none;
 }
-
 .cs-form-field-label {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-2, 8px);
+    margin-bottom: 4px;
 }
-
 .cs-form-field-label label {
-    font-size: var(--text-sm);
-    font-weight: 600;
-    color: var(--fg-0);
+    font-size: var(--text-sm, 12px);
+    font-weight: var(--weight-medium, 500);
+    color: var(--fg-primary);
+    cursor: pointer;
 }
-
 .cs-form-field-hint {
-    font-size: var(--text-xs);
-    color: var(--fg-3);
-    font-family: var(--font-mono);
+    font-size: var(--text-2xs, 10px);
+    color: var(--fg-tertiary);
+    background: var(--surface-sunken);
+    padding: 1px 6px;
+    border-radius: var(--radius-pill, 9999px);
 }
-
 .cs-form-field-desc {
-    font-size: var(--text-xs);
-    color: var(--fg-2);
-    line-height: var(--leading-relaxed);
-    margin-top: 2px;
+    font-size: var(--text-xs, 11px);
+    color: var(--fg-tertiary);
+    margin: 0 0 var(--space-2, 8px);
+    line-height: var(--leading-snug, 1.45);
 }
-
 .cs-form-field-control {
-    margin-top: var(--space-1);
+    margin-top: var(--space-2, 8px);
 }
 
-/* ========== Inputs ========== */
-.cs-input,
-.cs-select,
-.cs-textarea {
+/* ============================================================
+ * 7. 输入控件:cs-input / cs-select
+ * ============================================================ */
+.cs-input {
+    display: block;
     width: 100%;
-    background: var(--bg-1);
-    color: var(--fg-0);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 6px 10px;
-    font-size: var(--text-sm);
-    font-family: inherit;
-    transition: border-color var(--duration-fast);
+    max-width: 360px;
+    padding: 6px var(--space-3, 12px);
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm, 6px);
+    color: var(--fg-primary);
+    font-size: var(--text-sm, 12px);
+    font-family: var(--font-sans);
+    transition: border-color var(--duration-fast, 120ms) var(--ease-out),
+                box-shadow var(--duration-fast, 120ms) var(--ease-out);
 }
-
-.cs-input:focus,
-.cs-select:focus,
-.cs-textarea:focus {
+.cs-input::placeholder {
+    color: var(--fg-tertiary);
+}
+.cs-input:focus {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--accent-soft);
+    box-shadow: var(--shadow-focus);
 }
-
+.cs-input[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
 .cs-select {
+    display: block;
+    width: 100%;
+    max-width: 280px;
+    padding: 6px var(--space-3, 12px);
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm, 6px);
+    color: var(--fg-primary);
+    font-size: var(--text-sm, 12px);
+    font-family: var(--font-sans);
     cursor: pointer;
-    appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2371717a' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 8px center;
-    padding-right: 24px;
+    transition: border-color var(--duration-fast, 120ms) var(--ease-out);
+}
+.cs-select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: var(--shadow-focus);
 }
 
-.cs-textarea {
-    resize: vertical;
-    min-height: 60px;
-    font-family: var(--font-mono);
-}
-
-/* ========== Toggle ========== */
+/* ============================================================
+ * 8. Toggle 开关
+ * ============================================================ */
 .cs-toggle {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-2, 8px);
     cursor: pointer;
     user-select: none;
 }
-
-.cs-toggle input {
-    display: none;
+.cs-toggle input[type="checkbox"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
 }
-
 .cs-toggle-track {
+    position: relative;
+    display: inline-block;
     width: 32px;
     height: 18px;
-    background: var(--bg-3);
-    border-radius: var(--radius-full);
-    position: relative;
-    transition: background var(--duration-base);
+    background: var(--border-strong);
+    border-radius: var(--radius-pill, 9999px);
+    transition: background var(--duration-fast, 120ms) var(--ease-out);
     flex-shrink: 0;
 }
-
 .cs-toggle-thumb {
     position: absolute;
     top: 2px;
     left: 2px;
     width: 14px;
     height: 14px;
-    background: white;
+    background: #fff;
     border-radius: 50%;
-    transition: transform var(--duration-base) var(--ease-out);
-    box-shadow: var(--shadow-sm);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    transition: transform var(--duration-fast, 120ms) var(--ease-out);
 }
-
-.cs-toggle input:checked + .cs-toggle-track {
+.cs-toggle input[type="checkbox"]:checked + .cs-toggle-track {
     background: var(--accent);
 }
-
-.cs-toggle input:checked + .cs-toggle-track .cs-toggle-thumb {
+.cs-toggle input[type="checkbox"]:checked + .cs-toggle-track .cs-toggle-thumb {
     transform: translateX(14px);
 }
-
+.cs-toggle input[type="checkbox"]:focus-visible + .cs-toggle-track {
+    box-shadow: var(--shadow-focus);
+}
 .cs-toggle-label {
-    font-size: var(--text-sm);
-    color: var(--fg-1);
+    font-size: var(--text-sm, 12px);
+    color: var(--fg-primary);
 }
 
-/* ========== Slider ========== */
+/* ============================================================
+ * 9. Slider
+ * ============================================================ */
 .cs-slider {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
-    width: 100%;
+    gap: var(--space-3, 12px);
+    max-width: 320px;
 }
-
 .cs-slider-range {
     flex: 1;
     -webkit-appearance: none;
     appearance: none;
     height: 4px;
-    background: var(--bg-3);
-    border-radius: 2px;
+    background: var(--border-default);
+    border-radius: var(--radius-pill, 9999px);
     outline: none;
 }
-
 .cs-slider-range::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     background: var(--accent);
     border-radius: 50%;
     cursor: pointer;
-    transition: transform var(--duration-fast);
+    border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
-
-.cs-slider-range::-webkit-slider-thumb:hover {
-    transform: scale(1.15);
-}
-
 .cs-slider-range::-moz-range-thumb {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     background: var(--accent);
-    border: none;
     border-radius: 50%;
     cursor: pointer;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
-
+.cs-slider-range:focus-visible {
+    box-shadow: var(--shadow-focus);
+}
 .cs-slider-value {
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    color: var(--fg-1);
     min-width: 32px;
     text-align: right;
-}
-
-/* ========== Provider Card ========== */
-.cs-provider-card {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    background: var(--bg-0);
-    overflow: hidden;
-    transition: border-color var(--duration-fast);
-}
-
-.cs-provider-card:hover {
-    border-color: var(--accent);
-}
-
-.cs-provider-card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--space-3) var(--space-4);
-    background: var(--bg-1);
-    border-bottom: 1px solid var(--border-subtle);
-}
-
-.cs-provider-card-title {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: var(--text-sm);
-}
-
-.cs-provider-card-title strong {
-    color: var(--fg-0);
-}
-
-.cs-provider-card-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--fg-3);
-}
-
-.cs-provider-card-dot.enabled {
-    background: var(--success);
-    box-shadow: 0 0 0 2px var(--success-soft);
-}
-
-.cs-provider-card-dot.disabled {
-    background: var(--fg-3);
-}
-
-.cs-provider-card-type {
     font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    color: var(--fg-2);
-    padding: 1px 6px;
-    background: var(--bg-2);
-    border-radius: var(--radius-xs);
+    font-size: var(--text-xs, 11px);
+    color: var(--fg-secondary);
 }
 
-.cs-provider-card-actions {
-    display: flex;
-    gap: var(--space-1);
+/* ============================================================
+ * 10. 加载 / 空 / Onboarding
+ * ============================================================ */
+.cs-settings-empty {
+    padding: var(--space-6, 24px);
+    text-align: center;
+    color: var(--fg-tertiary);
+    font-size: var(--text-sm, 12px);
 }
-
-.cs-provider-card-body {
-    padding: var(--space-3) var(--space-4);
+.cs-settings-loading {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
-}
-
-.cs-provider-card-row {
-    display: flex;
     align-items: center;
-    gap: var(--space-2);
-    font-size: var(--text-xs);
+    justify-content: center;
+    gap: var(--space-3, 12px);
+    padding: var(--space-10, 40px) var(--space-6, 24px);
+    color: var(--fg-tertiary);
+}
+.cs-settings-loading i {
+    font-size: var(--text-xl, 18px);
+    color: var(--accent);
+}
+.cs-settings-onboarding {
+    margin-top: var(--space-4, 16px);
+    padding: var(--space-3, 12px) var(--space-4, 16px);
+    background: var(--accent-soft, rgba(16, 185, 129, 0.08));
+    border: 1px solid var(--accent-medium, rgba(16, 185, 129, 0.16));
+    border-radius: var(--radius-md, 8px);
+}
+.cs-settings-onboarding .cs-form-field-desc {
+    margin: 0 0 var(--space-2, 8px);
+}
+.cs-settings-onboarding-actions {
+    display: flex;
+    gap: var(--space-2, 8px);
+    flex-wrap: wrap;
 }
 
-.cs-provider-card-label {
-    color: var(--fg-2);
-    min-width: 70px;
-    flex-shrink: 0;
-}
-
-.cs-provider-card-value {
-    color: var(--fg-1);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    word-break: break-all;
-}
-
-/* ========== Shortcuts Table ========== */
+/* ============================================================
+ * 11. Shortcuts 表
+ * ============================================================ */
 .cs-shortcuts-table {
     width: 100%;
     border-collapse: collapse;
+    font-size: var(--text-sm, 12px);
 }
-
-.cs-shortcuts-table th,
-.cs-shortcuts-table td {
-    padding: var(--space-2) var(--space-3);
+.cs-shortcuts-table thead th {
     text-align: left;
+    font-weight: var(--weight-medium, 500);
+    color: var(--fg-tertiary);
+    padding: var(--space-2, 8px) var(--space-4, 16px);
+    background: var(--surface-sunken);
     border-bottom: 1px solid var(--border-subtle);
-    font-size: var(--text-sm);
 }
-
-.cs-shortcuts-table th {
-    color: var(--fg-2);
-    font-weight: 600;
-    font-size: var(--text-xs);
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
+.cs-shortcuts-table tbody tr {
+    border-bottom: 1px solid var(--border-subtle);
 }
-
-.cs-shortcuts-table td:last-child {
-    text-align: right;
+.cs-shortcuts-table tbody tr:last-child {
+    border-bottom: none;
 }
-
+.cs-shortcuts-table tbody td {
+    padding: var(--space-2, 8px) var(--space-4, 16px);
+    color: var(--fg-primary);
+    vertical-align: middle;
+}
 .cs-shortcut-key {
     display: inline-block;
+    padding: 2px 6px;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-xs, 4px);
     font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    color: var(--fg-1);
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xs);
-    padding: 2px 8px;
+    font-size: var(--text-xs, 11px);
+    color: var(--fg-secondary);
 }
 
-/* ========== MCP Empty ========== */
+/* ============================================================
+ * 12. MCP 列表
+ * ============================================================ */
+.cs-mcp-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2, 8px);
+}
 .cs-mcp-empty {
     text-align: center;
-    padding: var(--space-8);
-    color: var(--fg-2);
-    background: var(--bg-1);
-    border-radius: var(--radius-md);
-    border: 1px dashed var(--border);
+    padding: var(--space-6, 24px);
+    color: var(--fg-tertiary);
+    background: var(--surface-sunken);
+    border-radius: var(--radius-md, 8px);
 }
-
 .cs-mcp-empty i {
-    font-size: 28px;
-    color: var(--fg-3);
-    margin-bottom: var(--space-2);
+    font-size: var(--text-xl, 18px);
+    margin-bottom: var(--space-2, 8px);
+    display: block;
 }
-
 .cs-mcp-empty p {
-    margin: var(--space-1) 0;
-    font-size: var(--text-sm);
+    margin: 4px 0;
+    font-size: var(--text-sm, 12px);
 }
 
-.cs-mcp-empty code {
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    background: var(--bg-2);
-    padding: 1px 4px;
-    border-radius: 3px;
-}
-
-/* ========== Migration Wizard (Phase 4) ========== */
+/* ============================================================
+ * 13. 迁移向导 (legacy_migration)
+ * ============================================================ */
 .cs-migration-wizard {
-    background: var(--bg-0);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    padding: var(--space-5);
-    margin: var(--space-4) 0;
+    padding: var(--space-2, 8px) 0;
 }
-
 .cs-migration-wizard h3 {
-    margin: 0 0 var(--space-3);
-    font-size: var(--text-md);
-    color: var(--fg-0);
+    margin: 0 0 var(--space-2, 8px);
+    font-size: var(--text-md, 14px);
+    color: var(--fg-primary);
 }
-
 .cs-migration-stat {
     display: flex;
     justify-content: space-between;
-    padding: var(--space-2) 0;
-    border-bottom: 1px solid var(--border-subtle);
-    font-size: var(--text-sm);
+    padding: 6px 0;
+    border-bottom: 1px dashed var(--border-subtle);
+    font-size: var(--text-sm, 12px);
 }
-
 .cs-migration-stat:last-of-type {
     border-bottom: none;
+    margin-bottom: var(--space-2, 8px);
 }
-
 .cs-migration-stat .label {
-    color: var(--fg-2);
+    color: var(--fg-tertiary);
 }
-
 .cs-migration-stat .value {
-    color: var(--fg-0);
-    font-weight: 600;
+    color: var(--fg-primary);
+    font-family: var(--font-mono);
 }
-
 .cs-migration-actions {
     display: flex;
-    gap: var(--space-2);
-    margin-top: var(--space-4);
+    gap: var(--space-2, 8px);
     justify-content: flex-end;
+    margin-top: var(--space-3, 12px);
 }
 
-/* ========== Provider Edit Form (P5.1) ========== */
-.cs-provider-form {
-    padding: 4px 0;
+/* ============================================================
+ * 14. 旧版 settings-row * (仍可能被引用,保留兜底)
+ * ============================================================ */
+.settings-view {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-6, 24px) var(--content-padding-x, 32px);
 }
-
-.cs-form-grid {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-}
-
-.cs-form-row {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.cs-form-row label {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--fg-1);
-}
-
-.cs-form-row .req {
-    color: var(--error);
-    margin-left: 2px;
-}
-
-.cs-form-hint {
-    font-size: 11px;
-    color: var(--fg-3);
-    line-height: 1.4;
-}
-
-.cs-form-hint code {
-    background: var(--bg-1);
-    padding: 1px 4px;
-    border-radius: 3px;
-    font-family: var(--font-mono);
-    font-size: 10px;
-}
-
-.cs-form-row .cs-input,
-.cs-form-row .cs-select {
+.settings-section {
     width: 100%;
+    max-width: var(--content-max-width, 760px);
+    margin: 0 auto var(--space-6, 24px);
+    background: var(--surface-raised);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg, 10px);
+    overflow: hidden;
 }
-
-.cs-password-input {
-    position: relative;
+.settings-section-header {
+    padding: var(--space-4, 16px) var(--space-5, 20px);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-sunken);
+}
+.settings-section-title {
+    font-size: var(--text-md, 14px);
+    font-weight: var(--weight-semibold, 600);
+    color: var(--fg-primary);
+    margin: 0 0 2px;
+}
+.settings-section-desc {
+    font-size: var(--text-sm, 12px);
+    color: var(--fg-tertiary);
+    margin: 0;
+}
+.settings-row {
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3, 12px) var(--space-5, 20px);
+    border-bottom: 1px solid var(--border-subtle);
+    gap: var(--space-4, 16px);
 }
-
-.cs-password-input .cs-input {
-    padding-right: 36px;
+.settings-row:last-child {
+    border-bottom: none;
 }
-
-.cs-password-toggle {
-    position: absolute;
-    right: 6px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 28px;
-    height: 28px;
-    border: none;
-    background: transparent;
-    color: var(--fg-2);
-    cursor: pointer;
-    border-radius: var(--radius-sm);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 12px;
+.settings-row-label {
+    flex: 1;
+    min-width: 0;
 }
-
-.cs-password-toggle:hover {
-    background: var(--bg-1);
-    color: var(--fg-0);
+.settings-row-title {
+    font-size: var(--text-sm, 12px);
+    font-weight: var(--weight-medium, 500);
+    color: var(--fg-primary);
+    margin: 0 0 2px;
 }
-
-.cs-form-row-actions {
-    flex-direction: row;
-    align-items: center;
-    gap: var(--space-2);
-    margin-top: var(--space-1);
+.settings-row-desc {
+    font-size: var(--text-xs, 11px);
+    color: var(--fg-tertiary);
+    margin: 0;
+    line-height: var(--leading-snug, 1.45);
 }
-
-.cs-test-result {
-    font-size: 12px;
-    color: var(--fg-2);
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-}
-
-.cs-test-result.pending {
-    color: var(--fg-2);
-}
-
-.cs-test-result.success {
-    color: var(--success);
-    font-weight: 500;
-}
-
-.cs-test-result.fail {
-    color: var(--error);
-    font-weight: 500;
-}
-
-.cs-test-result i {
-    font-size: 13px;
-}
-
-.cs-modal-footer {
-    /* inline styles define layout; this class allows for future overrides */
+.settings-row-control {
+    flex-shrink: 0;
 }

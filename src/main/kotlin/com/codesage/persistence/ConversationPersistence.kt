@@ -114,8 +114,23 @@ class ConversationPersistence(
     @Throws(java.io.IOException::class)
     private fun writeAtomically(persisted: PersistedSession) {
         val file = getSessionFile(persisted.id)
-        file.parentFile?.mkdirs()
-        val tempFile = File(file.parent, "${file.name}.tmp")
+        // 2026-06 修复: sub-agent 临时目录场景下, 异步 save 跑到这里时父目录可能已被
+        // SubAgentExecutor 的 finally deleteRecursively() 删掉 (race condition)。
+        // mkdirs() 在父目录已存在时是 no-op; 不存在时重建, 让 save 不再因找不到目录而炸。
+        val parent = file.parentFile
+        if (parent == null) {
+            throw java.io.IOException("Session file has no parent directory: ${file.absolutePath}")
+        }
+        if (!parent.exists() && !parent.mkdirs()) {
+            // 极端情况: parent 在 exists() 之后, mkdirs() 之前被另一个线程删了。
+            // 再次尝试, 接受"并发删除"语义 — 如果两次都失败就放弃这一轮, 下一轮 save 重试。
+            if (!parent.exists()) {
+                throw java.io.IOException(
+                    "Failed to create parent dir for session file: ${parent.absolutePath}"
+                )
+            }
+        }
+        val tempFile = File(parent, "${file.name}.tmp")
         try {
             tempFile.writeText(json.encodeToString(persisted))
             val renamed = tempFile.renameTo(file)
@@ -275,6 +290,38 @@ class ConversationPersistence(
      */
     private fun getSessionFile(sessionId: String): File {
         return File(storageDir, "$sessionId.json")
+    }
+
+    /**
+     * 2026-06 新增: 等待所有 in-flight 写入完成 (但不拒绝新写入)。
+     *
+     * 用法: SubAgentExecutor 在 finally deleteRecursively() 之前调用,
+     * 避免异步 save 跑到一半父目录就没了。
+     *
+     * @param timeoutMs 最长等待时间 (毫秒)
+     * @return 调用时的 in-flight 写入数 (供日志)
+     */
+    fun awaitInFlightWrites(timeoutMs: Long = 5000L): Int {
+        val initial = inFlightTasks.size
+        if (initial == 0) return 0
+        val deadline = System.currentTimeMillis() + timeoutMs
+        try {
+            while (inFlightTasks.isNotEmpty() && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50)
+            }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+        val remaining = inFlightTasks.size
+        if (remaining > 0) {
+            logger.warn(
+                "awaitInFlightWrites: timed out after ${timeoutMs}ms, " +
+                "$remaining writes still in flight (writeAtomically mkdirs fallback will catch it)"
+            )
+        } else {
+            logger.debug("awaitInFlightWrites: drained $initial writes")
+        }
+        return initial
     }
 
     /**

@@ -1,80 +1,9 @@
 /**
- * Generic component styles for cs-* custom elements
- * (when not using shadow DOM)
+ * Components v2.0 — 通用组件
+ * ===========================
+ *
+ * Toast, Modal, Spinner, Toast 容器, Inline Alert 等
  */
-
-.cs-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-1);
-    border-radius: var(--radius-sm);
-    border: 1px solid transparent;
-    cursor: pointer;
-    font-weight: 500;
-    transition: all var(--duration-fast) var(--ease-out);
-    user-select: none;
-}
-
-.cs-button[disabled] {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-
-.cs-button.size-sm {
-    padding: 4px var(--space-2);
-    font-size: var(--text-xs);
-}
-
-.cs-button.size-md {
-    padding: 6px var(--space-3);
-    font-size: var(--text-sm);
-}
-
-.cs-button.size-lg {
-    padding: 8px var(--space-4);
-    font-size: var(--text-base);
-}
-
-.cs-button.variant-primary {
-    background: var(--accent);
-    color: var(--fg-on-accent);
-}
-
-.cs-button.variant-primary:hover:not([disabled]) {
-    background: var(--accent-hover);
-}
-
-.cs-button.variant-secondary {
-    background: var(--bg-1);
-    color: var(--fg-0);
-    border-color: var(--border);
-}
-
-.cs-button.variant-secondary:hover:not([disabled]) {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: var(--accent-soft);
-}
-
-.cs-button.variant-ghost {
-    background: transparent;
-    color: var(--fg-1);
-}
-
-.cs-button.variant-ghost:hover:not([disabled]) {
-    background: var(--bg-1);
-    color: var(--fg-0);
-}
-
-.cs-button.variant-danger {
-    background: var(--error);
-    color: white;
-}
-
-.cs-button.variant-danger:hover:not([disabled]) {
-    filter: brightness(0.92);
-}
 
 /* ========== cs-toast ========== */
 .cs-toast-container {
@@ -94,82 +23,52 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-3) var(--space-4);
-    background: var(--fg-0);
-    color: var(--bg-0);
+    padding: var(--space-2) var(--space-3);
+    background: var(--fg-primary);
+    color: var(--surface-raised);
     border-radius: var(--radius-md);
-    box-shadow: var(--shadow-pop);
     font-size: var(--text-sm);
-    font-weight: 500;
-    min-width: 200px;
-    max-width: 480px;
+    box-shadow: var(--shadow-lg);
     pointer-events: auto;
-    animation: cs-toast-in var(--duration-base) var(--ease-out);
+    animation: toastIn 200ms var(--ease-spring);
+    max-width: 480px;
 }
 
-.cs-toast.info {
-    background: var(--fg-0);
-    color: var(--bg-0);
-}
+.cs-toast.error { background: var(--error); color: var(--fg-inverse); }
+.cs-toast.success { background: var(--success); color: var(--fg-inverse); }
+.cs-toast.warning { background: var(--warning); color: var(--fg-inverse); }
+.cs-toast.info { background: var(--info); color: var(--fg-inverse); }
 
-.cs-toast.success {
-    background: var(--success);
-    color: white;
-}
-
-.cs-toast.warning {
-    background: var(--warning);
-    color: var(--fg-0);
-}
-
-.cs-toast.error {
-    background: var(--error);
-    color: white;
-}
-
-.cs-toast.leaving {
-    animation: cs-toast-out 160ms var(--ease-in-out) forwards;
-}
-
-/* Toast 内的 action 按钮(例 "打开设置目录")— 点 按钮 不会触发 toast 隐藏,
-   跟 click-to-hide 的 span 互不干扰。 */
-.cs-toast-action {
-    margin-left: var(--space-2);
-    padding: 2px 10px;
-    border-radius: var(--radius-sm);
-    border: 1px solid currentColor;
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background var(--duration-fast) var(--ease-out);
+.cs-toast-icon {
     flex-shrink: 0;
+    font-size: 12px;
 }
 
-.cs-toast-action:hover {
-    background: rgba(255, 255, 255, 0.18);
+.cs-toast-message {
+    flex: 1;
+    min-width: 0;
+    font-weight: var(--weight-medium);
 }
 
-.cs-toast.info .cs-toast-action:hover {
-    background: var(--bg-1);
-}
-
-@keyframes cs-toast-in {
+@keyframes toastIn {
     from {
         opacity: 0;
-        transform: translateY(20px);
+        transform: translateY(8px) scale(0.96);
     }
     to {
         opacity: 1;
-        transform: translateY(0);
+        transform: translateY(0) scale(1);
     }
 }
 
-@keyframes cs-toast-out {
+.cs-toast.dismissing {
+    animation: toastOut 180ms var(--ease-out) forwards;
+}
+
+@keyframes toastOut {
     to {
         opacity: 0;
-        transform: translateY(20px);
+        transform: translateY(-4px) scale(0.96);
     }
 }
 
@@ -178,266 +77,230 @@
     display: inline-block;
     width: 14px;
     height: 14px;
-    border: 2px solid var(--border);
+    border: 2px solid var(--border-default);
     border-top-color: var(--accent);
     border-radius: 50%;
-    animation: spin 800ms linear infinite;
+    animation: spin 0.8s linear infinite;
 }
 
-.cs-spinner.size-sm {
-    width: 12px;
-    height: 12px;
-    border-width: 1.5px;
-}
-
-.cs-spinner.size-lg {
-    width: 20px;
-    height: 20px;
-    border-width: 2.5px;
-}
+.cs-spinner.sm { width: 10px; height: 10px; border-width: 1.5px; }
+.cs-spinner.lg { width: 18px; height: 18px; border-width: 2.5px; }
 
 /* ========== cs-modal ========== */
-.cs-modal-backdrop {
+.cs-modal-overlay {
     position: fixed;
     inset: 0;
-    background: var(--bg-overlay);
-    z-index: var(--z-modal);
+    background: var(--surface-overlay);
+    z-index: var(--z-overlay);
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: center;
-    padding-top: 12vh;
-    opacity: 0;
-    transition: opacity var(--duration-base) var(--ease-out);
-    backdrop-filter: blur(2px);
-}
-
-.cs-modal-backdrop.open {
-    opacity: 1;
+    animation: fadeIn var(--duration-base) var(--ease-out);
 }
 
 .cs-modal {
-    background: var(--bg-0);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-pop);
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-xl);
+    max-width: 90vw;
+    max-height: 85vh;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
-    max-height: 70vh;
-    width: 100%;
-    overflow: hidden;
-    transform: translateY(-12px) scale(0.97);
-    transition: transform var(--duration-base) var(--ease-out);
+    animation: modalIn 220ms var(--ease-spring);
 }
 
-.cs-modal-backdrop.open .cs-modal {
-    transform: translateY(0) scale(1);
-}
-
-.cs-modal-sm {
-    max-width: 360px;
-}
-.cs-modal-md {
-    max-width: 520px;
-}
-.cs-modal-lg {
-    max-width: 720px;
-}
-.cs-modal-xl {
-    max-width: 960px;
+@keyframes modalIn {
+    from {
+        opacity: 0;
+        transform: scale(0.96) translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
 }
 
 .cs-modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-4) var(--space-5);
     border-bottom: 1px solid var(--border-subtle);
-    flex-shrink: 0;
 }
 
 .cs-modal-title {
     font-size: var(--text-md);
-    font-weight: 600;
-    color: var(--fg-0);
+    font-weight: var(--weight-semibold);
+    color: var(--fg-primary);
 }
 
 .cs-modal-body {
     flex: 1;
     overflow-y: auto;
-    padding: var(--space-4);
+    padding: var(--space-5);
+    min-width: 360px;
 }
 
-/* ========== cs-command-palette ========== */
-.cs-command-palette {
-    position: fixed;
-    top: 12vh;
-    left: 50%;
-    transform: translateX(-50%) translateY(-12px) scale(0.97);
-    z-index: calc(var(--z-modal) + 1);
-    width: min(640px, calc(100vw - 32px));
-    max-height: 70vh;
-    background: var(--bg-0);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-pop);
+.cs-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-5);
+    border-top: 1px solid var(--border-subtle);
+}
+
+/* ========== cs-button (legacy) ========== */
+.cs-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-1);
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    cursor: pointer;
+    font-weight: var(--weight-medium);
+    transition: all var(--duration-fast) var(--ease-out);
+    user-select: none;
+    font-family: inherit;
+}
+
+.cs-button[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.cs-button.size-sm {
+    padding: 4px 8px;
+    font-size: var(--text-xs);
+}
+
+.cs-button.size-md {
+    padding: 6px 12px;
+    font-size: var(--text-sm);
+}
+
+.cs-button.size-lg {
+    padding: 8px 16px;
+    font-size: var(--text-md);
+}
+
+.cs-button.variant-primary {
+    background: var(--accent);
+    color: var(--accent-fg);
+}
+
+.cs-button.variant-primary:hover:not([disabled]) {
+    background: var(--accent-hover);
+}
+
+.cs-button.variant-secondary {
+    background: var(--surface-raised);
+    color: var(--fg-primary);
+    border-color: var(--border-default);
+}
+
+.cs-button.variant-secondary:hover:not([disabled]) {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.cs-button.variant-ghost {
+    background: transparent;
+    color: var(--fg-secondary);
+}
+
+.cs-button.variant-ghost:hover:not([disabled]) {
+    background: var(--surface-hover);
+    color: var(--fg-primary);
+}
+
+.cs-button.variant-danger {
+    background: var(--error);
+    color: var(--fg-inverse);
+}
+
+.cs-button.variant-danger:hover:not([disabled]) {
+    filter: brightness(0.92);
+}
+
+/* ========== artifacts panel (右栏) ========== */
+.cs-artifacts {
+    width: var(--artifacts-width);
+    background: var(--surface-raised);
+    border-left: 1px solid var(--border-subtle);
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    opacity: 0;
-    transition:
-        opacity var(--duration-base) var(--ease-out),
-        transform var(--duration-base) var(--ease-out);
+    height: 100vh;
+    transition: width var(--duration-slow) var(--ease-out);
 }
 
-.cs-command-palette.open {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0) scale(1);
+.app-container.artifacts-collapsed .cs-artifacts {
+    width: 0;
+    border-left: none;
 }
 
-.cs-cmd-search {
+.cs-artifacts-header {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-3) var(--space-4);
+    justify-content: space-between;
+    padding: var(--space-3);
     border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
+    height: var(--header-height);
 }
 
-.cs-cmd-search i {
-    color: var(--fg-2);
-    font-size: 13px;
-}
-
-.cs-cmd-search input {
-    flex: 1;
-    font-size: var(--text-md);
-    color: var(--fg-0);
-    outline: none;
-    border: none;
-    background: transparent;
-}
-
-.cs-cmd-search input::placeholder {
-    color: var(--fg-2);
-}
-
-.cs-cmd-list {
-    list-style: none;
-    margin: 0;
-    padding: var(--space-1);
-    overflow-y: auto;
-    flex: 1;
-    min-height: 0;
-}
-
-.cs-cmd-item {
+.cs-artifacts-title {
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
+    color: var(--fg-primary);
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    transition: background var(--duration-fast);
-    user-select: none;
+    gap: 6px;
 }
 
-.cs-cmd-item:hover {
-    background: var(--bg-1);
-}
-
-.cs-cmd-item.selected {
-    background: var(--accent-soft);
-    color: var(--accent);
-}
-
-.cs-cmd-item-body {
+.cs-artifacts-list {
     flex: 1;
-    min-width: 0;
+    overflow-y: auto;
+    padding: var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
 }
 
-.cs-cmd-item-label {
-    font-size: var(--text-sm);
-    font-weight: 500;
-    color: var(--fg-0);
+.cs-artifact-panel {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--surface-raised);
 }
 
-.cs-cmd-item.selected .cs-cmd-item-label {
-    color: var(--accent);
-}
-
-.cs-cmd-item-hint {
+.cs-artifact-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px var(--space-2);
+    border-bottom: 1px solid var(--border-subtle);
     font-size: var(--text-xs);
-    color: var(--fg-2);
-    margin-top: 2px;
+    color: var(--fg-secondary);
+    background: var(--surface-sunken);
+}
+
+.cs-artifact-title {
+    font-weight: var(--weight-medium);
+    color: var(--fg-primary);
+    display: flex;
+    align-items: center;
+    gap: 4px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
 }
 
-.cs-cmd-item-shortcut {
-    font-size: var(--text-xs);
-    font-family: var(--font-mono);
-    color: var(--fg-2);
-    background: var(--bg-1);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-xs);
-    padding: 1px 6px;
-    flex-shrink: 0;
-}
-
-.cs-cmd-empty {
-    text-align: center;
-    padding: var(--space-8);
-    color: var(--fg-2);
-    font-size: var(--text-sm);
-}
-
-.cs-cmd-footer {
+.cs-artifact-actions {
     display: flex;
-    gap: var(--space-4);
-    padding: var(--space-2) var(--space-4);
-    border-top: 1px solid var(--border-subtle);
-    background: var(--bg-1);
-    font-size: var(--text-xs);
-    color: var(--fg-2);
-    flex-shrink: 0;
-}
-
-.cs-cmd-footer kbd {
-    font-family: var(--font-mono);
-    background: var(--bg-0);
-    border: 1px solid var(--border);
-    border-radius: 3px;
-    padding: 0 4px;
-    margin-right: 2px;
-    font-size: 10px;
-}
-
-/* ========== cs-tooltip ========== */
-[data-cs-tooltip] {
-    position: relative;
-}
-
-[data-cs-tooltip]::after {
-    content: attr(data-cs-tooltip);
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--fg-0);
-    color: var(--bg-0);
-    padding: 4px var(--space-2);
-    border-radius: var(--radius-sm);
-    font-size: var(--text-xs);
-    font-weight: 500;
-    white-space: nowrap;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--duration-fast) var(--ease-out);
-    z-index: calc(var(--z-sticky) + 10);
-    box-shadow: var(--shadow-md);
-}
-
-[data-cs-tooltip]:hover::after {
-    opacity: 1;
+    gap: 2px;
 }

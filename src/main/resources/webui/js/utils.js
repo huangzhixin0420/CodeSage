@@ -1,167 +1,127 @@
 /**
- * CodeSage 工具函数
- * 纯函数集合,无副作用
+ * utils.js — 通用工具
+ * ====================
  */
 
-/** 转义 HTML 字符 */
-export function escapeHtml(text) {
-  if (text == null) return "";
-  const div = document.createElement("div");
-  div.textContent = String(text);
-  return div.innerHTML;
+export function escapeHtml(str) {
+    if (str == null) return "";
+    return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
 }
 
-/** 转义 JS 字符串(单/双引号) */
-export function escapeJs(text) {
-  if (text == null) return "";
-  return String(text)
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/"/g, '\\"');
+export function escapeJs(str) {
+    if (str == null) return "";
+    return String(str)
+        .replace(/\\/g, "\\\\")
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '\\"')
+        .replace(/\n/g, "\\n")
+        .replace(/\r/g, "\\r")
+        .replace(/\t/g, "\\t");
 }
 
-/** 简易 HTML 清理(去除危险标签和事件处理器) */
-export function sanitizeHtml(html) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(html, "text/html");
-  doc
-    .querySelectorAll("script, style, iframe, object, embed, form")
-    .forEach((el) => el.remove());
-  const walk = (node) => {
-    if (node.nodeType === Node.ELEMENT_NODE) {
-      const attrs = Array.from(node.attributes);
-      for (const attr of attrs) {
-        const name = attr.name.toLowerCase();
-        if (
-          name.startsWith("on") ||
-          (name === "href" &&
-            /^(javascript|data|vbscript):/i.test(attr.value)) ||
-          name === "action"
-        ) {
-          node.removeAttribute(attr.name);
-        }
-      }
-    }
-    Array.from(node.childNodes).forEach(walk);
-  };
-  walk(doc.body);
-  return doc.body.innerHTML;
+export function truncate(str, n = 80) {
+    if (!str) return "";
+    if (str.length <= n) return str;
+    return str.slice(0, n - 1) + "…";
 }
 
-/** 格式化相对时间(用于会话列表) */
-export function formatRelativeTime(timestamp) {
-  if (!timestamp) return "";
-  const now = Date.now();
-  const diff = now - timestamp;
-  const minute = 60 * 1000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  if (diff < minute) return "刚刚";
-  if (diff < hour) return Math.floor(diff / minute) + " 分钟前";
-  if (diff < day) return Math.floor(diff / hour) + " 小时前";
-  if (diff < day * 2) return "昨天";
-  if (diff < day * 7) return Math.floor(diff / day) + " 天前";
-  const date = new Date(timestamp);
-  return `${date.getMonth() + 1}月${date.getDate()}日`;
+export function formatDuration(ms) {
+    if (ms == null || ms < 0) return "—";
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+    const m = Math.floor(ms / 60_000);
+    const s = Math.floor((ms % 60_000) / 1000);
+    return `${m}m ${s}s`;
 }
 
-/** 截断字符串 */
-export function truncate(text, max = 80, suffix = "...") {
-  if (!text) return "";
-  text = String(text);
-  if (text.length <= max) return text;
-  return text.substring(0, max - suffix.length) + suffix;
+export function formatRelativeTime(ts) {
+    if (!ts) return "";
+    const diff = Date.now() - ts;
+    if (diff < 60_000) return "刚刚";
+    if (diff < 60 * 60_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+    if (diff < 24 * 60 * 60_000) return `${Math.floor(diff / (60 * 60_000))} 小时前`;
+    if (diff < 7 * 24 * 60 * 60_000) return `${Math.floor(diff / (24 * 60 * 60_000))} 天前`;
+    const d = new Date(ts);
+    return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-/** 高亮 @ 引用(返回 HTML 字符串) */
-export function highlightAtReferences(text) {
-  return escapeHtml(text).replace(
-    /@([^\s@]+)/g,
-    '<span class="at-ref">@$1</span>',
-  );
+export function formatTimeOfDay(ts) {
+    if (!ts) return "";
+    const d = new Date(ts);
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-/** 滚动到底部(节流) */
 let _scrollScheduled = false;
 export function scrollToBottom(container, force = false) {
-  if (_scrollScheduled && !force) return;
-  _scrollScheduled = true;
-  requestAnimationFrame(() => {
-    const c =
-      typeof container === "string"
-        ? document.getElementById(container)
-        : container;
-    if (c) c.scrollTop = c.scrollHeight;
-    _scrollScheduled = false;
-  });
+    if (_scrollScheduled && !force) return;
+    _scrollScheduled = true;
+    requestAnimationFrame(() => {
+        const c =
+            typeof container === "string"
+                ? document.getElementById(container)
+                : container;
+        if (c) c.scrollTop = c.scrollHeight;
+        _scrollScheduled = false;
+    });
 }
 
-/** 防抖 */
 export function debounce(fn, wait) {
-  let t;
-  return function (...args) {
-    clearTimeout(t);
-    t = setTimeout(() => fn.apply(this, args), wait);
-  };
+    let t;
+    return function (...args) {
+        clearTimeout(t);
+        t = setTimeout(() => fn.apply(this, args), wait);
+    };
 }
 
-/** 节流 */
 export function throttle(fn, wait) {
-  let last = 0;
-  return function (...args) {
-    const now = Date.now();
-    if (now - last >= wait) {
-      last = now;
-      fn.apply(this, args);
-    }
-  };
+    let last = 0;
+    let timer = null;
+    return function (...args) {
+        const now = Date.now();
+        const remaining = wait - (now - last);
+        if (remaining <= 0) {
+            if (timer) {
+                clearTimeout(timer);
+                timer = null;
+            }
+            last = now;
+            fn.apply(this, args);
+        } else if (!timer) {
+            timer = setTimeout(() => {
+                last = Date.now();
+                timer = null;
+                fn.apply(this, args);
+            }, remaining);
+        }
+    };
 }
 
-/** 创建带 id 的 DOM 元素 */
-export function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v;
-    else if (k === "style" && typeof v === "object")
-      Object.assign(node.style, v);
-    else if (k === "dataset") Object.assign(node.dataset, v);
-    else if (k.startsWith("on") && typeof v === "function") {
-      node.addEventListener(k.substring(2).toLowerCase(), v);
-    } else if (k === "html") {
-      node.innerHTML = v;
-    } else if (v === false || v == null) {
-      // skip
-    } else if (v === true) {
-      node.setAttribute(k, "");
-    } else {
-      node.setAttribute(k, v);
-    }
-  }
-  for (const child of children) {
-    if (child == null) continue;
-    if (Array.isArray(child))
-      child.forEach(
-        (c) =>
-          c &&
-          node.appendChild(c.nodeType ? c : document.createTextNode(String(c))),
-      );
-    else if (child.nodeType) node.appendChild(child);
-    else node.appendChild(document.createTextNode(String(child)));
-  }
-  return node;
+/** 生成 turnId / toolId 等短 id */
+let _idCounter = 0;
+export function genId(prefix = "id") {
+    _idCounter += 1;
+    return `${prefix}_${Date.now().toString(36)}_${_idCounter.toString(36)}`;
 }
 
-/** 浅拷贝 */
-export function clone(obj) {
-  return JSON.parse(JSON.stringify(obj));
+/** 检测 mac/win 平台 (用于快捷键显示) */
+export function getPlatform() {
+    const ua = navigator.userAgent || "";
+    if (/Mac|iPhone|iPad/i.test(ua)) return "mac";
+    if (/Windows/i.test(ua)) return "win";
+    if (/Linux/i.test(ua)) return "linux";
+    return "mac";
 }
 
-/** 格式化时长 */
-export function formatDuration(ms) {
-  if (ms == null) return "";
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  const m = Math.floor(ms / 60000);
-  const s = Math.floor((ms % 60000) / 1000);
-  return `${m}m${s}s`;
+export function shortcutLabel(combo) {
+    const p = getPlatform();
+    return combo
+        .replace(/Cmd\+/g, p === "mac" ? "⌘" : "Ctrl+")
+        .replace(/Option\+/g, p === "mac" ? "⌥" : "Alt+")
+        .replace(/Shift\+/g, p === "mac" ? "⇧" : "Shift+")
+        .replace(/Enter/g, "⏎");
 }

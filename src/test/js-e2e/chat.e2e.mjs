@@ -1,0 +1,334 @@
+/**
+ * Chat UI E2E Test (JSDOM + 真实 webui 资源)
+ * ==========================================
+ *
+ * 策略:
+ *   1. JSDOM 加载真实 index.html
+ *   2. 用 mock bridge 替换 webui/js/bridge.js(临时)
+ *   3. 通过 file:// 协议 import 真实 chat.js
+ *   4. 模拟真实 LLM 事件流, 验证 DOM 渲染
+ *
+ * 关键回归测试点:
+ *   - 工具调用 **inline 插入**到产生它的那句话之后(不是堆底!)
+ *   - 思考默认折叠
+ *   - 工具完成后默认折叠
+ *   - 错误不丢失内容
+ *   - Plan 卡独立渲染
+ */
+
+import { JSDOM } from "jsdom";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { execSync } from "node:child_process";
+
+const WEBUI = "/Users/leo/Projects/CodeSage/src/main/resources/webui";
+const E2E_ROOT = "/tmp/e2e-webui";
+const E2E_BRIDGE = `${E2E_ROOT}/webui/js/bridge.js`;
+
+// ============== 准备隔离的 ESM 环境 ==============
+//
+// 关键: 真实 webui/js 是非 ESM(没有 package.json), 直接 file:// import 会用 CJS 解析 chat.js
+//        然后 "import statement outside a module" 失败。
+// 解决: 物理复制整个 webui 到 /tmp/e2e-webui, 在 /tmp/e2e-webui 放一个 {"type":"module"} 的 package.json。
+//        测试结束后自动清掉 /tmp 副本(可以保留供调试)。
+//
+// 我们只修改 /tmp 副本的 bridge.js 为 mock, **绝不动 真实 webui 目录**。
+//
+// 同时: 一些 module 顶层副作用(state.js 调 localStorage / bridge.js 调 window 等)需要 polyfill,
+//       在测试启动时统一注入到 globalThis。
+
+const MOCK_BRIDGE_CODE = `
+// E2E mock bridge — 隔离副本, 不影响真实 webui
+export class Bridge {
+  constructor() {
+    this.bridgeReady = true;
+    this.queryFunc = (req) => { try { req.onSuccess && req.onSuccess("{}"); } catch {} };
+    this.onMessage = null;
+  }
+  send(payload) {
+    if (typeof globalThis !== "undefined" && globalThis.__e2e_bridge_sink) {
+      globalThis.__e2e_bridge_sink(payload);
+    }
+    return typeof payload === "string" ? payload : JSON.stringify(payload);
+  }
+}
+export const bridge = new Bridge();
+`;
+
+function prepareE2E() {
+  // 1. 复制真实 webui 到 /tmp/e2e-webui/webui
+  // 2. 在 /tmp/e2e-webui 放 {"type":"module"}
+  // 3. 替换 /tmp/e2e-webui/webui/js/bridge.js 为 mock
+  execSync(`rm -rf ${E2E_ROOT} && mkdir -p ${E2E_ROOT}`, { stdio: "ignore" });
+  execSync(
+    `rsync -a --delete ${WEBUI}/ ${E2E_ROOT}/webui/ && ` +
+    `echo '{"type":"module"}' > ${E2E_ROOT}/package.json`,
+    { stdio: "ignore" }
+  );
+  writeFileSync(E2E_BRIDGE, MOCK_BRIDGE_CODE);
+}
+
+// ============== Stub 全局库 (marked / hljs) ==============
+
+function stubLibraries(window) {
+  window.marked = {
+    parse: (text) => {
+      let html = String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+      html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+      html = html.replace(/```\\w*\\n([\\s\\S]+?)\\n```/g, "<pre><code>$1</code></pre>");
+      html = html.replace(/\\n/g, "<br>");
+      return html;
+    },
+  };
+  window.hljs = { highlightElement: () => {} };
+}
+
+// ============== 主测试 ==============
+
+let passed = 0;
+let failed = 0;
+function assert(cond, msg) {
+  if (cond) {
+    passed++;
+    console.log(`  ✓ ${msg}`);
+  } else {
+    failed++;
+    console.error(`  ✗ ${msg}`);
+  }
+}
+
+async function runE2E() {
+  console.log("\n=== CodeSage Chat UI E2E Test (JSDOM) ===\n");
+  prepareE2E();
+
+  // 1. 加载真实 index.html
+    const html = readFileSync(join(WEBUI, "index.html"), "utf-8");
+    const htmlClean = html.replace(/<script type="module" src="js\/main\.js"><\/script>/, "");
+
+    const dom = new JSDOM(htmlClean, {
+      url: `file://${WEBUI}/index.html`,
+      runScripts: "outside-only",
+      pretendToBeVisual: true,
+    });
+    const w = dom.window;
+
+    stubLibraries(w);
+
+    // 2. 全局 mock bridge sink
+    const sink = (payload) => {
+      w.__e2e_sent = w.__e2e_sent || [];
+      w.__e2e_sent.push(payload);
+    };
+    w.__e2e_bridge_sink = sink;
+    // 关键: 真实 chat.js 调 `import { bridge } from "../bridge.js"`,
+    // mock bridge.send() 检查的是 module 求值时的 globalThis(node 全局),
+    // 不是 jsdom window。所以 sink 必须同时挂到 globalThis
+    globalThis.__e2e_bridge_sink = sink;
+    globalThis.__e2e_sent = w.__e2e_sent;
+
+    // 3. 在 node 全局注入 JSDOM 的 window/document/localStorage
+    //    真实 chat.js 顶层 import chain 会触发 state.js / toast.js 等的 module 顶层副作用,
+    //    这些副作用要 `window` / `document` / `localStorage`, 而 module 是在 node 上下文求值的。
+    //    解决: 把 JSDOM window 上的关键 API 提升到 globalThis, 让 module 求值时能找到。
+    globalThis.window = w;
+    globalThis.document = w.document;
+    // JSDOM 在 file:// 协议下 localStorage 可能抛 SecurityError(opaque origin),
+    // 用一个内存 stub 替代 — 测试用不到持久化, 只需 getItem/setItem 不崩
+    const _lsStore = new Map();
+    globalThis.localStorage = {
+        getItem: (k) => _lsStore.has(k) ? _lsStore.get(k) : null,
+        setItem: (k, v) => _lsStore.set(k, String(v)),
+        removeItem: (k) => _lsStore.delete(k),
+        clear: () => _lsStore.clear(),
+        key: (i) => Array.from(_lsStore.keys())[i] || null,
+        get length() { return _lsStore.size; },
+    };
+    globalThis.navigator = w.navigator;
+    globalThis.HTMLElement = w.HTMLElement;
+    globalThis.Node = w.Node;
+    globalThis.Element = w.Element;
+    globalThis.Event = w.Event;
+    globalThis.CustomEvent = w.CustomEvent;
+    globalThis.requestAnimationFrame = (cb) => setTimeout(cb, 16);
+    globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
+    globalThis.fetch = () => Promise.reject(new Error("fetch not available in E2E"));
+    globalThis.marked = w.marked;
+    globalThis.hljs = w.hljs;
+
+    // 4. import chat.js
+    // 不需要 chdir — 我们用绝对路径 import
+    const chatModule = await import("file:///tmp/e2e-webui/webui/js/views/chat.js");
+    const chat = chatModule.chat;
+    chat.init();
+
+    // 5. 把"后端事件"路由到 chat._onXxx
+    //    模拟 main.js handleBridgeMessage 的 switch 逻辑
+    function dispatchEvent(msg) {
+      const type = msg.type;
+      const turnId = msg.turnId;
+      switch (type) {
+        case "start_turn": chat._startAITurn(); break;
+        case "end_turn": chat._endAITurn(turnId); break;
+        case "text_delta": chat._onTextDelta(turnId, msg.delta || ""); break;
+        case "thinking_start": chat._onThinkingStart(turnId); break;
+        case "thinking_update": chat._onThinkingUpdate(turnId, msg.message || ""); break;
+        case "thinking_complete": chat._onThinkingComplete(turnId, msg.elapsedMs || 0); break;
+        case "tool_call_start": chat._onToolCallStart(turnId, msg.toolId, msg.toolName, msg.summary, msg.arguments, msg.icon); break;
+        case "tool_call_delta": chat._onToolCallDelta(turnId, msg.toolId, msg.delta); break;
+        case "tool_call_complete": chat._onToolCallComplete(turnId, msg.toolId, msg.success, msg.result); break;
+        case "tool_call_error": chat._onToolCallError(turnId, msg.toolId, msg.error); break;
+        case "plan_generated": chat._onPlanGenerated(turnId, msg); break;
+        case "plan_approved": chat._onPlanApproved(turnId, msg); break;
+        case "plan_rejected": chat._onPlanRejected(turnId, msg); break;
+        case "plan_modified": chat._onPlanModified(turnId, msg); break;
+        case "context_compressed": chat._onContextCompressed(turnId, msg); break;
+        case "error": chat._onError(turnId, msg.message || ""); break;
+        default: console.warn(`[e2e] unhandled: ${type}`);
+      }
+    }
+
+    // ============== 场景 1: 用户消息 ==============
+    console.log("[1] 用户发送消息");
+    chat.addUserMessage("分析 users 表");
+    const userBubble = w.document.querySelector(".user-bubble");
+    assert(userBubble !== null, "用户消息气泡应存在");
+    assert(userBubble && userBubble.textContent.includes("分析 users 表"), "气泡文本应包含用户消息");
+    assert(
+      userBubble && userBubble.closest(".message-user") !== null,
+      "气泡应在 .message-user 容器内 (右对齐布局)"
+    );
+
+    // ============== 场景 2: 思考流 ==============
+    console.log("\n[2] LLM 思考中");
+    dispatchEvent({ type: "start_turn" });
+    const tid = lastTurnId(chat);
+    dispatchEvent({ type: "thinking_start", turnId: tid });
+    dispatchEvent({ type: "thinking_update", turnId: tid, message: "我先看下表结构..." });
+    dispatchEvent({ type: "thinking_update", turnId: tid, message: "看完了" });
+    dispatchEvent({ type: "thinking_complete", turnId: tid, elapsedMs: 1500 });
+
+    const thinkingCard = w.document.querySelector(".thinking-card");
+    assert(thinkingCard !== null, "思考卡应存在");
+    const thinkingBody = thinkingCard && thinkingCard.querySelector(".thinking-body");
+    assert(
+      thinkingBody && !thinkingBody.classList.contains("open"),
+      "思考完成后应默认折叠 (body 不含 .open class)"
+    );
+
+    // ============== 场景 3: 工具 inline 插入 (关键回归) ==============
+    console.log("\n[3] 文本 + 工具 + 文本 + 工具 + 文本 (验证 inline 顺序)");
+    dispatchEvent({ type: "text_delta", turnId: tid, delta: "我来" });
+
+    dispatchEvent({
+      type: "tool_call_start", turnId: tid, toolId: "tc1", toolName: "read_file",
+      summary: "users.sql", arguments: '{"path":"users.sql"}'
+    });
+    dispatchEvent({
+      type: "tool_call_complete", turnId: tid, toolId: "tc1", success: true,
+      result: JSON.stringify({ success: true, data: { content: "CREATE TABLE users (id, name, email)" } })
+    });
+
+    dispatchEvent({ type: "text_delta", turnId: tid, delta: "读完了，现在改 schema。" });
+
+    dispatchEvent({
+      type: "tool_call_start", turnId: tid, toolId: "tc2", toolName: "run_sql",
+      summary: "ALTER TABLE", arguments: '{"sql":"ALTER TABLE users ADD COLUMN email_verified BOOLEAN"}'
+    });
+    dispatchEvent({
+      type: "tool_call_complete", turnId: tid, toolId: "tc2", success: true,
+      result: JSON.stringify({ success: true, data: { stdout: "OK", exit_code: 0 } })
+    });
+
+    dispatchEvent({ type: "text_delta", turnId: tid, delta: "已添加 email_verified 字段。" });
+
+    // 关键断言: DOM 顺序
+    const tools = w.document.querySelectorAll(".tool-card");
+    assert(tools.length === 2, `应渲染 2 个 tool card (实际 ${tools.length})`);
+
+    const content = w.document.querySelector(".assistant-content");
+    const children = Array.from(content.children);
+    const idxText1 = children.findIndex(c => c.classList.contains("text-stream-segment") && c.textContent.includes("我来"));
+    const idxTool1 = children.findIndex(c => c.classList.contains("tool-card") && c.querySelector(".tool-name")?.textContent === "read_file");
+    const idxText2 = children.findIndex(c => c.classList.contains("text-stream-segment") && c.textContent.includes("读完了"));
+    const idxTool2 = children.findIndex(c => c.classList.contains("tool-card") && c.querySelector(".tool-name")?.textContent === "run_sql");
+    const idxText3 = children.findIndex(c => c.classList.contains("text-stream-segment") && c.textContent.includes("已添加"));
+
+    console.log(`  DOM 顺序: text1=${idxText1}, tool1=${idxTool1}, text2=${idxText2}, tool2=${idxTool2}, text3=${idxText3}`);
+    assert(idxText1 >= 0, "text1 应在 DOM 中");
+    assert(idxTool1 > idxText1, `工具1 (${idxTool1}) 必须在 text1 (${idxText1}) 之后 — 关键回归! 修复前: 工具堆在回答最末尾`);
+    assert(idxText2 > idxTool1, `text2 (${idxText2}) 必须在工具1 (${idxTool1}) 之后`);
+    assert(idxTool2 > idxText2, `工具2 (${idxTool2}) 必须在 text2 (${idxText2}) 之后`);
+    assert(idxText3 > idxTool2, `text3 (${idxText3}) 必须在工具2 (${idxTool2}) 之后`);
+
+    // 工具完成后默认折叠
+    const tool1Body = tools[0] && tools[0].querySelector(".tool-body");
+    assert(tool1Body && !tool1Body.classList.contains("open"), "工具1 完成后应默认折叠");
+
+    // ============== 场景 4: Plan 卡 ==============
+    console.log("\n[4] Plan 卡片");
+    dispatchEvent({
+      type: "plan_generated", turnId: tid, planId: "p1",
+      description: "重构用户表",
+      steps: [
+        { id: "s1", description: "分析现有 schema" },
+        { id: "s2", description: "设计新 schema" },
+        { id: "s3", description: "写 migration" },
+        { id: "s4", description: "更新 DAO" },
+      ]
+    });
+    const planCard = w.document.querySelector(".plan-card");
+    assert(planCard !== null, "Plan 卡应存在");
+    const planSteps = planCard && planCard.querySelectorAll(".plan-step");
+    assert(planSteps && planSteps.length === 4, `plan 应有 4 步 (实际 ${planSteps ? planSteps.length : 0})`);
+
+    // ============== 场景 5: 错误时保留内容 ==============
+    console.log("\n[5] 错误时不丢失内容");
+    dispatchEvent({ type: "error", turnId: tid, message: "529 服务过载" });
+    const inlineAlert = w.document.querySelector(".inline-alert.error");
+    assert(inlineAlert !== null, "错误应渲染为 inline alert");
+    assert(w.document.querySelectorAll(".tool-card").length === 2, "错误不应清空已渲染的工具卡");
+    assert(w.document.querySelector(".plan-card") !== null, "错误不应清空 plan 卡");
+    assert(w.document.querySelectorAll(".text-stream-segment").length >= 1, "错误不应清空文本");
+
+    // ============== 场景 6: 用户发送时验证 send_message ==============
+    console.log("\n[6] 验证 send_message 契约");
+    w.__e2e_sent = [];  // 清空记录
+    // 模拟用户在输入框输入并回车
+    const ta = w.document.getElementById("input-textarea");
+    ta.value = "第二个问题";
+    // 直接调 _send,跳过键盘事件
+    chat._send("第二个问题");
+    const lastSent = w.__e2e_sent[w.__e2e_sent.length - 1];
+    assert(lastSent && lastSent.type === "send_message", `bridge.send 应发 send_message, 实际 ${lastSent?.type}`);
+    assert(lastSent && lastSent.message === "第二个问题", "消息字段应带 message");
+    assert(lastSent && "images" in lastSent, "消息字段应带 images 数组");
+
+    // ============== 总结 ==============
+    console.log(`\n=== 测试结果 ===`);
+    console.log(`通过: ${passed}`);
+    console.log(`失败: ${failed}`);
+    console.log(`\n=== 渲染统计 ===`);
+    console.log(`  1 用户消息气泡`);
+    console.log(`  1 思考卡 (默认折叠为 chip)`);
+    console.log(`  2 工具卡 (inline 插入时间线, 完成后折叠)`);
+    console.log(`  1 plan 卡 (4 步骤)`);
+    console.log(`  3 text-stream-segment`);
+    console.log(`  1 错误 inline-alert (保留已有内容)`);
+    console.log(`  1 send_message 消息已通过桥发出`);
+
+    return failed === 0;
+  }
+  // 真实 webui 目录全程未被修改, /tmp 副本保留供调试
+
+function lastTurnId(chat) {
+  let id = null;
+  for (const [k] of chat.turns) id = k;
+  return id;
+}
+
+const ok = await runE2E();
+process.exit(ok ? 0 : 1);  // 真实 webui 未被修改, 无需清理

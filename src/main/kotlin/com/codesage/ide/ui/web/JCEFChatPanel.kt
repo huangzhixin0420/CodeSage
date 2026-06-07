@@ -17,6 +17,10 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptor
+import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
+import com.intellij.openapi.vfs.VirtualFile
 import java.awt.BorderLayout
 import javax.swing.JPanel
 import javax.swing.Timer
@@ -310,6 +314,98 @@ class JCEFChatPanel(
     }
 
     /**
+     * 打开 IntelliJ FileChooser 让用户选择附件,选完后通过 input_attachments 事件回投前端。
+     *
+     * v2.0 修复:attach_image / attach_file 之前是空占位,前端 setInputAttachments 永远收不到数据,
+     * 用户点击图片/文件按钮 0 反馈。这里走标准 FileChooser 协议:
+     *  - 图片:限制可选项为 png/jpg/jpeg/gif/webp/bmp
+     *  - 文件:不限制
+     * 选中的文件:
+     *  - 图片:读 bytes → base64 → 构造 dataUrl,跟前端 setInputAttachments 期望的
+     *         { type:"image", data, name } shape 对齐
+     *  - 文件:只带 { type:"file", name, path, size },由前端展示文件名(实际发消息时
+     *         用户仍需用 @ 引用,这个我们不偷跑,跟现在 attach_file 行为一致)
+     */
+    private fun openFilePicker(imagesOnly: Boolean) {
+        val p = project
+        val descriptor: FileChooserDescriptor = if (imagesOnly) {
+            FileChooserDescriptorFactory.createAllButJarContentsDescriptor()
+                .withTitle("选择图片")
+                .withDescription("选择要附加到聊天的图片(支持 PNG / JPG / GIF / WebP / BMP)")
+                .withFileFilter { vf ->
+                    val ext = vf.extension?.lowercase() ?: ""
+                    ext in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")
+                }
+        } else {
+            FileChooserDescriptorFactory.createAllButJarContentsDescriptor()
+                .withTitle("选择文件")
+                .withDescription("选择要附加到聊天的文件")
+        }
+
+        try {
+            FileChooser.chooseFiles(descriptor, p, null) { files ->
+                if (files.isEmpty()) {
+                    // 用户取消 — 不发事件,前端预览区保留之前的内容
+                    return@chooseFiles
+                }
+                val attachments = files.mapNotNull { vf -> buildAttachment(vf, imagesOnly) }
+                if (attachments.isEmpty()) {
+                    sendToJS(mapOf("type" to "input_attachments", "attachments" to emptyList<Map<String, Any?>>()))
+                    return@chooseFiles
+                }
+                sendToJS(mapOf("type" to "input_attachments", "attachments" to attachments))
+            }
+        } catch (e: Throwable) {
+            // 测试环境 / 非 IDE 环境可能没装 platform → 静默吞掉,不要炸
+            logger.warn("[attach] FileChooser failed: ${e.message}")
+        }
+    }
+
+    /**
+     * 把一个 VirtualFile 转成 setInputAttachments 期望的 attachment 字典。
+     * 图片走 dataUrl(让前端可以直接 <img> 预览 + 跟 send_message.images 字段对齐);
+     * 文件只带 name/path/size(避免 base64 巨大开销)。
+     */
+    private fun buildAttachment(vf: VirtualFile, isImage: Boolean): Map<String, Any?>? {
+        val name = vf.name
+        val path = vf.path
+        val size = try { vf.length } catch (e: Throwable) { 0L }
+        if (!isImage) {
+            return mapOf(
+                "type" to "file",
+                "name" to name,
+                "path" to path,
+                "size" to size,
+            )
+        }
+        return try {
+            val bytes = vf.contentsToByteArray()
+            if (bytes.size > MAX_IMAGE_DATA_URL_SIZE) {
+                logger.warn("[attach] image $name size=${bytes.size} exceeds limit=$MAX_IMAGE_DATA_URL_SIZE, dropped")
+                return null
+            }
+            val mime = when (vf.extension?.lowercase()) {
+                "png" -> "image/png"
+                "jpg", "jpeg" -> "image/jpeg"
+                "gif" -> "image/gif"
+                "webp" -> "image/webp"
+                "bmp" -> "image/bmp"
+                else -> "image/png"
+            }
+            val dataUrl = "data:$mime;base64," + java.util.Base64.getEncoder().encodeToString(bytes)
+            mapOf(
+                "type" to "image",
+                "name" to name,
+                "data" to dataUrl,
+                "size" to size,
+            )
+        } catch (e: Throwable) {
+            logger.warn("[attach] failed to read image $name: ${e.message}")
+            null
+        }
+    }
+
+    /**
      * JS → Kotlin 消息入口
      */
     private fun handleJSMessage(message: String) {
@@ -336,6 +432,56 @@ class JCEFChatPanel(
                 }
 
                 "regenerate" -> { /* TODO */
+                }
+
+                // 2026-06 v2.0 UI 配套:Plan 三联操作
+                "plan_approve" -> {
+                    val planId = json.jsonObject["planId"]?.jsonPrimitive?.content ?: ""
+                    logger.info("[Bridge] plan_approve planId=$planId")
+                    // TODO: 转发到 AgentCore, 走 PlanApproved 事件路径
+                }
+                "plan_reject" -> {
+                    val planId = json.jsonObject["planId"]?.jsonPrimitive?.content ?: ""
+                    val reason = json.jsonObject["reason"]?.jsonPrimitive?.content ?: ""
+                    logger.info("[Bridge] plan_reject planId=$planId reason=$reason")
+                    // TODO: 转发到 AgentCore, 走 PlanRejected 事件路径
+                }
+                "plan_modify" -> {
+                    val planId = json.jsonObject["planId"]?.jsonPrimitive?.content ?: ""
+                    logger.info("[Bridge] plan_modify planId=$planId")
+                    // TODO: 转发到 AgentCore, 让用户编辑 plan
+                }
+
+                // 2026-06 v2.0 UI 配套:打开设置中心
+                "open_settings" -> {
+                    logger.info("[Bridge] open_settings requested")
+                    // v2.0 修复:旧实现调 settingsHandler.handle("open_settings_view", ...) 会被
+                    // SettingsBridgeHandler.handle() 的 `if (!type.startsWith("settings_")) return false`
+                    // 直接拒绝,设置按钮在 UI 上完全没反应。改为让 settingsHandler 用一个真实
+                    // 接受的 type("settings_open_view")转发一条 open_settings_view 事件回前端,
+                    // 前端 main.js 已注册 settings._onBridge 来响应。
+                    settingsHandler.handle("settings_open_view", emptyMap())
+                }
+
+                // 2026-06 v2.0 UI 配套:思考区可见性切换(本地 + 持久化)
+                "set_show_thinking" -> {
+                    val enabled = json.jsonObject["enabled"]?.jsonPrimitive?.content == "true"
+                    logger.info("[Bridge] set_show_thinking enabled=$enabled")
+                    // 本地状态由前端 state.js 持久化,后端不需额外处理
+                }
+
+                // 2026-06 v2.0 UI 配套:附件 / 图片
+                // v2.0 修复:旧实现发回 type=file_references/references=[] 占位,前端 main.js 根本
+                // 不读这个 type,导致图片按钮/文件按钮点了 0 反馈。这里改成真正打开 IntelliJ
+                // FileChooser,选完文件后走 type=input_attachments/attachments=[...] 通知前端
+                // (与 main.js 现有 case 对齐)。
+                "attach_file" -> {
+                    logger.info("[Bridge] attach_file requested")
+                    openFilePicker(imagesOnly = false)
+                }
+                "attach_image" -> {
+                    logger.info("[Bridge] attach_image requested")
+                    openFilePicker(imagesOnly = true)
                 }
 
                 "file_search" -> {
@@ -448,7 +594,9 @@ class JCEFChatPanel(
     }
 
     private fun handleSendMessage(json: kotlinx.serialization.json.JsonElement) {
-        val content = json.jsonObject["content"]?.jsonPrimitive?.content ?: ""
+        // v2.0 修复:前端 chat.js 实际发送的字段是 message,旧实现读 content
+        // 一直被回退到空字符串,触发"empty message ignored",UI 表现"消息发出去没反应"。
+        val content = json.jsonObject["message"]?.jsonPrimitive?.content ?: ""
         val clientTurnId = json.jsonObject["turnId"]?.jsonPrimitive?.content
         val messageChatMode = json.jsonObject["chatMode"]?.jsonPrimitive?.content
             ?.let { ChatMode.fromString(it) }
@@ -555,11 +703,35 @@ class JCEFChatPanel(
                     ))
             }
 
+            // 2026-06 v2.0 UI 配套: 用户消息回显 (前端需要看到自己发的消息)
+            // 在 collectJob 启动前同步发出, 这样 chat._startAITurn() 调用时
+            // 用户消息已经渲染好了 (右对齐气泡), AI 消息紧跟其后。
+            sendToJS(
+                mapOf(
+                    "type" to "user_message_ack",
+                    "turnId" to turnId,
+                    "text" to cleanMessage,
+                    "fileRefs" to references.map {
+                        mapOf(
+                            "name" to it.name,
+                            "path" to it.relativePath,
+                        )
+                    },
+                )
+            )
+
             val prev = currentCollectJob
             if (prev != null) {
                 logger.info("[JCEFChatPanel] cancelling previous collectJob before new turn, turnId=$turnId")
                 prev.cancel()
             }
+            // 2026-06 v2.0 UI 配套: 告诉前端开始新 turn (创建 AI 消息气泡 + thinking 流容器)
+            sendToJS(
+                mapOf(
+                    "type" to "start_turn",
+                    "turnId" to turnId,
+                )
+            )
             currentCollectJob = scope.launch {
                 val startTime = System.currentTimeMillis()
                 try {
@@ -572,6 +744,17 @@ class JCEFChatPanel(
                         onTurnEnd = {
                             thinkingStarted.remove(turnId)
                             logger.info("[JCEFChatPanel] collectJob turnEnd, turnId=$turnId, durationMs=${System.currentTimeMillis() - startTime}")
+                            // 2026-06 v2.0 UI 配套: 告诉前端 turn 已结束 (关闭 AI 消息气泡, 移除光标)
+                            sendToJS(
+                                mapOf(
+                                    "type" to "end_turn",
+                                    "turnId" to turnId,
+                                )
+                            )
+                            // 清掉 currentTurnId, 防止下次发消息时还在引用旧 turn
+                            if (currentTurnId == turnId) {
+                                currentTurnId = null
+                            }
                         }
                     )
                 } catch (e: kotlinx.coroutines.CancellationException) {
@@ -641,21 +824,21 @@ class JCEFChatPanel(
     }
 
     fun setModelLabel(model: String, provider: String = "") {
-        sendToJS(mapOf("type" to "set_model", "model" to model, "provider" to provider))
+        sendToJS(mapOf("type" to "model_changed", "model" to model, "provider" to provider))
     }
 
     fun setAvailableModels(models: List<Map<String, Any>>) {
-        sendToJS(mapOf("type" to "set_models", "models" to models))
+        sendToJS(mapOf("type" to "available_models", "models" to models))
     }
 
     fun setTheme(theme: String) {
-        sendToJS(mapOf("type" to "set_theme", "theme" to theme))
+        sendToJS(mapOf("type" to "theme", "theme" to theme))
     }
 
     fun addArtifact(artifactId: String, title: String, language: String, content: String) {
         sendToJS(
             mapOf(
-                "type" to "artifact",
+                "type" to "artifact_add",
                 "artifactId" to artifactId,
                 "title" to title,
                 "language" to language,
@@ -665,7 +848,7 @@ class JCEFChatPanel(
     }
 
     fun clear() {
-        sendToJS(mapOf("type" to "clear"))
+        sendToJS(mapOf("type" to "clear_chat"))
     }
 
     fun getCurrentChatMode(): ChatMode? = currentChatMode
@@ -674,11 +857,15 @@ class JCEFChatPanel(
     }
 
     fun sendSessions(sessions: List<Map<String, Any>>) {
-        sendToJS(mapOf("type" to "set_sessions", "sessions" to sessions))
+        sendToJS(mapOf("type" to "sessions_updated", "sessions" to sessions))
     }
 
+    // v2.0 修复:旧实现发的是 "session"(单数),与前端 main.js 期望的 msg.sessions(数组)不匹配,
+    // 导致 setSessions([]) 把整个 sidebar 清空、新会话永远不出现。
+    // 调用方已统一改走 sendSessions(sessions) + notifySessionSwitched(id),见
+    // AgentToolWindowPanel.createNewSession()。本方法保留为 no-op 兜底,避免旧调用点运行时崩溃。
     fun notifySessionCreated(session: Map<String, Any>) {
-        sendToJS(mapOf("type" to "session_created", "session" to session))
+        // no-op: 协议已迁移到 sendSessions(sessions) 全量推送
     }
 
     fun notifySessionSwitched(sessionId: String) {
@@ -694,7 +881,7 @@ class JCEFChatPanel(
     }
 
     fun loadHistory(messages: List<Map<String, String>>) {
-        sendToJS(mapOf("type" to "load_history", "messages" to messages))
+        sendToJS(mapOf("type" to "history", "messages" to messages))
     }
 
     fun requestSessionsFromJS() {

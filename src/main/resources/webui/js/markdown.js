@@ -1,125 +1,128 @@
 /**
- * Markdown 渲染 + 代码块增强
- *
- * 注意:
- *   - 早期原 chat.html 使用 marked 9.x(老版本 API)
- *   - 现阶段在 index.html 中没有引用 marked.min.js
- *   - 如果未来要启用,需要自托管到 vendor/marked.min.js 并在 index.html 加载
- *   - 此处用 marked 作为可选依赖,缺失时降级为 escapeHtml(text)
+ * Markdown 渲染 v2.0
+ * ===================
+ * - 流式打字时按需渲染:对单段 text-stream-segment 直接用 marked.parse
+ * - 高亮:hljs 已经在 index.html 同步加载
+ * - 兜底:无 marked 时只做 escape
  */
 
-import { sanitizeHtml, escapeHtml } from "./utils.js";
+import { escapeHtml } from "./utils.js";
 
-/** 加载 marked(动态导入 vendor 目录) */
-let markedPromise = null;
+let _marked = null;
+let _markedPromise = null;
+
 function loadMarked() {
-    if (markedPromise) return markedPromise;
-    markedPromise = new Promise((resolve) => {
+    if (_marked) return Promise.resolve(_marked);
+    if (_markedPromise) return _markedPromise;
+    _markedPromise = new Promise((resolve) => {
         if (typeof window.marked !== "undefined") {
-            resolve(window.marked);
+            _marked = window.marked;
+            try {
+                if (_marked.setOptions) {
+                    _marked.setOptions({
+                        gfm: true,
+                        breaks: true,
+                        headerIds: false,
+                        mangle: false,
+                    });
+                }
+            } catch {}
+            resolve(_marked);
             return;
         }
         const script = document.createElement("script");
         script.src = "lib/marked.min.js";
-        script.onload = () => resolve(window.marked || null);
+        script.onload = () => {
+            _marked = window.marked || null;
+            if (_marked && _marked.setOptions) {
+                _marked.setOptions({
+                    gfm: true,
+                    breaks: true,
+                    headerIds: false,
+                    mangle: false,
+                });
+            }
+            resolve(_marked);
+        };
         script.onerror = () => {
-            console.warn("[markdown] failed to load marked, falling back");
+            console.warn("[markdown] failed to load marked, using fallback");
             resolve(null);
         };
         document.head.appendChild(script);
     });
-    return markedPromise;
+    return _markedPromise;
 }
 
-/** 同步渲染(没有 marked 时降级) */
-export function renderMarkdownSync(text) {
-    if (text == null) return "";
-    if (typeof window.marked === "undefined") {
-        return escapeHtml(text).replace(/\n/g, "<br/>");
+/** 同步渲染:在 marked 还没加载时降级为 escape */
+export function renderMarkdown(text) {
+    if (!text) return "";
+    if (_marked && typeof _marked.parse === "function") {
+        try {
+            return _marked.parse(text);
+        } catch (e) {
+            console.warn("[markdown] parse error:", e);
+        }
     }
-    try {
-        const rawHtml = window.marked.parse(text);
-        return sanitizeHtml(rawHtml);
-    } catch (e) {
-        console.error("[markdown] render failed:", e);
-        return escapeHtml(text);
-    }
+    // 兜底:转义 + 简单换行
+    return escapeHtml(text).replace(/\n/g, "<br>");
 }
 
-/** 异步预加载(应用启动时调用) */
 export function preloadMarkdown() {
     return loadMarked();
 }
 
-/**
- * 给容器内所有 <pre> 包裹 .code-block,加 header + 操作按钮
- */
-export function enhanceCodeBlocks(container) {
-    if (!container) return;
-    const blocks = container.querySelectorAll("pre");
-    blocks.forEach((pre) => {
-        if (pre.closest(".code-block")) return;
-        const code = pre.querySelector("code");
-        const langMatch = code?.className?.match(/language-(\w+)/);
-        const lang = langMatch ? langMatch[1] : "text";
-        const wrapper = document.createElement("div");
-        wrapper.className = "code-block";
-        const header = document.createElement("div");
-        header.className = "code-block-header";
-        header.innerHTML = `
-            <span class="code-lang">${escapeHtml(lang)}</span>
-            <div class="code-actions">
-                <button class="code-action-btn" data-cs-action="copy" data-cs-tooltip="复制代码">
-                    <i class="fas fa-copy"></i>&nbsp;复制
-                </button>
-                <button class="code-action-btn" data-cs-action="open" data-cs-tooltip="在新窗口打开">
-                    <i class="fas fa-external-link-alt"></i>&nbsp;打开
-                </button>
-            </div>
-        `;
-        wrapper.appendChild(header);
-        wrapper.appendChild(pre.cloneNode(true));
-        pre.replaceWith(wrapper);
-    });
-
-    // 事件委托:copy / open
-    container.querySelectorAll('[data-cs-action]').forEach((btn) => {
-        btn.addEventListener("click", (e) => {
-            const action = btn.getAttribute("data-cs-action");
-            const block = btn.closest(".code-block");
-            const code = block?.querySelector("code");
-            if (!code) return;
-            if (action === "copy") {
-                navigator.clipboard?.writeText(code.textContent);
-                const original = btn.innerHTML;
-                btn.innerHTML = '<i class="fas fa-check"></i>&nbsp;已复制';
-                setTimeout(() => (btn.innerHTML = original), 1200);
-            } else if (action === "open") {
-                const win = window.open("about:blank", "_blank");
-                if (win) {
-                    const text = code.textContent;
-                    win.document.write(
-                        `<!doctype html><html><head><meta charset="utf-8"><title>Code</title>` +
-                        `<style>body{background:#1e1e2e;color:#c0c0d0;font-family:monospace;` +
-                        `padding:20px;margin:0;white-space:pre-wrap;word-break:break-all;` +
-                        `line-height:1.6;font-size:13px;}</style></head>` +
-                        `<body>${escapeHtml(text)}</body></html>`,
-                    );
-                    win.document.close();
-                }
-            }
-        });
+/** 容器内 code 块高亮(已包含 hljs) */
+export function highlightCode(container) {
+    if (!window.hljs || !container) return;
+    container.querySelectorAll("pre code").forEach((b) => {
+        if (b.dataset.csHighlighted) return;
+        try {
+            window.hljs.highlightElement(b);
+            b.dataset.csHighlighted = "1";
+        } catch {}
     });
 }
 
-/** 同步高亮(已加载 hljs) */
-export function highlightCode(container) {
-    if (!container || typeof window.hljs === "undefined") return;
-    container.querySelectorAll("pre code").forEach((block) => {
-        try {
-            window.hljs.highlightElement(block);
-        } catch (e) {
-            // ignore
-        }
+/** 增强 code 块:加复制/语言徽标(在容器初始化后调用一次) */
+export function enhanceCodeBlocks(container) {
+    if (!container) return;
+    container.querySelectorAll("pre").forEach((pre) => {
+        if (pre.dataset.csEnhanced) return;
+        pre.dataset.csEnhanced = "1";
+        // 已经是 cs-code-block 包装的不再处理
+        if (pre.parentElement?.classList.contains("code-block")) return;
+
+        const codeEl = pre.querySelector("code");
+        const lang =
+            (codeEl?.className.match(/language-([\w-]+)/) || [])[1] || "text";
+        const block = document.createElement("div");
+        block.className = "code-block";
+        const header = document.createElement("div");
+        header.className = "code-block-header";
+        header.innerHTML = `
+            <span class="code-block-lang"><i class="fas fa-code"></i> ${escapeHtml(lang)}</span>
+            <span class="code-block-actions">
+                <button class="code-block-action" data-cs-action="copy" title="复制" aria-label="复制">
+                    <i class="fas fa-copy"></i>
+                </button>
+            </span>
+        `;
+        pre.parentNode.insertBefore(block, pre);
+        block.appendChild(header);
+        block.appendChild(pre);
+        const copyBtn = header.querySelector('[data-cs-action="copy"]');
+        copyBtn?.addEventListener("click", () => {
+            const text = codeEl?.textContent || pre.textContent || "";
+            navigator.clipboard?.writeText(text).then(() => {
+                copyBtn.classList.add("copied");
+                const icon = copyBtn.querySelector("i");
+                const orig = icon?.className;
+                if (icon) icon.className = "fas fa-check";
+                setTimeout(() => {
+                    copyBtn.classList.remove("copied");
+                    if (icon) icon.className = orig;
+                }, 1500);
+            });
+        });
     });
 }
