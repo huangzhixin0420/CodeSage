@@ -223,7 +223,7 @@ internal fun writeFileTool() = Tool(
 
 internal fun listDirectoryTool() = Tool(
     name = "list_directory",
-    description = "列出指定目录下的文件和子目录。返回文件名、类型（file/directory）和相对路径。recursive=true 时递归深度受 max_depth 限制（0-20，默认 3）；truncated=true 表示在 max_depth 处还有子目录未展开，调大 max_depth 重试。",
+    description = "列出指定目录下的文件和子目录。返回文件名、类型（file/directory）和相对路径。recursive=true 时递归深度受 max_depth 限制（0-20，默认 3）；truncated=true 表示在 max_depth 处还有子目录未展开，调大 max_depth 重试。默认跳过隐藏目录和 node_modules/build/.gradle/target/__pycache__/.idea；include_hidden 和 exclude_dirs 可覆盖。",
     parameters = ToolParameters(
         properties = mapOf(
             "path" to ToolProperty(
@@ -233,6 +233,18 @@ internal fun listDirectoryTool() = Tool(
             "recursive" to ToolProperty(
                 type = "boolean",
                 description = "是否递归列出子目录内容，默认为 false"
+            ),
+            "max_depth" to ToolProperty(
+                type = "integer",
+                description = "recursive=true 时的最大递归深度，0-20，默认 3"
+            ),
+            "include_hidden" to ToolProperty(
+                type = "boolean",
+                description = "是否包含 . 开头的隐藏文件（默认 false）"
+            ),
+            "exclude_dirs" to ToolProperty(
+                type = "array",
+                description = "要跳过的目录名列表；传空数组禁用过滤"
             )
         ),
         required = listOf()

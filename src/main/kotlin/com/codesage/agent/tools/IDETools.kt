@@ -62,6 +62,12 @@ class IDETools(
         // 设大点是为了应对 `cat README` / `git log` 之类的常见场景；
         // 真的超大（`find /`）让 LLM 用 `| head` 自行控制。
         const val MAX_COMMAND_OUTPUT_CHARS = 1_000_000
+
+        // M4: 搜索/结构工具默认跳过的目录名（不递归进去）。LLM 想搜这些目录
+        // 里的内容必须显式传 exclude_dirs=[] 覆盖。
+        val DEFAULT_EXCLUDED_DIRS = setOf(
+            "node_modules", "build", ".gradle", "target", "__pycache__", ".idea"
+        )
     }
 
     internal fun resolvePath(path: String): String {
@@ -204,6 +210,22 @@ class IDETools(
     private data class BoundedRead(val content: String, val truncated: Boolean)
 
     /**
+     * M4: 解析 exclude_dirs 参数。
+     *  - 不传 → 用默认集合
+     *  - 传空数组 → 不过滤（用户明确要求搜所有目录）
+     *  - 传非空数组 → 用用户列表覆盖默认
+     */
+    private fun parseExcludeDirs(args: JsonObject): Set<String> {
+        val arr = args["exclude_dirs"]?.jsonArray ?: return DEFAULT_EXCLUDED_DIRS
+        return arr.mapNotNull {
+            runCatching { it.jsonPrimitive.content }.getOrNull()
+        }.toSet()
+    }
+
+    private fun parseIncludeHidden(args: JsonObject): Boolean =
+        args["include_hidden"]?.jsonPrimitive?.booleanOrNull ?: false
+
+    /**
      * 有界读取 Reader（M2）。
      *
      * 读到 maxChars 字符就停；剩余流被排干（避免进程因 pipe 满而阻塞）。
@@ -321,6 +343,9 @@ class IDETools(
         val recursive = args["recursive"]?.jsonPrimitive?.booleanOrNull ?: false
         // H3: 暴露 max_depth 给 LLM 控制。硬上限 20 防止误传大值。
         val maxDepth = (args["max_depth"]?.jsonPrimitive?.intOrNull ?: 3).coerceIn(0, 20)
+        // M4
+        val excludeDirs = parseExcludeDirs(args)
+        val includeHidden = parseIncludeHidden(args)
 
         val resolvedPath = if (path != null) resolvePath(path) else project?.basePath
             ?: return ToolResult.Error("No project path available")
@@ -336,7 +361,7 @@ class IDETools(
 
                 val entries = mutableListOf<JsonObject>()
                 val state = DirectoryState()
-                collectDirectoryEntries(dir, entries, recursive, 0, maxDepth, state)
+                collectDirectoryEntries(dir, entries, recursive, 0, maxDepth, state, excludeDirs, includeHidden)
 
                 // H3: 显式告知 LLM 是否撞到 maxDepth
                 ToolResult.Success(
@@ -367,11 +392,15 @@ class IDETools(
         recursive: Boolean,
         depth: Int,
         maxDepth: Int,
-        state: DirectoryState
+        state: DirectoryState,
+        excludeDirs: Set<String>,
+        includeHidden: Boolean
     ) {
         val children = dir.children ?: return
         for (child in children) {
-            if (child.name.startsWith(".")) continue // 跳过隐藏文件
+            // M4: 统一过滤规则
+            if (!includeHidden && child.name.startsWith(".")) continue
+            if (child.isDirectory && child.name in excludeDirs) continue
 
             val entry = JsonObject(
                 mapOf(
@@ -384,7 +413,7 @@ class IDETools(
 
             if (recursive && child.isDirectory) {
                 if (depth < maxDepth) {
-                    collectDirectoryEntries(child, entries, true, depth + 1, maxDepth, state)
+                    collectDirectoryEntries(child, entries, true, depth + 1, maxDepth, state, excludeDirs, includeHidden)
                 } else {
                     // 子目录存在但 depth 到了 maxDepth，标记截断
                     state.hitMaxDepth = true
@@ -403,6 +432,9 @@ class IDETools(
         val path = args["path"]?.jsonPrimitive?.content
         // H2: 加 max_results 兜底，避免 LLM 传宽泛 query 触发 OOM
         val maxResults = (args["max_results"]?.jsonPrimitive?.intOrNull ?: 200).coerceIn(1, 1000)
+        // M4
+        val excludeDirs = parseExcludeDirs(args)
+        val includeHidden = parseIncludeHidden(args)
 
         val searchPath = if (path != null) resolvePath(path) else project?.basePath
             ?: return ToolResult.Error("No project path available")
@@ -420,7 +452,7 @@ class IDETools(
                 }
 
                 val state = SearchState()
-                searchInVirtualFile(root, regex, filePattern, matches, 0, 100, maxResults, state)
+                searchInVirtualFile(root, regex, filePattern, matches, 0, 100, maxResults, state, excludeDirs, includeHidden)
 
                 // H2: 透出 truncated + partial_scan_files，让 LLM 知道匹配被
                 // 截在哪一种上限上（results 上限 vs 大文件前 N 行扫描）
@@ -456,15 +488,19 @@ class IDETools(
         depth: Int,
         maxDepth: Int,
         maxResults: Int,
-        state: SearchState
+        state: SearchState,
+        excludeDirs: Set<String>,
+        includeHidden: Boolean
     ) {
         if (matches.size >= maxResults) return
         if (depth > maxDepth) return
-        if (file.name.startsWith(".")) return
+        // M4: 统一过滤规则
+        if (!includeHidden && file.name.startsWith(".")) return
+        if (file.isDirectory && file.name in excludeDirs) return
 
         if (file.isDirectory) {
             file.children?.forEach { child ->
-                searchInVirtualFile(child, regex, filePattern, matches, depth + 1, maxDepth, maxResults, state)
+                searchInVirtualFile(child, regex, filePattern, matches, depth + 1, maxDepth, maxResults, state, excludeDirs, includeHidden)
             }
         } else {
             if (filePattern != null && !matchPattern(file.name, filePattern)) return
@@ -613,6 +649,9 @@ class IDETools(
      */
     fun getProjectStructure(args: JsonObject): ToolResult {
         val depth = args["depth"]?.jsonPrimitive?.intOrNull ?: 2
+        // M4
+        val excludeDirs = parseExcludeDirs(args)
+        val includeHidden = parseIncludeHidden(args)
 
         val proj = project ?: return ToolResult.Error("No active project")
         val baseDir = proj.guessProjectDir()
@@ -620,7 +659,7 @@ class IDETools(
 
         return ApplicationManager.getApplication().runReadAction(Computable {
             try {
-                val structure = collectStructure(baseDir, 0, depth)
+                val structure = collectStructure(baseDir, 0, depth, excludeDirs, includeHidden)
 
                 // 收集模块信息
                 val modules = ProjectRootManager.getInstance(proj).contentSourceRoots.map {
@@ -649,23 +688,21 @@ class IDETools(
         })
     }
 
-    private fun collectStructure(file: VirtualFile, currentDepth: Int, maxDepth: Int): JsonObject {
+    private fun collectStructure(
+        file: VirtualFile,
+        currentDepth: Int,
+        maxDepth: Int,
+        excludeDirs: Set<String>,
+        includeHidden: Boolean
+    ): JsonObject {
         val children = mutableListOf<JsonObject>()
         if (currentDepth < maxDepth) {
             file.children?.forEach { child ->
-                if (child.name.startsWith(".") || child.name in setOf(
-                        "node_modules",
-                        "build",
-                        ".gradle",
-                        "target",
-                        "__pycache__",
-                        ".idea"
-                    )
-                ) {
-                    return@forEach
-                }
+                // M4: 统一过滤规则
+                if (!includeHidden && child.name.startsWith(".")) return@forEach
+                if (child.isDirectory && child.name in excludeDirs) return@forEach
                 val childObj = if (child.isDirectory) {
-                    collectStructure(child, currentDepth + 1, maxDepth)
+                    collectStructure(child, currentDepth + 1, maxDepth, excludeDirs, includeHidden)
                 } else {
                     JsonObject(
                         mapOf(
@@ -695,6 +732,9 @@ class IDETools(
         val path = args["path"]?.jsonPrimitive?.content
         // H1: 硬上限 1000，避免 LLM 误传大值导致 OOM
         val maxResults = (args["max_results"]?.jsonPrimitive?.intOrNull ?: 50).coerceIn(1, 1000)
+        // M4
+        val excludeDirs = parseExcludeDirs(args)
+        val includeHidden = parseIncludeHidden(args)
 
         val searchPath = if (path != null) resolvePath(path) else project?.basePath
             ?: return ToolResult.Error("No project path available")
@@ -711,7 +751,7 @@ class IDETools(
                     Regex(Regex.escape(pattern))
                 }
 
-                findFilesRecursive(root, regex, results, maxResults)
+                findFilesRecursive(root, regex, results, maxResults, excludeDirs, includeHidden)
 
                 // H1: 把截断信息显式回传给 LLM
                 ToolResult.Success(
@@ -735,15 +775,17 @@ class IDETools(
         file: VirtualFile,
         regex: Regex,
         results: MutableList<JsonObject>,
-        maxResults: Int
+        maxResults: Int,
+        excludeDirs: Set<String>,
+        includeHidden: Boolean
     ) {
         if (results.size >= maxResults) return
-        if (file.name.startsWith(".")) return
-        if (file.name in setOf("node_modules", "build", ".gradle", "target", "__pycache__", ".idea")) return
+        if (!includeHidden && file.name.startsWith(".")) return
+        if (file.isDirectory && file.name in excludeDirs) return
 
         if (file.isDirectory) {
             file.children?.forEach { child ->
-                findFilesRecursive(child, regex, results, maxResults)
+                findFilesRecursive(child, regex, results, maxResults, excludeDirs, includeHidden)
             }
         } else if (regex.containsMatchIn(file.name)) {
             results.add(
@@ -769,6 +811,9 @@ class IDETools(
         // subList bug 同源）。硬夹到 [0, 50]。
         val contextLines = (args["context_lines"]?.jsonPrimitive?.intOrNull ?: 2).coerceIn(0, 50)
         val maxResults = (args["max_results"]?.jsonPrimitive?.intOrNull ?: 200).coerceIn(1, 1000)
+        // M4
+        val excludeDirs = parseExcludeDirs(args)
+        val includeHidden = parseIncludeHidden(args)
 
         val searchPath = if (path != null) resolvePath(path) else project?.basePath
             ?: return ToolResult.Error("No project path available")
@@ -786,7 +831,7 @@ class IDETools(
                 }
 
                 val state = SearchState()
-                grepInFile(root, regex, filePattern, matches, contextLines, 0, 100, maxResults, state)
+                grepInFile(root, regex, filePattern, matches, contextLines, 0, 100, maxResults, state, excludeDirs, includeHidden)
 
                 ToolResult.Success(
                     JsonObject(
@@ -815,16 +860,19 @@ class IDETools(
         depth: Int,
         maxDepth: Int,
         maxResults: Int,
-        state: SearchState
+        state: SearchState,
+        excludeDirs: Set<String>,
+        includeHidden: Boolean
     ) {
         if (matches.size >= maxResults) return
         if (depth > maxDepth) return
-        if (file.name.startsWith(".")) return
-        if (file.name in setOf("node_modules", "build", ".gradle", "target", "__pycache__", ".idea")) return
+        // M4: 统一过滤规则
+        if (!includeHidden && file.name.startsWith(".")) return
+        if (file.isDirectory && file.name in excludeDirs) return
 
         if (file.isDirectory) {
             file.children?.forEach { child ->
-                grepInFile(child, regex, filePattern, matches, contextLines, depth + 1, maxDepth, maxResults, state)
+                grepInFile(child, regex, filePattern, matches, contextLines, depth + 1, maxDepth, maxResults, state, excludeDirs, includeHidden)
             }
         } else {
             if (filePattern != null && !matchPattern(file.name, filePattern)) return
