@@ -551,6 +551,19 @@ class ChatView {
         this._isGenerating = false;
     }
 
+        // 兼容调用方不传参(旧 loadHistory 路径):默认保留草稿,
+
+    /** 新会话时重置输入区:清空文字 / 附件 / 高度,关掉状态行。 */
+    _resetInput() {
+        if (this.inputTextarea) {
+            this.inputTextarea.value = "";
+            this.inputTextarea.style.height = "auto";
+        }
+        this._inputAttachments = [];
+        this._renderInputAttachments();
+        this._setStatus("就绪", "idle");
+        this._swapSendButton(false);
+    }
     // ============ User Message ============
 
     addUserMessage(text, attachments = [], fileRefs = []) {

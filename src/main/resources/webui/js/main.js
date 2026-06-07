@@ -186,6 +186,21 @@ function handleBridgeMessage(msg) {
                 chat.setInputAttachments(msg.attachments || []);
                 break;
 
+            // === 新会话:Kotlin 在 JCEFChatPanel.clear() 里 sendToJS 这个 type。
+            //    见 JCEFChatPanel.kt:fun clear() → sendToJS("clear_chat")
+            //    AgentToolWindowPanel.createNewSession() 在 saveCurrentSession + createSession
+            //    之后调 chatPanel.clear(),所以**必须**处理这个 type,否则:
+            //      - 主区还显示老消息(用户看到 "点了 + 但没反应")
+            //      - 输入框文字 / 附件 / 状态都不重置
+            //    chat.clear() 清主区 + turns/toolCalls/plans;
+            //    chat._resetInput() 清输入文字 / 附件 / 状态行。
+            //    注意:不直接用 chat.clear({resetInput:true}) 形态,避免
+            //    loadHistory(切到历史会话)误清掉用户草稿。 ===
+            case "clear_chat":
+                chat.clear();
+                chat._resetInput();
+                toast.info("已开启新会话");
+                break;
             // Kotlin 通知前端:在 in-web 视图里打开设置
             // (由 SettingsBridgeHandler.handle("settings_open_view") 触发,
             // 见 JCEFChatPanel.kt 的 "open_settings" case)
