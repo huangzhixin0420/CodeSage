@@ -309,8 +309,17 @@ internal fun delegateTaskTool() = Tool(
             ),
             "toolset" to ToolProperty(
                 type = "string",
-                description = "Which toolset to give the sub-agent (dev, research, test, browser)",
-                enum = listOf("dev", "research", "test", "browser")
+                description = "Which toolset to give the sub-agent. " +
+                        "New names: `coder` (write code, default), `explorer` (read/search), " +
+                        "`verifier` (run tests/commands), `webfetcher` (network/browser). " +
+                        "Old aliases still work: dev / research / test / browser (deprecated, will trigger a WARN). " +
+                        "Pick the most restrictive toolset that can do the task.",
+                enum = listOf(
+                    // 新名（推荐）
+                    "coder", "explorer", "verifier", "webfetcher",
+                    // 旧名 alias（兼容老 prompt）
+                    "dev", "research", "test", "browser"
+                )
             ),
             "max_iterations" to ToolProperty(
                 type = "integer",

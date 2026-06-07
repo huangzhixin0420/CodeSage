@@ -431,24 +431,28 @@ open class SubAgentExecutor(
     /**
      * 为指定 toolset 创建过滤后的工具注册表
      *
-     * 工具集分类（基于当前 IDE 工具命名）：
-     * - dev: 全部 IDE 工具（默认，开放所有）
-     * - research: 只读类（read_file, search_code, grep_code, semantic_search 等）
-     * - test: 测试相关（read_file, run_tests, exec_shell, list_directory 等）
-     * - browser: 网络/浏览器类（http_request, web_scraper, clipboard 等）
-     * - 其它/未识别: 退化为 dev（保留所有）
+     * 工具集命名（**P3 重构**：意图导向，对齐 Claude Code Task tool）：
+     * - coder:    写代码 / 改文件（之前的 dev）
+     * - explorer: 调研 / 搜索 / 阅读（之前的 research）
+     * - verifier: 跑测试 / 执行命令 / 验证（之前的 test）
+     * - webfetcher: 网络 / 浏览器（之前的 browser）
+     *
+     * 旧名 alias（**保留**：老 LLM prompt / 用户习惯用旧名不立即破坏）：
+     * - dev / research / test / browser
+     * - 用 WARN 日志引导迁移到新名
      *
      * 委托（delegate_task）、记忆（memory_*）始终保留，便于子 Agent 汇报和复用上下文。
      */
     private fun createToolRegistryForToolset(toolset: String): ToolRegistry {
+        val resolved = resolveToolsetAlias(toolset)
         val registry = ToolRegistry.createDefault(project)
 
-        val allowedNames: Set<String>? = when (toolset) {
-            "dev" -> null  // null = 保留全部
-            "research" -> RESEARCH_TOOLS + ALWAYS_AVAILABLE
-            "test" -> TEST_TOOLS + ALWAYS_AVAILABLE
-            "browser" -> BROWSER_TOOLS + ALWAYS_AVAILABLE
-            else -> null  // 未知 toolset 退化为 dev
+        val allowedNames: Set<String>? = when (resolved) {
+            "coder" -> null  // 全部 IDE 工具（默认，开放所有）
+            "explorer" -> RESEARCH_TOOLS + ALWAYS_AVAILABLE
+            "verifier" -> TEST_TOOLS + ALWAYS_AVAILABLE
+            "webfetcher" -> BROWSER_TOOLS + ALWAYS_AVAILABLE
+            else -> null  // 未知 toolset 退化为 coder（保留所有）
         }
 
         if (allowedNames != null) {
@@ -458,10 +462,31 @@ open class SubAgentExecutor(
             toRemove.forEach { name ->
                 registry.unregister(name)
             }
-            logger.info("[SubAgent] Toolset='$toolset' filtered out ${toRemove.size} tools; remaining=${registry.getAllTools().size}")
+            logger.info("[SubAgent] Toolset='$toolset' (resolved='$resolved') filtered out ${toRemove.size} tools; remaining=${registry.getAllTools().size}")
         }
 
         return registry
+    }
+
+    /**
+     * 旧名 alias 解析 + 迁移 WARN。
+     *
+     * - `coder / explorer / verifier / webfetcher` → 原样返回
+     * - `dev → coder`, `research → explorer`, `test → verifier`, `browser → webfetcher`
+     *   → 触发 WARN 日志引导迁移
+     * - 其它 → 原样返回（让外层 `else -> null` 退化为 coder）
+     */
+    private fun resolveToolsetAlias(toolset: String): String {
+        val newName = TOOLSET_ALIAS[toolset]
+        return if (newName != null) {
+            logger.warn(
+                "[SubAgent] Toolset alias deprecated: '$toolset' → '$newName'. " +
+                    "Update your delegate_task call to use the new name."
+            )
+            newName
+        } else {
+            toolset
+        }
     }
 
     /**
@@ -687,6 +712,17 @@ open class SubAgentExecutor(
             appendLine()
             appendLine("You are at depth=$depth of max=$MAX_RECURSION_DEPTH. Further delegation is not allowed.")
         }.trimEnd()
+
+        /**
+         * 旧 toolset 名 → 新 toolset 名 alias 表（P3 重命名）。
+         * 详见 createToolRegistryForToolset 的 docstring。
+         */
+        private val TOOLSET_ALIAS: Map<String, String> = mapOf(
+            "dev" to "coder",
+            "research" to "explorer",
+            "test" to "verifier",
+            "browser" to "webfetcher"
+        )
 
         /** 在所有 toolset 中都保留的工具（汇报、记忆、委托） */
         private val ALWAYS_AVAILABLE: Set<String> = setOf(

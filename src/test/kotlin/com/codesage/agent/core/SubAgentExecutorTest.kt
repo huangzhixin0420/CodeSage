@@ -816,6 +816,158 @@ class SubAgentExecutorTest {
         assertTrue(r.completedToolCalls.isEmpty(), "Default completedToolCalls should be empty")
     }
 
+    // ===== P3: 工具集命名（coder / explorer / verifier / webfetcher + alias 兼容） =====
+
+    /**
+     * P3 #1: 新名 `coder` 保留全部 IDE 工具（默认）
+     */
+    @Test
+    fun `P3 new toolset name coder should keep all tools (default)`() {
+        val parent = AgentCore()  // 不会被实际调用，createToolRegistryForToolset 不依赖 parent
+        val executor = SubAgentExecutor(parent)
+        val fullRegistry = ToolRegistry.createDefault()
+        val fullCount = fullRegistry.getAllTools().size
+
+        val registry = invokeCreateToolRegistryForToolset(executor, "coder")
+
+        assertEquals(
+            fullCount, registry.getAllTools().size,
+            "coder should keep all tools (default behavior)"
+        )
+    }
+
+    /**
+     * P3 #2: 新名 `explorer` 走 RESEARCH_TOOLS + ALWAYS_AVAILABLE
+     */
+    @Test
+    fun `P3 new toolset name explorer should filter to read-only tools`() {
+        val parent = AgentCore()
+        val executor = SubAgentExecutor(parent)
+        val fullRegistry = ToolRegistry.createDefault()
+        val fullCount = fullRegistry.getAllTools().size
+
+        val registry = invokeCreateToolRegistryForToolset(executor, "explorer")
+
+        val kept = registry.getAllTools().map { it.name }
+        assertTrue(kept.contains("read_file"), "explorer should keep read_file")
+        assertTrue(kept.contains("grep_code"), "explorer should keep grep_code")
+        assertTrue(kept.contains("delegate_task"), "explorer should keep delegate_task (ALWAYS_AVAILABLE)")
+        // 写 / 跑命令的工具应该被过滤掉
+        assertFalse(kept.contains("write_file"), "explorer should NOT keep write_file")
+        assertFalse(kept.contains("run_tests"), "explorer should NOT keep run_tests")
+        assertTrue(
+            registry.getAllTools().size < fullCount,
+            "explorer should filter some tools out (full=$fullCount, explorer=${kept.size})"
+        )
+    }
+
+    /**
+     * P3 #3: 新名 `verifier` 走 TEST_TOOLS + ALWAYS_AVAILABLE
+     */
+    @Test
+    fun `P3 new toolset name verifier should keep test-running tools`() {
+        val parent = AgentCore()
+        val executor = SubAgentExecutor(parent)
+        val registry = invokeCreateToolRegistryForToolset(executor, "verifier")
+
+        val kept = registry.getAllTools().map { it.name }
+        assertTrue(kept.contains("run_tests"), "verifier should keep run_tests")
+        assertTrue(kept.contains("run_command"), "verifier should keep run_command")
+        assertTrue(kept.contains("read_file"), "verifier should keep read_file")
+    }
+
+    /**
+     * P3 #4: 新名 `webfetcher` 走 BROWSER_TOOLS + ALWAYS_AVAILABLE
+     */
+    @Test
+    fun `P3 new toolset name webfetcher should keep network tools`() {
+        val parent = AgentCore()
+        val executor = SubAgentExecutor(parent)
+        val registry = invokeCreateToolRegistryForToolset(executor, "webfetcher")
+
+        val kept = registry.getAllTools().map { it.name }
+        assertTrue(kept.contains("http_request"), "webfetcher should keep http_request")
+        assertTrue(kept.contains("web_scraper"), "webfetcher should keep web_scraper")
+        // 写文件工具应该被过滤掉
+        assertFalse(kept.contains("write_file"), "webfetcher should NOT keep write_file")
+    }
+
+    /**
+     * P3 #5: 旧名 alias `dev` 行为 = `coder`（保留全部）
+     */
+    @Test
+    fun `P3 old alias dev should behave like coder`() {
+        val parent = AgentCore()
+        val executor = SubAgentExecutor(parent)
+        val fullRegistry = ToolRegistry.createDefault()
+        val fullCount = fullRegistry.getAllTools().size
+
+        val registry = invokeCreateToolRegistryForToolset(executor, "dev")
+
+        assertEquals(
+            fullCount, registry.getAllTools().size,
+            "old alias 'dev' should behave like new name 'coder' (keep all tools)"
+        )
+    }
+
+    /**
+     * P3 #6: 旧名 alias `research` 行为 = `explorer`
+     */
+    @Test
+    fun `P3 old alias research should behave like explorer`() {
+        val parent = AgentCore()
+        val executor = SubAgentExecutor(parent)
+        val explorerRegistry = invokeCreateToolRegistryForToolset(executor, "explorer")
+        val researchRegistry = invokeCreateToolRegistryForToolset(executor, "research")
+
+        val explorerTools = explorerRegistry.getAllTools().map { it.name }.toSet()
+        val researchTools = researchRegistry.getAllTools().map { it.name }.toSet()
+        assertEquals(
+            explorerTools, researchTools,
+            "old alias 'research' should produce identical toolset as 'explorer'"
+        )
+    }
+
+    /**
+     * P3 #7: `delegateTaskTool()` 的 `toolset` 参数 description 包含新名 + alias 提示
+     *        （Tool description 主描述保持简洁，新名集中在 toolset 字段说明里）
+     */
+    @Test
+    fun `P3 delegateTaskTool toolset param description should mention new names and old aliases`() {
+        val tool = com.codesage.agent.tools.delegateTaskTool()
+        val toolsetDesc = tool.parameters.properties["toolset"]?.description ?: ""
+        assertTrue(toolsetDesc.contains("coder"), "toolset description should mention new name 'coder'")
+        assertTrue(toolsetDesc.contains("explorer"), "toolset description should mention new name 'explorer'")
+        assertTrue(toolsetDesc.contains("verifier"), "toolset description should mention new name 'verifier'")
+        assertTrue(toolsetDesc.contains("webfetcher"), "toolset description should mention new name 'webfetcher'")
+        assertTrue(toolsetDesc.contains("dev"), "toolset description should mention old alias 'dev'")
+        assertTrue(toolsetDesc.contains("deprecated") || toolsetDesc.contains("WARN"),
+            "toolset description should warn about old aliases")
+    }
+
+    /**
+     * P3 #8: `delegateTaskTool()` 的 toolset enum 包含新旧名（兼容老 prompt）
+     */
+    @Test
+    fun `P3 delegateTaskTool toolset enum should include new and old names`() {
+        val tool = com.codesage.agent.tools.delegateTaskTool()
+        val enumList = tool.parameters.properties["toolset"]?.enum ?: emptyList()
+        // 新名
+        listOf("coder", "explorer", "verifier", "webfetcher").forEach { newName ->
+            assertTrue(
+                enumList.contains(newName),
+                "enum should include new name '$newName' (got: $enumList)"
+            )
+        }
+        // 旧名 alias
+        listOf("dev", "research", "test", "browser").forEach { oldName ->
+            assertTrue(
+                enumList.contains(oldName),
+                "enum should keep old alias '$oldName' for backward compat (got: $enumList)"
+            )
+        }
+    }
+
     // ===== 工具方法 =====
 
     /**
