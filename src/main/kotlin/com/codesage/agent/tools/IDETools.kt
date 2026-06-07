@@ -46,7 +46,12 @@ import java.util.concurrent.TimeUnit
  * - 并行读取多文件
  * - 增量更新检测
  */
-class IDETools(private val project: Project?) {
+class IDETools(
+    private val project: Project?,
+    // L3: 可选审计日志。ToolRegistry.createDefault() / ToolExecutor 透传，
+    // 不接时为 null（向后兼容测试和未配置审计的环境）。
+    private val auditLog: com.codesage.tools.guardrails.ToolAuditLog? = null,
+) {
     private val logger = Logger.getLogger<IDETools>()
 
     companion object {
@@ -1056,6 +1061,7 @@ class IDETools(private val project: Project?) {
         // 必须显式 recursive=true 才放行。
         val recursive = args["recursive"]?.jsonPrimitive?.booleanOrNull ?: false
         val resolvedPath = resolvePath(path)
+        val deleteStart = System.currentTimeMillis()
 
         return try {
             val file = File(resolvedPath)
@@ -1094,6 +1100,13 @@ class IDETools(private val project: Project?) {
                 file.deleteRecursively()
             }
 
+            // L3: 审计破坏性操作成功
+            auditLog?.log(
+                toolName = "delete_file",
+                arguments = mapOf("path" to path, "recursive" to recursive),
+                resultStatus = "success",
+                durationMs = System.currentTimeMillis() - deleteStart
+            )
             ToolResult.Success(
                 JsonObject(
                     mapOf(
@@ -1104,6 +1117,13 @@ class IDETools(private val project: Project?) {
                 )
             )
         } catch (e: Exception) {
+            // L3: 失败也记
+            auditLog?.log(
+                toolName = "delete_file",
+                arguments = mapOf("path" to path, "recursive" to recursive),
+                resultStatus = "error",
+                durationMs = System.currentTimeMillis() - deleteStart
+            )
             ToolResult.Error("Delete failed: ${e.message}")
         }
     }
@@ -1119,6 +1139,7 @@ class IDETools(private val project: Project?) {
 
         val srcPath = resolvePath(source)
         val dstPath = resolvePath(destination)
+        val copyStart = System.currentTimeMillis()
 
         return try {
             val srcFile = File(srcPath)
@@ -1128,20 +1149,44 @@ class IDETools(private val project: Project?) {
 
             val dstFile = File(dstPath)
             dstFile.parentFile?.mkdirs()
-            srcFile.copyTo(dstFile, overwrite = true)
+
+            // M3: 区分文件和目录——copyTo 对目录抛 IOException
+            val entryType = if (srcFile.isDirectory) "directory" else "file"
+            if (srcFile.isDirectory) {
+                if (dstFile.exists() && !dstFile.isDirectory) {
+                    return ToolResult.Error("Destination exists and is not a directory: $destination")
+                }
+                srcFile.copyRecursively(dstFile, overwrite = true)
+            } else {
+                srcFile.copyTo(dstFile, overwrite = true)
+            }
 
             LocalFileSystem.getInstance().refreshAndFindFileByPath(dstPath)
 
+            // L3: 审计
+            auditLog?.log(
+                toolName = "copy_file",
+                arguments = mapOf("source" to source, "destination" to destination, "type" to entryType),
+                resultStatus = "success",
+                durationMs = System.currentTimeMillis() - copyStart
+            )
             ToolResult.Success(
                 JsonObject(
                     mapOf(
                         "source" to JsonPrimitive(source),
                         "destination" to JsonPrimitive(destination),
-                        "copied" to JsonPrimitive(true)
+                        "copied" to JsonPrimitive(true),
+                        "type" to JsonPrimitive(entryType)
                     )
                 )
             )
         } catch (e: Exception) {
+            auditLog?.log(
+                toolName = "copy_file",
+                arguments = mapOf("source" to source, "destination" to destination),
+                resultStatus = "error",
+                durationMs = System.currentTimeMillis() - copyStart
+            )
             ToolResult.Error("Copy failed: ${e.message}")
         }
     }
@@ -1157,6 +1202,7 @@ class IDETools(private val project: Project?) {
 
         val srcPath = resolvePath(source)
         val dstPath = resolvePath(destination)
+        val moveStart = System.currentTimeMillis()
 
         return try {
             val srcFile = File(srcPath)
@@ -1187,6 +1233,13 @@ class IDETools(private val project: Project?) {
 
             LocalFileSystem.getInstance().refreshAndFindFileByPath(dstPath)
 
+            // L3: 审计
+            auditLog?.log(
+                toolName = "move_file",
+                arguments = mapOf("source" to source, "destination" to destination, "method" to method),
+                resultStatus = "success",
+                durationMs = System.currentTimeMillis() - moveStart
+            )
             ToolResult.Success(
                 JsonObject(
                     mapOf(
@@ -1198,6 +1251,12 @@ class IDETools(private val project: Project?) {
                 )
             )
         } catch (e: Exception) {
+            auditLog?.log(
+                toolName = "move_file",
+                arguments = mapOf("source" to source, "destination" to destination),
+                resultStatus = "error",
+                durationMs = System.currentTimeMillis() - moveStart
+            )
             ToolResult.Error("Move failed: ${e.message}")
         }
     }

@@ -33,7 +33,7 @@ class ToolExecutor(
     private val json = Json { ignoreUnknownKeys = true }
 
     // 遗留工具实例（仅用于 fallback）
-    private val ideTools = IDETools(project)
+    private val ideTools = IDETools(project, auditLog)
     private val extendedTools = ExtendedTools(project)
     private val codeInsightExecutor = CodeInsightExecutor(project)
 

@@ -79,10 +79,13 @@ class ToolRegistry {
         /**
          * 创建默认的工具注册表，包含所有 IDE 内置工具
          */
-        fun createDefault(project: com.intellij.openapi.project.Project? = null): ToolRegistry {
+        fun createDefault(
+            project: com.intellij.openapi.project.Project? = null,
+            auditLog: com.codesage.tools.guardrails.ToolAuditLog? = null,
+        ): ToolRegistry {
             return ToolRegistry().apply {
                 // === IDE 文件操作工具（通过 Handler 注册） ===
-                val ideTools = IDETools(project)
+                val ideTools = IDETools(project, auditLog)
                 register(IDEFileHandlers.createReadFileHandler(ideTools))
                 register(IDEFileHandlers.createWriteFileHandler(ideTools))
                 register(IDEFileHandlers.createListDirectoryHandler(ideTools))
@@ -408,7 +411,7 @@ internal fun deleteFileTool() = Tool(
 
 internal fun copyFileTool() = Tool(
     name = "copy_file",
-    description = "Copy a file from source to destination.",
+    description = "Copy a file (or recursively a directory) from source to destination. Overwrites existing destination. Returns type=file or type=directory.",
     parameters = ToolParameters(
         properties = mapOf(
             "source" to ToolProperty("string", "Source file path"),
