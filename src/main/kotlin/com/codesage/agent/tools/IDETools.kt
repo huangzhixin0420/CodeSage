@@ -221,7 +221,11 @@ class IDETools(private val project: Project?) {
                                 document.setText(content)
                                 FileDocumentManager.getInstance().saveDocument(document)
                             } else {
-                                virtualFile.setBinaryContent(content.toByteArray(StandardCharsets.UTF_8))
+                                // 无 Document 路径：走 AtomicFileWriter 保证原子写，
+                                // 再 refresh VFS 触发修改事件（绕开 VFS 内部非原子
+                                // setBinaryContent 写脏文件的风险）
+                                AtomicFileWriter.write(File(virtualFile.path), content)
+                                virtualFile.refresh(false, false)
                             }
                         }
                     })
@@ -234,7 +238,9 @@ class IDETools(private val project: Project?) {
                 }, ModalityState.defaultModalityState())
             }
         } else {
-            virtualFile.setBinaryContent(content.toByteArray(StandardCharsets.UTF_8))
+            // 无 project 路径：原子写 + VFS refresh
+            AtomicFileWriter.write(File(virtualFile.path), content)
+            virtualFile.refresh(false, false)
         }
     }
 

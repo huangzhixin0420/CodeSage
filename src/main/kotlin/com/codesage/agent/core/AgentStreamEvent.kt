@@ -96,7 +96,18 @@ sealed class AgentStreamEvent {
         /**
          * 子 Agent 实际调用的工具名列表（去重）。UI 展示用，**不**进父 LLM context。
          */
-        val toolsUsed: List<String> = emptyList()
+        val toolsUsed: List<String> = emptyList(),
+        /**
+         * **P2**: 用户在子 Agent 跑到一半时按了 Cancel。父 LLM 看到 output 里的
+         * "Cancelled by user." marker 后**不**应自动 retry（见 buildSubAgentPrompt 的
+         * Cancellation Semantics 段）。
+         */
+        val cancelled: Boolean = false,
+        /**
+         * **P2**: 取消前子 Agent 已完成的 tool call 列表（带 filePath 摘要）。
+         * 进父 LLM context 让它知道"哪些文件改过了"（避免重复改 / 误以为没动）。
+         */
+        val completedToolCalls: List<ToolCallRecord> = emptyList()
     ) : AgentStreamEvent()
 
     /**

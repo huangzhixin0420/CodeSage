@@ -637,6 +637,185 @@ class SubAgentExecutorTest {
         assertEquals("Short summary", summary)
     }
 
+    // ===== P2 #1: extractToolCallArgSummary =====
+
+    /**
+     * P2 #1: extractToolCallArgSummary — read_file 抽 path 字段
+     */
+    @Test
+    fun `extractToolCallArgSummary should extract path from read_file args`() {
+        val summary = SubAgentExecutor.extractToolCallArgSummary(
+            toolName = "read_file",
+            argumentsJson = """{"path": "/Users/leo/foo.kt"}"""
+        )
+        assertEquals("path: /Users/leo/foo.kt", summary)
+    }
+
+    /**
+     * P2 #2: extractToolCallArgSummary — grep_code 抽 pattern 字段
+     */
+    @Test
+    fun `extractToolCallArgSummary should extract pattern from grep_code args`() {
+        val summary = SubAgentExecutor.extractToolCallArgSummary(
+            toolName = "grep_code",
+            argumentsJson = """{"pattern": "fun.*auth", "path": "/src"}"""
+        )
+        assertTrue(summary.contains("pattern: fun.*auth"))
+        assertTrue(summary.contains("path: /src"))
+    }
+
+    /**
+     * P2 #3: extractToolCallArgSummary — run_command 抽 command 字段
+     */
+    @Test
+    fun `extractToolCallArgSummary should extract command from run_command args`() {
+        val summary = SubAgentExecutor.extractToolCallArgSummary(
+            toolName = "run_command",
+            argumentsJson = """{"command": "gradle build"}"""
+        )
+        assertEquals("command: gradle build", summary)
+    }
+
+    /**
+     * P2 #4: extractToolCallArgSummary — 未知 tool 名 fallback 截断 200 字符
+     */
+    @Test
+    fun `extractToolCallArgSummary should truncate for unknown tool`() {
+        val args = """{"random_field": "value"}"""
+        val summary = SubAgentExecutor.extractToolCallArgSummary(
+            toolName = "totally_unknown_tool",
+            argumentsJson = args
+        )
+        assertEquals(args, summary)
+    }
+
+    /**
+     * P2 #5: extractToolCallArgSummary — 无关键字段时 fallback 截断 200 字符
+     */
+    @Test
+    fun `extractToolCallArgSummary should truncate when key fields missing`() {
+        val args = """{"unrelated_field": "value"}"""
+        val summary = SubAgentExecutor.extractToolCallArgSummary(
+            toolName = "read_file",
+            argumentsJson = args
+        )
+        assertEquals(args, summary)
+    }
+
+    // ===== P2 #2: extractCancelledSummary =====
+
+    /**
+     * P2 #6: extractCancelledSummary — marker 必出在第一行
+     */
+    @Test
+    fun `extractCancelledSummary should start with Cancelled by user marker`() {
+        val summary = SubAgentExecutor.extractCancelledSummary(
+            lastAssistantText = "I was working on auth",
+            allText = "all text",
+            completedToolCalls = listOf(
+                ToolCallRecord("read_file", "path: /a.kt", 100, true)
+            ),
+            logger = com.intellij.openapi.diagnostic.Logger.getInstance("test")
+        )
+        assertTrue(
+            summary.startsWith("Cancelled by user."),
+            "Parent LLM needs to detect the marker to avoid auto-retry. Got: ${summary.take(100)}"
+        )
+    }
+
+    /**
+     * P2 #7: extractCancelledSummary — 包含 tool calls 列表（带 ✓/✗ mark）
+     */
+    @Test
+    fun `extractCancelledSummary should include completed tool calls with marks`() {
+        val summary = SubAgentExecutor.extractCancelledSummary(
+            lastAssistantText = "I refactored X",
+            allText = "",
+            completedToolCalls = listOf(
+                ToolCallRecord("read_file", "path: /a.kt", 100, true),
+                ToolCallRecord("write_file", "path: /b.kt", 50, true),
+                ToolCallRecord("run_command", "command: ls", 0, false)
+            ),
+            logger = com.intellij.openapi.diagnostic.Logger.getInstance("test")
+        )
+        assertTrue(summary.contains("**Tool calls completed** (3)"))
+        assertTrue(summary.contains("✓ `read_file` (100B): path: /a.kt"))
+        assertTrue(summary.contains("✓ `write_file` (50B): path: /b.kt"))
+        assertTrue(summary.contains("✗ `run_command` (0B): command: ls"))
+    }
+
+    /**
+     * P2 #8: extractCancelledSummary — 空 tool calls 时降级提示
+     */
+    @Test
+    fun `extractCancelledSummary should handle empty tool calls gracefully`() {
+        val summary = SubAgentExecutor.extractCancelledSummary(
+            lastAssistantText = "thinking...",
+            allText = "",
+            completedToolCalls = emptyList(),
+            logger = com.intellij.openapi.diagnostic.Logger.getInstance("test")
+        )
+        assertTrue(summary.contains("**Tool calls completed** (0)"))
+        assertTrue(summary.contains("thinking..."))
+    }
+
+    /**
+     * P2 #9: extractCancelledSummary — 都为空时只输出 marker + 0 tool calls
+     *        （不崩溃；父 LLM 拿到的是干净的 "Cancelled by user. ..." 摘要）
+     */
+    @Test
+    fun `extractCancelledSummary should not crash when both texts are blank`() {
+        val summary = SubAgentExecutor.extractCancelledSummary(
+            lastAssistantText = "",
+            allText = "",
+            completedToolCalls = emptyList(),
+            logger = com.intellij.openapi.diagnostic.Logger.getInstance("test")
+        )
+        assertTrue(summary.startsWith("Cancelled by user."))
+        assertTrue(summary.contains("(0)"))
+    }
+
+    // ===== P2 #3: buildSubAgentPrompt 应包含 Cancellation Semantics 段 =====
+
+    /**
+     * P2 #10: buildSubAgentPrompt — 包含 "Cancellation Semantics" 段
+     *        （让子 agent 知道输出 marker 后父 LLM 不应自动 retry）
+     */
+    @Test
+    fun `buildSubAgentPrompt should include Cancellation Semantics section`() {
+        val prompt = SubAgentExecutor.buildSubAgentPrompt(
+            taskDescription = "do X",
+            toolset = "dev",
+            depth = 0
+        )
+        assertTrue(
+            prompt.contains("Cancellation Semantics"),
+            "Sub-agent prompt must mention cancellation semantics for parent LLM. Prompt: $prompt"
+        )
+        assertTrue(
+            prompt.contains("Cancelled by user."),
+            "Sub-agent prompt must show the marker parent LLM should detect"
+        )
+    }
+
+    // ===== P2 #4: SubAgentResult cancelled 字段默认 false =====
+
+    /**
+     * P2 #11: SubAgentResult.cancelled 默认 false（向后兼容）
+     */
+    @Test
+    fun `SubAgentResult cancelled should default to false`() {
+        val r = SubAgentResult(
+            success = true,
+            output = "ok",
+            sessionId = "sub_test",
+            iterationsUsed = 1,
+            toolsUsed = listOf("read_file")
+        )
+        assertFalse(r.cancelled, "Default cancelled should be false (backward compat)")
+        assertTrue(r.completedToolCalls.isEmpty(), "Default completedToolCalls should be empty")
+    }
+
     // ===== 工具方法 =====
 
     /**

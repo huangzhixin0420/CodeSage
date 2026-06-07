@@ -338,6 +338,7 @@ class EnhancedAgentLoopDelegateTaskTest {
             maxIterations: Int,
             contextFiles: List<String>,
             progressCallback: suspend (String) -> Unit,
+            parentJob: kotlinx.coroutines.Job?,
         ): SubAgentResult {
             spawnCallCount++
             lastTaskDescription = taskDescription

@@ -12,6 +12,8 @@ import com.codesage.shared.config.PluginConfig
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -25,14 +27,42 @@ import java.nio.file.Files
 import java.util.UUID
 
 /**
+ * 单次 tool call 的"已完成"摘要（P2: 给取消场景用）。
+ *
+ * 仅携带"摘要级别"信息（工具名 + 关键参数 path / pattern / command + 结果长度 + 成功状态），
+ * **不**带 content 全文 — 避免给父 LLM 注入大量 token。
+ *
+ * 父 LLM 看到这份列表后能知道：
+ * - 子 Agent 改过 / 读过的文件
+ * - 子 Agent 用过的工具谱
+ * - 哪些成功了、哪些失败了
+ */
+data class ToolCallRecord(
+    val name: String,
+    /** 关键参数摘要（path / pattern / command 等），fallback 截断 200 字符 */
+    val argSummary: String,
+    /** 结果长度（字节） */
+    val resultLength: Int,
+    val success: Boolean
+)
+
+/**
  * 子 Agent 执行结果
+ *
+ * P2 扩展：当 [cancelled]=true 时，父 LLM 看到 [output] 里有 "Cancelled by user." marker，
+ * 应停止 retry 并询问用户下一步（见 buildSubAgentPrompt 的 Cancellation Semantics）。
+ * [completedToolCalls] 让父 LLM 知道子 Agent 在被取消前已经动过哪些文件 / 读过什么。
  */
 data class SubAgentResult(
     val success: Boolean,
     val output: String,
     val sessionId: String,
     val iterationsUsed: Int,
-    val toolsUsed: List<String>
+    val toolsUsed: List<String>,
+    /** P2: 用户是否在执行途中 cancel 了子 Agent */
+    val cancelled: Boolean = false,
+    /** P2: 取消前已完成的 tool call 摘要（cancelled=true 时才有意义） */
+    val completedToolCalls: List<ToolCallRecord> = emptyList()
 )
 
 /**
@@ -102,6 +132,13 @@ open class SubAgentExecutor(
         maxIterations: Int = 10,
         contextFiles: List<String> = emptyList(),
         progressCallback: suspend (String) -> Unit = {},
+        /**
+         * P2: 父协程的 Job 句柄。子 Agent 用来：
+         * - 父 cancel 时立刻感知（结构化并发）
+         * - catch CancellationException 后构造 cancelled summary 回灌父 LLM
+         * 可选：老调用方传 null 即可（行为不变）。
+         */
+        parentJob: Job? = null,
     ): SubAgentResult {
         // 1. 递归深度检查
         if (depth >= MAX_RECURSION_DEPTH) {
@@ -199,11 +236,16 @@ open class SubAgentExecutor(
             // outputBuilder = 全量文本（仅用于 fallback 诊断，UI 不展示）
             // currentTurnText = 最后一个 turn 的文本（tool call 之间的内容），
             //                    循环结束后持有"最终 turn" = 子 Agent 的摘要
+            // completedToolCalls = P2: 记录每个 tool call 的摘要（用于取消时回灌父 LLM）
             val outputBuilder = StringBuilder()
             var currentTurnText = StringBuilder()
             val toolsUsed = mutableSetOf<String>()
+            val completedToolCalls = mutableListOf<ToolCallRecord>()
+            /** 记录 in-flight tool 的关键参数（ToolCallStart 时抽，到 ToolCallResult 时合并） */
+            val inflightToolArgs = mutableMapOf<String, String>()
             var iterationsUsed = 0
             var success = true
+            var cancelled = false
 
             try {
                 progressCallback("[SubAgent $subSessionId] Starting task (depth=$depth, toolset=$toolset)...")
@@ -221,10 +263,26 @@ open class SubAgentExecutor(
                             currentTurnText = StringBuilder()
                             toolsUsed.add(event.toolCall.name)
                             iterationsUsed++
+                            // P2: 提前抽关键参数到 inflight map（ToolCallResult 时合并）
+                            val summary = extractToolCallArgSummary(
+                                event.toolCall.name,
+                                event.toolCall.arguments
+                            )
+                            inflightToolArgs[event.toolCall.id] = summary
                             progressCallback("[SubAgent] Using tool: ${event.toolCall.name}")
                         }
 
                         is AgentStreamEvent.ToolCallResult -> {
+                            // P2: tool 调用完成，记录到 completedToolCalls 供取消时回灌
+                            val argSummary = inflightToolArgs.remove(event.toolCallId) ?: ""
+                            completedToolCalls.add(
+                                ToolCallRecord(
+                                    name = event.toolName,
+                                    argSummary = argSummary,
+                                    resultLength = event.result.length,
+                                    success = event.success
+                                )
+                            )
                             progressCallback("[SubAgent] Tool ${event.toolName} ${if (event.success) "completed" else "failed"}")
                         }
 
@@ -259,6 +317,19 @@ open class SubAgentExecutor(
                         }
                     }
                 }
+            } catch (e: CancellationException) {
+                // P2: 用户 cancel 了父协程 — 立即停止当前 turn，**不**重抛，
+                // 把已完成的 tool calls + 最后一段文本组成 cancelled summary，
+                // 让父 LLM 知道"子 agent 改过什么 / 读了什么"，
+                // 但同时让父 LLM 别自动 retry（见 buildSubAgentPrompt）。
+                cancelled = true
+                success = false
+                logger.info(
+                    "[SubAgent] Cancelled by parent job. " +
+                        "Completed tool calls=${completedToolCalls.size}, " +
+                        "iterationsUsed=$iterationsUsed"
+                )
+                // 注意：不 appendLine，避免破坏 extractCancelledSummary 的解析
             } catch (e: Exception) {
                 success = false
                 logger.error("SubAgent execution failed", e)
@@ -267,19 +338,30 @@ open class SubAgentExecutor(
 
             // 最终 turn = currentTurnText（循环结束时没新 tool call，持有的就是最后一段）
             // 兜底逻辑委托给纯函数 extractFinalTurnSummary，便于单测
-            val output = extractFinalTurnSummary(
-                finalTurnText = currentTurnText.toString(),
-                allText = outputBuilder.toString(),
-                iterationsUsed = iterationsUsed,
-                logger = logger
-            )
+            val output = if (cancelled) {
+                extractCancelledSummary(
+                    lastAssistantText = currentTurnText.toString(),
+                    allText = outputBuilder.toString(),
+                    completedToolCalls = completedToolCalls,
+                    logger = logger
+                )
+            } else {
+                extractFinalTurnSummary(
+                    finalTurnText = currentTurnText.toString(),
+                    allText = outputBuilder.toString(),
+                    iterationsUsed = iterationsUsed,
+                    logger = logger
+                )
+            }
 
             val result = SubAgentResult(
                 success = success,
                 output = output,
                 sessionId = subSessionId,
                 iterationsUsed = iterationsUsed,
-                toolsUsed = toolsUsed.toList()
+                toolsUsed = toolsUsed.toList(),
+                cancelled = cancelled,
+                completedToolCalls = completedToolCalls.toList()
             )
 
             logger.info("[SubAgent] Completed. Success=$success, Tools=${toolsUsed}, Depth=$depth")
@@ -435,6 +517,122 @@ open class SubAgentExecutor(
         }
 
         /**
+         * P2 纯函数：从 tool call 的 arguments JSON 抽出"摘要级别"的关键参数。
+         *
+         * 按 tool 名走白名单字段（path / pattern / command / query / url），
+         * 这样父 LLM 看到 "Cancelled by user. Partial work completed" 后能
+         * 直接知道"子 agent 改过 / 读过哪些文件 / 跑过哪些命令"。
+         *
+         * @param toolName 工具名（e.g. "read_file", "write_file"）
+         * @param argumentsJson 工具调用的 arguments JSON 字符串
+         * @return 摘要字符串（"path: /Users/leo/foo.kt" 这种形式），无关键字段时
+         *         截断 argumentsJson 前 200 字符
+         */
+        @JvmStatic
+        fun extractToolCallArgSummary(toolName: String, argumentsJson: String): String {
+            val keyFields = when (toolName) {
+                "read_file", "write_file", "edit_file", "delete_file", "find_file",
+                "get_file_info", "get_file_summary", "find_usages", "analyze_symbol",
+                "get_inheritance_chain" -> listOf("path", "file_path")
+                "grep_code", "search_code", "semantic_search", "symbol_search" -> listOf(
+                    "pattern", "query", "path", "directory"
+                )
+                "run_command", "run_tests", "exec_shell" -> listOf("command", "cmd", "shell_command")
+                "http_request", "web_scraper" -> listOf("url", "uri")
+                "list_directory" -> listOf("path", "directory")
+                "read_multiple_files" -> listOf("paths", "files")
+                else -> emptyList()
+            }
+
+            if (keyFields.isEmpty() || argumentsJson.isBlank()) {
+                return argumentsJson.take(200)
+            }
+
+            return try {
+                val element = kotlinx.serialization.json.Json.parseToJsonElement(argumentsJson)
+                val obj = element as? kotlinx.serialization.json.JsonObject
+                val parts = mutableListOf<String>()
+                if (obj != null) {
+                    for (field in keyFields) {
+                        val v = obj[field] ?: continue
+                        val s = when (v) {
+                            is kotlinx.serialization.json.JsonPrimitive -> v.content
+                            else -> v.toString()
+                        }
+                        if (s.isNotBlank()) {
+                            parts.add("$field: $s")
+                        }
+                    }
+                }
+                if (parts.isEmpty()) {
+                    argumentsJson.take(200)
+                } else {
+                    parts.joinToString(", ")
+                }
+            } catch (e: Exception) {
+                argumentsJson.take(200)
+            }
+        }
+
+        /**
+         * P2 纯函数：构造"用户取消了子 agent"场景下的回灌文本。
+         *
+         * **关键设计**：第一行必须是 "Cancelled by user." marker —
+         * 父 LLM 的 prompt 里有明确的"看到 marker 别自动 retry"指令
+         * （见 buildSubAgentPrompt 的 Cancellation Semantics 段）。
+         *
+         * 输出格式：
+         * ```
+         * Cancelled by user. Partial work completed:
+         *
+         * **Tool calls completed** (3):
+         * - ✓ `read_file` (1240B): /Users/leo/Code/foo.kt
+         * - ✓ `write_file` (23B): /Users/leo/Code/bar.kt
+         * - ✗ `run_command` (0B): command: ls -la
+         *
+         * **Last assistant text**:
+         * I refactored AuthService. Need to also update tests.
+         * ```
+         *
+         * @param lastAssistantText 子 agent 最后一个 turn 的纯文本（中间思考 / 最终摘要）
+         * @param allText 全量文本（兜底 — 当 lastAssistantText 为空时退化）
+         * @param completedToolCalls 已完成的 tool call 列表
+         * @param logger 日志
+         */
+        @JvmStatic
+        fun extractCancelledSummary(
+            lastAssistantText: String,
+            allText: String,
+            completedToolCalls: List<ToolCallRecord>,
+            logger: com.intellij.openapi.diagnostic.Logger
+        ): String = buildString {
+            appendLine("Cancelled by user. Partial work completed:")
+            appendLine()
+
+            // 段 1：tool calls 摘要
+            if (completedToolCalls.isNotEmpty()) {
+                appendLine("**Tool calls completed** (${completedToolCalls.size}):")
+                completedToolCalls.forEach { tc ->
+                    val mark = if (tc.success) "✓" else "✗"
+                    val summary = if (tc.argSummary.isBlank()) "" else ": ${tc.argSummary}"
+                    appendLine("- $mark `${tc.name}` (${tc.resultLength}B)$summary")
+                }
+                appendLine()
+            } else {
+                logger.info("[SubAgent] cancelled before any tool call completed")
+                appendLine("**Tool calls completed** (0)")
+                appendLine()
+            }
+
+            // 段 2：最后一段 assistant 文本（兜底用 allText）
+            val text = lastAssistantText.ifBlank { allText }
+            if (text.isNotBlank()) {
+                appendLine("**Last assistant text**:")
+                appendLine(text.take(2000))
+            }
+        }.trimEnd()
+
+        /**
          * 纯函数版：构造子 Agent 的 system prompt（不依赖实例状态），便于测试。
          *
          * v2 重构：**不再继承主 Agent 的 prompt**。子 Agent 拥有自己的最小化
@@ -480,6 +678,10 @@ open class SubAgentExecutor(
             appendLine("- Do NOT repeat earlier intermediate reasoning.")
             appendLine()
             appendLine("Earlier turns (between tool calls) may contain whatever you need to think aloud. The parent agent only reads your FINAL turn.")
+            appendLine()
+            appendLine("## Cancellation Semantics (For Parent Agent)")
+            appendLine()
+            appendLine("If your tool result starts with 'Cancelled by user. Partial work completed:', this means a USER cancelled the sub-agent — do NOT automatically re-spawn. Acknowledge the cancel, summarize what was done so far, and ask the user how to proceed.")
             appendLine()
             appendLine("## Recursion")
             appendLine()

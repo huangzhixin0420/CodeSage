@@ -37,6 +37,22 @@ open class ModelGateway(
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
     /**
+     * 当前 in-flight HTTP Call 句柄（线程安全）。
+     * 用户按 Cancel 时，AgentCore.interrupt() 调 cancelCurrentRequest() 关掉这个 Call，
+     * 阻塞中的 OkHttp read 立刻抛 InterruptedIOException，子 agent / 父 turn 立即感知。
+     */
+    private val currentCall = java.util.concurrent.atomic.AtomicReference<okhttp3.Call?>(null)
+
+    /**
+     * 取消当前 in-flight HTTP 请求。
+     * 线程安全：可以跨线程调用（UI 线程 cancel 协程中的请求）。
+     * 没在 flight 时为 no-op。
+     */
+    fun cancelCurrentRequest() {
+        currentCall.getAndSet(null)?.cancel()
+    }
+
+    /**
      * 同步聊天请求
      */
     open suspend fun chat(request: ChatRequest): Result<ChatResponse> = withContext(Dispatchers.IO) {
@@ -184,59 +200,67 @@ open class ModelGateway(
         var lastFinishReason: String? = null
 
         try {
-            httpClient.newCall(req).execute().use { response ->
-                if (!response.isSuccessful) {
-                    // 重要：必须读出 body！LLM API 返 4xx/5xx 时的 body 通常是 JSON
-                    // {"error":{"message":"tools[0].function.name is required","type":"..."}}，
-                    // 不读 body 调试时只能看到 "HTTP 400: " 干入栈。
-                    val errorBody = response.body?.string()?.take(2000) ?: "(empty body)"
-                    logger.error(
-                        "[Gateway.chatStream] ✗ ${request.model} | " +
-                                "status=${response.code} requestSize=${vendorRequest.length}B " +
-                                "durationMs=${System.currentTimeMillis() - startMs} | " +
-                                "body=$errorBody"
-                    )
-                    throw NetworkException("HTTP ${response.code} (requestSize=${vendorRequest.length}B): $errorBody")
-                }
+            // 绑定 Call 句柄，让 cancelCurrentRequest() 能跨线程中断阻塞 IO
+            val call = httpClient.newCall(req)
+            currentCall.set(call)
+            try {
+                call.execute().use { response ->
+                    if (!response.isSuccessful) {
+                        // 重要：必须读出 body！LLM API 返 4xx/5xx 时的 body 通常是 JSON
+                        // {"error":{"message":"tools[0].function.name is required","type":"..."}}，
+                        // 不读 body 调试时只能看到 "HTTP 400: " 干入栈。
+                        val errorBody = response.body?.string()?.take(2000) ?: "(empty body)"
+                        logger.error(
+                            "[Gateway.chatStream] ✗ ${request.model} | " +
+                                    "status=${response.code} requestSize=${vendorRequest.length}B " +
+                                    "durationMs=${System.currentTimeMillis() - startMs} | " +
+                                    "body=$errorBody"
+                        )
+                        throw NetworkException("HTTP ${response.code} (requestSize=${vendorRequest.length}B): $errorBody")
+                    }
 
-                val body = response.body ?: throw NetworkException("Empty response body in stream")
-                body.source().let { source ->
-                    var consecutiveNullChunks = 0
-                    val maxConsecutiveNullChunks = 1000
-                    var emittedAnyChunk = false
+                    val body = response.body ?: throw NetworkException("Empty response body in stream")
+                    body.source().let { source ->
+                        var consecutiveNullChunks = 0
+                        val maxConsecutiveNullChunks = 1000
+                        var emittedAnyChunk = false
 
-                    while (true) {
-                        val line = source.readUtf8Line() ?: break
-                        bytesRead += line.length + 1  // 近似估算
-                        if (line.isBlank()) {
-                            consecutiveNullChunks = 0
-                            continue
-                        }
+                        while (true) {
+                            val line = source.readUtf8Line() ?: break
+                            bytesRead += line.length + 1  // 近似估算
+                            if (line.isBlank()) {
+                                consecutiveNullChunks = 0
+                                continue
+                            }
 
-                        val chunk = adapter.parseStreamChunk(line)
-                        if (chunk != null) {
-                            consecutiveNullChunks = 0
-                            emittedAnyChunk = true
-                            chunkCount++
-                            if (chunk.usage != null) lastUsage = chunk.usage
-                            if (chunk.finishReason != null) lastFinishReason = chunk.finishReason
-                            emit(chunk)
-                            if (chunk.done) break
-                        } else {
-                            consecutiveNullChunks++
-                            if (consecutiveNullChunks > maxConsecutiveNullChunks) {
-                                throw NetworkException(
-                                    "Stream parsing failed: too many consecutive unparseable lines"
-                                )
+                            val chunk = adapter.parseStreamChunk(line)
+                            if (chunk != null) {
+                                consecutiveNullChunks = 0
+                                emittedAnyChunk = true
+                                chunkCount++
+                                if (chunk.usage != null) lastUsage = chunk.usage
+                                if (chunk.finishReason != null) lastFinishReason = chunk.finishReason
+                                emit(chunk)
+                                if (chunk.done) break
+                            } else {
+                                consecutiveNullChunks++
+                                if (consecutiveNullChunks > maxConsecutiveNullChunks) {
+                                    throw NetworkException(
+                                        "Stream parsing failed: too many consecutive unparseable lines"
+                                    )
+                                }
                             }
                         }
-                    }
 
-                    // 兜底：如果整个响应体没有 emit 任何 chunk，至少 emit done
-                    if (!emittedAnyChunk) {
-                        emit(StreamChunk(id = "", delta = "", done = true, usage = null))
+                        // 兜底：如果整个响应体没有 emit 任何 chunk，至少 emit done
+                        if (!emittedAnyChunk) {
+                            emit(StreamChunk(id = "", delta = "", done = true, usage = null))
+                        }
                     }
                 }
+            } finally {
+                // 无论成功 / 失败 / 取消，都把 Call 句柄清掉
+                currentCall.compareAndSet(call, null)
             }
             // 流式成功后汇总统计
             logger.info(
@@ -247,6 +271,10 @@ open class ModelGateway(
                         "usage=${lastUsage?.totalTokens ?: "?"}tok " +
                         "durationMs=${System.currentTimeMillis() - startMs}"
             )
+        } catch (e: java.io.InterruptedIOException) {
+            // OkHttp Call.cancel() 会抛这个，单独 catch 上报为 info
+            logger.info("[Gateway.chatStream] request cancelled mid-stream after ${chunkCount} chunks")
+            throw e
         } catch (e: Exception) {
             logger.error(
                 "[Gateway.chatStream] ✗ ${request.model} | " +

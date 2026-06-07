@@ -11,6 +11,9 @@ import com.codesage.model.gateway.ModelGateway
 import com.codesage.shared.exceptions.*
 import com.codesage.shared.utils.Logger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -178,6 +181,9 @@ class EnhancedAgentLoop(
         // 主循环
         while (!interrupted) {
             turnNumber++
+            // 主动检查父协程 / Job 状态：父被 cancel 时此处的结构化并发会立刻抛
+            // CancellationException，比 "等 LLM 流读完" 早很多收到取消信号
+            currentCoroutineContext().ensureActive()
             logger.info("[Turn $turnNumber] model: $currentModelLocal")
 
             try {
@@ -721,6 +727,9 @@ class EnhancedAgentLoop(
                 toolset = toolset,
                 maxIterations = maxIterations,
                 contextFiles = contextFiles,
+                // P2: 透传父协程 Job，让子 agent 在父被 cancel 时能感知
+                // （结构化并发 + catch CancellationException 抽 cancelled summary）
+                parentJob = currentCoroutineContext()[Job],
                 progressCallback = { progress ->
                     try {
                         emit(
@@ -741,7 +750,10 @@ class EnhancedAgentLoop(
                     success = result.success,
                     output = result.output,
                     iterationsUsed = result.iterationsUsed,
-                    toolsUsed = result.toolsUsed
+                    toolsUsed = result.toolsUsed,
+                    // P2: 透传 cancelled 状态和已完成 tool calls
+                    cancelled = result.cancelled,
+                    completedToolCalls = result.completedToolCalls
                 )
             )
 

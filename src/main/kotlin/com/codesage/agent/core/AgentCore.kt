@@ -829,11 +829,14 @@ open class AgentCore(
     }
 
     fun interrupt() {
+        // 顺序：先关 in-flight HTTP（让阻塞 IO 立刻抛）→ 再 cancel 协程 → 再设 loop 标志
+        // 顺序很重要：必须先关 socket，否则阻塞 IO 等到 coroutine cancel 不会响应
+        gateway.cancelCurrentRequest()
         val job = currentChatJob.getAndSet(null)
         job?.cancel()
         currentLoop.getAndSet(null)?.interrupt()
         _state.value = AgentState.IDLE
-        logger.info("Agent conversation interrupted")
+        logger.info("Agent conversation interrupted (gateway + job + loop)")
     }
 
     /**
