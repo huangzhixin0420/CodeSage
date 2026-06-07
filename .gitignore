@@ -29,6 +29,5 @@ Thumbs.db
 # Logs
 *.log
 
-# IntelliJ Platform sandbox (generated)
-.intellijPlatform/sandbox/
-.intellijPlatform/self-update.lock
+# IntelliJ Platform — 全部 IDE 沙箱/artifact/时间戳，开发副产物不入库
+.intellijPlatform/
