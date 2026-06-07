@@ -67,6 +67,108 @@ function getToolTimeoutMs(toolName) {
   return TOOL_TIMEOUTS_MS.default;
 }
 
+/**
+ * 尝试把字符串按 JSON 解析并 pretty-print;失败/不是 JSON 就原样返回。
+ * 后端 ToolResult.Success(JsonObject) 序列化成字符串后,前端拿到的是
+ * 一坨没缩进的 JSON,直接渲染到 <pre> 里就是一整行,浏览体验差。
+ */
+function tryPrettyJson(str) {
+  if (typeof str !== "string") return str;
+  const t = str.trim();
+  if (!t.startsWith("{") && !t.startsWith("[")) return str;
+  try {
+    return JSON.stringify(JSON.parse(t), null, 2);
+  } catch {
+    return str;
+  }
+}
+
+/**
+ * 命令类工具的 tool name 集合 —— 这些工具的 result.data 有
+ * {stdout, stderr, exit_code, ...} 结构,值得单独渲染。
+ */
+const COMMAND_TOOL_NAMES = new Set(["run_command", "exec_shell", "run_tests"]);
+
+/**
+ * 解析后端 ToolResult 序列化的字符串,按 tool 名称 / data 形态路由成
+ * _renderResult 期望的 {kind, ...} 结构化对象。失败 -> null(caller 兜底)。
+ *
+ *   run_command : {success:true, data:{stdout,stderr,exit_code}}   -> command
+ *   read_file   : {success:true, data:{content,truncated}}         -> json
+ *   list_dir    : {success:true, data:["a","b"]}                   -> list
+ *   错误        : {success:false, error:"..."}                    -> null (caller 走 error)
+ */
+function parseToolResultWrapper(str, toolName, args) {
+  if (typeof str !== "string") return null;
+  const trimmed = str.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+  let parsed;
+  try { parsed = JSON.parse(trimmed); } catch { return null; }
+  if (!parsed || typeof parsed !== "object") return null;
+
+  // 剥 {success, data} 包装: 允许 success/error/reason/tool/warning 这些
+  // 框架 key 共存;但只要出现业务字段(如 {users:[...]} )就当作非包装。
+  // 注意: {success:false, error:"..."} 没有 data 字段,也算包装(失败包装),
+  // 这样 caller 看到 data==null 就走 error 兜底,不会渲染一个 success:false
+  // 的奇怪 json 块。
+  const WRAPPER_KEYS = new Set(["success", "data", "error", "reason", "tool", "warning"]);
+  const hasWrapper =
+    "success" in parsed &&
+    (
+      "data" in parsed ||
+      (parsed.success === false && "error" in parsed)
+    ) &&
+    Object.keys(parsed).every((k) => WRAPPER_KEYS.has(k));
+  const data = hasWrapper ? parsed.data : parsed;
+
+  if (data == null) return null;
+
+  // 1) 命令类工具 -> command kind
+  if (
+    toolName &&
+    COMMAND_TOOL_NAMES.has(toolName) &&
+    typeof data === "object" &&
+    !Array.isArray(data) &&
+    "stdout" in data
+  ) {
+    const argCmd =
+      (args && (args.command || args.cmd || args.shell_command)) || "";
+    const exitCode = data.exit_code ?? data.exitCode ?? 0;
+    const stdout = data.stdout != null ? String(data.stdout) : "";
+    const stderr = data.stderr != null ? String(data.stderr) : "";
+    const durationMs = data.duration_ms ?? data.durationMs ?? null;
+    const truncated = !!data.truncated;
+    const parts = [];
+    if (exitCode !== 0) parts.push(`exit ${exitCode}`);
+    if (truncated) parts.push("输出被截断");
+    if (durationMs != null) parts.push(`${durationMs}ms`);
+    return {
+      kind: "command",
+      command: argCmd,
+      stdout,
+      stderr,
+      exitCode,
+      summary: parts.join(" · "),
+    };
+  }
+
+  // 2) 普通 object -> json kind
+  if (typeof data === "object" && !Array.isArray(data)) {
+    return { kind: "json", content: data };
+  }
+
+  // 3) 数组 -> list kind
+  if (Array.isArray(data)) {
+    return { kind: "list", items: data.map((i) => String(i)) };
+  }
+
+  // 4) string primitive -> text kind
+  if (typeof data === "string") {
+    return { kind: "text", content: data };
+  }
+  return null;
+}
+
 export class ToolCall {
   constructor(opts) {
     this.toolCallId = opts.toolCallId;
@@ -209,10 +311,18 @@ export class ToolCall {
       body = this._renderDiff(r.diff, r.summary);
     } else if (kind === "command") {
       body = this._renderCommand(r);
-    } else if (kind === "code" || kind === "text") {
-      body = this._renderCodeLike(r.content || r.text || "", kind, r.language);
+    } else if (kind === "code") {
+      body = this._renderCodeLike(r.content || r.text || "", "code", r.language);
+    } else if (kind === "text") {
+      // P5.6: text kind 也尝试 pretty JSON(后端可能丢个 JSON 字符串过来)
+      const text = r.content || r.text || "";
+      const pretty = tryPrettyJson(text);
+      body = this._renderCodeLike(pretty, "text", r.language);
     } else if (kind === "json") {
-      body = `<pre style="background:var(--bg-code);color:var(--code-fg);padding:var(--space-2);border-radius:var(--radius-sm);font-size:11px;font-family:var(--font-mono);max-height:240px;overflow:auto;margin:0;">${escapeHtml(typeof r.content === "string" ? r.content : JSON.stringify(r.content, null, 2))}</pre>`;
+      const raw =
+        typeof r.content === "string" ? r.content : JSON.stringify(r.content);
+      const display = tryPrettyJson(raw);
+      body = `<pre style="background:var(--bg-code);color:var(--code-fg);padding:var(--space-2);border-radius:var(--radius-sm);font-size:11px;font-family:var(--font-mono);max-height:240px;overflow:auto;margin:0;">${escapeHtml(display)}</pre>`;
     } else if (kind === "list" && Array.isArray(r.items)) {
       body = `<ul style="margin:0;padding-left:var(--space-4);font-size:12px;">${r.items.map((i) => `<li>${escapeHtml(String(i))}</li>`).join("")}</ul>`;
     } else if (kind === "error") {
@@ -258,15 +368,54 @@ export class ToolCall {
   }
 
   _renderCommand(r) {
+    // r 结构(由 parseToolResultWrapper 路由产出):
+    //   { kind:"command", command, stdout, stderr, exitCode, summary }
     const exitCode = r.exitCode != null ? r.exitCode : 0;
-    const exitCls = exitCode === 0 ? "var(--success)" : "var(--error)";
+    const stdout = r.stdout != null ? r.stdout : "";
+    const stderr = r.stderr != null ? r.stderr : "";
+    const command = r.command || "";
+    const ok = exitCode === 0;
+    const exitColor = ok ? "var(--success)" : "var(--error)";
+
+    // stdout/stderr 本身若是 JSON 字符串,尝试 pretty 一下
+    const stdoutPretty = tryPrettyJson(stdout);
+    const stderrPretty = tryPrettyJson(stderr);
+
+    const stdoutLines = stdoutPretty ? stdoutPretty.split("\n").length : 0;
+    const stdoutBytes = stdoutPretty ? stdoutPretty.length : 0;
+    const stderrLines = stderrPretty ? stderrPretty.split("\n").length : 0;
+    const stderrBytes = stderrPretty ? stderrPretty.length : 0;
+    const hasStderr = stderr.length > 0;
+
     return `
-            <div style="background:var(--bg-code);border-radius:var(--radius-sm);overflow:hidden;">
-                <div style="padding:var(--space-2) var(--space-3);background:rgba(255,255,255,0.04);color:#a0a0b0;font-size:11px;font-family:var(--font-mono);border-bottom:1px solid rgba(255,255,255,0.06);">
-                    <span style="color:var(--accent);">$</span>&nbsp;${escapeHtml(r.command || "")}
-                    ${exitCode !== 0 ? `<span style="color:${exitCls};margin-left:var(--space-2);">exit ${exitCode}</span>` : ""}
+            <div class="cs-command-result" style="background:var(--bg-code);border-radius:var(--radius-sm);overflow:hidden;border:1px solid rgba(255,255,255,0.06);">
+                <div class="cs-command-header" style="display:flex;align-items:center;gap:var(--space-2);padding:var(--space-2) var(--space-3);background:rgba(255,255,255,0.04);border-bottom:1px solid rgba(255,255,255,0.06);font-family:var(--font-mono);font-size:11px;">
+                    <span style="color:var(--accent);">$</span>
+                    <span style="flex:1;color:#a0a0b0;word-break:break-all;white-space:pre-wrap;">${escapeHtml(command)}</span>
+                    <span style="color:${exitColor};font-weight:600;white-space:nowrap;">${ok ? "exit 0" : `exit ${exitCode}`}</span>
                 </div>
-                <pre style="margin:0;padding:var(--space-3);color:var(--code-fg);font-family:var(--font-mono);font-size:11px;max-height:240px;overflow:auto;white-space:pre-wrap;line-height:1.5;">${escapeHtml(r.output || r.stdout || "")}</pre>
+                <div class="cs-command-stdout" style="padding:var(--space-2) var(--space-3);">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-1);">
+                        <span style="font-size:10px;font-weight:600;color:var(--fg-2);text-transform:uppercase;letter-spacing:0.4px;">stdout · ${stdoutLines} 行 · ${stdoutBytes} 字符</span>
+                        <button class="turn-action-btn" data-cs-action="copy-command-stdout" style="font-size:10px;padding:2px 6px;">
+                            <i class="fas fa-copy"></i>&nbsp;复制
+                        </button>
+                    </div>
+                    <pre class="cs-command-stdout-body" data-cs-role="command-stdout" style="margin:0;padding:var(--space-2);color:var(--code-fg);font-family:var(--font-mono);font-size:11px;max-height:240px;overflow:auto;white-space:pre-wrap;line-height:1.5;background:rgba(0,0,0,0.2);border-radius:var(--radius-sm);">${escapeHtml(stdoutPretty) || "<span style=\"color:var(--fg-3);\">(空)</span>"}</pre>
+                </div>
+                ${
+                  hasStderr
+                    ? `<div class="cs-command-stderr" style="padding:var(--space-2) var(--space-3);background:rgba(255,80,80,0.05);border-top:1px solid rgba(255,255,255,0.06);">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-1);">
+                                <span style="font-size:10px;font-weight:600;color:var(--error);text-transform:uppercase;letter-spacing:0.4px;">stderr · ${stderrLines} 行 · ${stderrBytes} 字符</span>
+                                <button class="turn-action-btn" data-cs-action="copy-command-stderr" style="font-size:10px;padding:2px 6px;">
+                                    <i class="fas fa-copy"></i>&nbsp;复制
+                                </button>
+                            </div>
+                            <pre class="cs-command-stderr-body" data-cs-role="command-stderr" style="margin:0;padding:var(--space-2);color:var(--error);font-family:var(--font-mono);font-size:11px;max-height:240px;overflow:auto;white-space:pre-wrap;line-height:1.5;background:rgba(0,0,0,0.2);border-radius:var(--radius-sm);">${escapeHtml(stderrPretty)}</pre>
+                        </div>`
+                    : ""
+                }
             </div>
         `;
   }
@@ -395,8 +544,21 @@ export class ToolCall {
     // 否则 r.content/r.text 都会是 undefined,渲染出空 code block
     if (typeof result === "string") {
       if (success) {
-        this.result = { kind: "text", content: result };
-        this.error = null;
+        // P5.6: 优先按 tool name + data 形态路由成结构化 result,
+        // 这样 _renderResult 能走 command / json / list / text 分支;
+        // 解析不出来的再走老 text kind 兜底。
+        const structured = parseToolResultWrapper(result, this.name, this.arguments);
+        if (structured) {
+          this.result = structured;
+          this.error = null;
+          console.log(
+            `[cs-tool-call] complete: routed string result -> kind=${structured.kind}, ` +
+              `toolId=${this.toolCallId}, name=${this.name}`
+          );
+        } else {
+          this.result = { kind: "text", content: result };
+          this.error = null;
+        }
       } else {
         this.result = null;
         this.error = result || "执行失败";
@@ -424,6 +586,35 @@ export class ToolCall {
     }
     // P5.5: sub-agent 展开/收起 按钮
     this._bindSubagentActions();
+    // P5.6: command kind 的 stdout/stderr 复制按钮
+    this._bindCommandActions();
+  }
+
+  _bindCommandActions() {
+    if (!this.el) return;
+    const wire = (selector, role) => {
+      const btn = this.el.querySelector(selector);
+      if (!btn) return;
+      btn.addEventListener("click", async () => {
+        const body = this.el.querySelector(`[data-cs-role="${role}"]`);
+        const text = body ? body.innerText || body.textContent || "" : "";
+        if (!text) return;
+        try {
+          await navigator.clipboard.writeText(text);
+          const old = btn.innerHTML;
+          btn.innerHTML = '<i class="fas fa-check"></i>&nbsp;已复制';
+          setTimeout(() => {
+            btn.innerHTML = old;
+          }, 1200);
+        } catch (e) {
+          console.warn(
+            `[cs-tool-call] copy ${role} failed: toolId=${this.toolCallId}, error=${e.message}`,
+          );
+        }
+      });
+    };
+    wire('[data-cs-action="copy-command-stdout"]', "command-stdout");
+    wire('[data-cs-action="copy-command-stderr"]', "command-stderr");
   }
 
   _bindSubagentActions() {
