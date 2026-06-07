@@ -846,14 +846,37 @@ class IDETools(private val project: Project?) {
                 if (!content.contains(oldString)) {
                     return ToolResult.Error("old_string not found in file")
                 }
+                // C2: old_string 多次出现时只替第一处会误导 LLM。强制要求
+                // 唯一匹配，提示用户提供更多上下文。
+                val occurrences = Regex.escape(oldString).toRegex().findAll(content).count()
+                if (occurrences > 1) {
+                    return ToolResult.Error(
+                        "old_string appears $occurrences times in file; " +
+                            "provide more surrounding context to make it unique"
+                    )
+                }
                 content.replaceFirst(oldString, newString)
             } else if (startLine != null && endLine != null && newString != null) {
-                val lines = content.lines().toMutableList()
-                val s = (startLine - 1).coerceAtLeast(0)
-                val e = endLine.coerceAtMost(lines.size)
-                repeat(e - s) { lines.removeAt(s) }
-                lines.addAll(s, newString.lines())
-                lines.joinToString("\n")
+                // C5: 与 readFile 对齐——startLine/endLine 越界时显式报错，
+                // 避免静默 clamp 把 'endLine=9999' 当成 '删到末尾'。
+                if (startLine < 1 || endLine < startLine) {
+                    return ToolResult.Error(
+                        "Invalid line range: $startLine..$endLine " +
+                            "(start must be >= 1, end must be >= start)"
+                    )
+                }
+                val lines = content.lines()
+                if (endLine > lines.size) {
+                    return ToolResult.Error(
+                        "end_line $endLine out of range: file has ${lines.size} lines"
+                    )
+                }
+                val s = startLine - 1
+                val e = endLine
+                val mutable = lines.toMutableList()
+                repeat(e - s) { mutable.removeAt(s) }
+                mutable.addAll(s, newString.lines())
+                mutable.joinToString("\n")
             } else {
                 return ToolResult.Error("Invalid edit parameters")
             }

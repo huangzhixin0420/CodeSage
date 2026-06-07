@@ -381,7 +381,7 @@ internal fun readMultipleFilesTool() = Tool(
 
 internal fun editFileTool() = Tool(
     name = "edit_file",
-    description = "Precisely edit a file by replacing old_string with new_string, or by replacing lines in a range. Use this for small edits instead of rewriting entire files.",
+    description = "Precisely edit a file by replacing old_string with new_string, or by replacing lines in a range. old_string must appear exactly once (or provide enough surrounding context); start_line/end_line are 1-based and must stay within file bounds. Out-of-range parameters return a clear error. Use this for small edits instead of rewriting entire files.",
     parameters = ToolParameters(
         properties = mapOf(
             "path" to ToolProperty("string", "File path"),
