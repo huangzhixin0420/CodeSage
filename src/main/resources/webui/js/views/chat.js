@@ -125,6 +125,11 @@ class ChatView {
         // 默认折叠
         this.appContainer.classList.add("sidebar-collapsed");
         this._sidebar.setCollapsed(true);
+        // v2.1: 与 sidebar 一致 — 首次安装默认折叠工件面板。
+        // 之前 CSS 默认 grid 是 260 1fr 360,会吃走 360px 屏幕宽度,而工
+        // 件后端目前没有调用点(addArtifact 在仓库中未被使用),空面板白
+        // 占地方。addArtifact() 会按需自动展开,无需手展开。
+        this.appContainer.classList.add("artifacts-collapsed");
     }
 
     toggleSidebar() {
@@ -159,12 +164,18 @@ class ChatView {
         document
             .getElementById("artifacts-toggle-btn")
             ?.addEventListener("click", () => this.toggleArtifacts());
+        // 修复 v2.1:旧实现只给主区头部的 toggle 按钮绑了 click,
+        // 工件面板右上角的 X 按钮 (id=artifacts-close-btn) 完全没人监听 — 点 X 无反应。
+        // 这里给它挂同一个 toggle 行为,与 toggleArtifacts() 同源,状态保持一致。
         document
             .getElementById("new-session-btn")
             ?.addEventListener("click", () => this.onNewSession());
         document
             .getElementById("settings-btn")
             ?.addEventListener("click", () => this.showSettings());
+        document
+            .getElementById("artifacts-close-btn")
+            ?.addEventListener("click", () => this.toggleArtifacts());
     }
 
     toggleTheme() {

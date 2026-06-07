@@ -495,6 +495,48 @@ async function runE2E() {
       `超大图应提示"可能发不出",实际 "${hugeChip?.textContent}"`,
     );
 
+    // ============== 场景 10: 工件面板 — 默认折叠 + X 按钮可关闭 ==============
+    // 回归 bug: 旧实现 _initHeader 只给主区头部的 artifacts-toggle-btn 绑了 click,
+    // 面板右上角的 X 按钮 (id=artifacts-close-btn) 完全没人监听 — 点 X 无反应。
+    // 另: CSS 默认 grid 是 260 1fr 360,首次开 IDE 工件面板默认展开,吃 360px 宽。
+    // 修法: init() 默认加 artifacts-collapsed 类 + X 按钮绑 toggleArtifacts。
+    console.log("\n[10] 工件面板 — 默认折叠 + X 按钮可关闭");
+    assert(
+      w.document.getElementById("app-container").classList.contains("artifacts-collapsed"),
+      "首次安装 / 打开工具窗口时,工件面板应默认折叠 (节省 360px 宽度)",
+    );
+
+    // 模拟用户点 X 按钮 — 应能展开(因为现在是折叠态)
+    const closeBtn = w.document.getElementById("artifacts-close-btn");
+    assert(closeBtn !== null, "X 按钮 (artifacts-close-btn) 应存在");
+    closeBtn.click();
+    assert(
+      !w.document.getElementById("app-container").classList.contains("artifacts-collapsed"),
+      "点 X 后面板应展开(当前是折叠态)",
+    );
+
+    // 再点 X — 应能折叠回去(双向)
+    closeBtn.click();
+    assert(
+      w.document.getElementById("app-container").classList.contains("artifacts-collapsed"),
+      "再次点 X 后面板应折叠回去",
+    );
+
+    // 关键回归: addArtifact() 仍能在面板折叠时自动展开(原有行为不能丢)
+    // 这里直接调 chat.addArtifact 模拟后端发 artifact_add 事件
+    chat.addArtifact("art-1", "示例.py", "python", "print('hello')");
+    assert(
+      !w.document.getElementById("app-container").classList.contains("artifacts-collapsed"),
+      "addArtifact() 被调用时,即使之前折叠,面板应自动展开",
+    );
+
+    // 此时再点 X 应能关闭
+    closeBtn.click();
+    assert(
+      w.document.getElementById("app-container").classList.contains("artifacts-collapsed"),
+      "用户主动点 X 应能关掉被 addArtifact 展开的面板",
+    );
+
     // ============== 总结 ==============
     console.log(`\n=== 测试结果 ===`);
     console.log(`通过: ${passed}`);
