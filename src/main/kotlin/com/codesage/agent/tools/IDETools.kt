@@ -175,6 +175,24 @@ class IDETools(private val project: Project?) {
     }
 
     /**
+     * 安全截断字符串，避免在 surrogate pair 中间断开（C1）。
+     *
+     * String.take() 按 UTF-16 code unit 切，遇到 high surrogate（D800-DBFF）
+     * 后面紧跟 low surrogate（DC00-DFFF）组成的字符（如 emoji、CJK 扩展区）
+     * 时会产生 unpaired surrogate，导致 JSON 序列化失败或 mojibake。
+     *
+     * 返回 (截断后内容, 是否实际截断)。截断策略：
+     * 1. 内容未超长 → 原样返回
+     * 2. 切点前一个字符是 high surrogate → 回退 1 格避免留下 unpaired high surrogate
+     */
+    private fun safeTruncate(content: String, maxChars: Int): Pair<String, Boolean> {
+        if (content.length <= maxChars) return content to false
+        var end = maxChars
+        if (content[end - 1].isHighSurrogate()) end--
+        return content.substring(0, end) to true
+    }
+
+    /**
      * 写入文件内容
      */
     fun writeFile(args: JsonObject): ToolResult {
@@ -786,13 +804,20 @@ class IDETools(private val project: Project?) {
                             } else {
                                 String(file.contentsToByteArray(), StandardCharsets.UTF_8)
                             }
-                            JsonObject(
-                                mapOf(
-                                    "path" to JsonPrimitive(path),
-                                    "content" to JsonPrimitive(content.take(MAX_CONTENT_LENGTH)),
-                                    "success" to JsonPrimitive(true)
-                                )
+                            val (sliced, wasTruncated) = safeTruncate(content, MAX_CONTENT_LENGTH)
+                            val fields = mutableMapOf<String, JsonElement>(
+                                "path" to JsonPrimitive(path),
+                                "content" to JsonPrimitive(sliced),
+                                "success" to JsonPrimitive(true),
                             )
+                            // H4: 让 LLM 知道哪些文件被截断，而不是读到不完整
+                            // content 却以为读全了。original_length 帮助 LLM
+                            // 决定是否需要换 readFile + offset 续读。
+                            if (wasTruncated) {
+                                fields["truncated"] = JsonPrimitive(true)
+                                fields["original_length"] = JsonPrimitive(content.length)
+                            }
+                            JsonObject(fields)
                         } else {
                             errors.add("File not found or is directory: $path")
                             null

@@ -370,7 +370,7 @@ internal fun getFileInfoTool() = Tool(
 
 internal fun readMultipleFilesTool() = Tool(
     name = "read_multiple_files",
-    description = "Read contents of multiple files at once. More efficient than multiple read_file calls.",
+    description = "Read contents of multiple files at once. More efficient than multiple read_file calls. Each file's content is truncated at MAX_CONTENT_LENGTH (UTF-8 safe); truncated results include truncated=true and original_length so the caller can switch to read_file with offset for the rest.",
     parameters = ToolParameters(
         properties = mapOf(
             "paths" to ToolProperty("array", "List of file paths to read")
