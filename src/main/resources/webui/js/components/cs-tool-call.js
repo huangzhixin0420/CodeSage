@@ -98,7 +98,39 @@ const COMMAND_TOOL_NAMES = new Set(["run_command", "exec_shell", "run_tests"]);
  *   list_dir    : {success:true, data:["a","b"]}                   -> list
  *   错误        : {success:false, error:"..."}                    -> null (caller 走 error)
  */
+/**
+ * 解析后端 ToolResult.Failure 序列化的 JSON 错误字符串,
+ * 拆出主消息 (error) + 结构化 context (reason/tool/...)。
+ *
+ * 典型输入 (guardrails 拦截):
+ *   '{"success":false,"error":"...","reason":"CONFIRMATION_DENIED","tool":"x"}'
+ *   -> { message: "...", context: { reason:"CONFIRMATION_DENIED", tool:"x" } }
+ *
+ * 不匹配 (plain text / 非 JSON) -> null
+ */
+function parseToolError(str) {
+  if (typeof str !== "string") return null;
+  const trimmed = str.trim();
+  if (!trimmed.startsWith("{")) return null;
+  let parsed;
+  try { parsed = JSON.parse(trimmed); } catch { return null; }
+  if (!parsed || typeof parsed !== "object") return null;
+  if (parsed.success !== false) return null;
+  const message = parsed.error || parsed.message;
+  if (!message || typeof message !== "string") return null;
+  const context = {};
+  for (const k of Object.keys(parsed)) {
+    if (k === "success" || k === "error" || k === "message") continue;
+    const v = parsed[k];
+    if (v == null) continue;
+    // 数组/对象 pretty 一下,primitive 直接 toString
+    context[k] = typeof v === "object" ? JSON.stringify(v, null, 2) : String(v);
+  }
+  return { message, context };
+}
+
 function parseToolResultWrapper(str, toolName, args) {
+  if (typeof str !== "string") return null;
   if (typeof str !== "string") return null;
   const trimmed = str.trim();
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
@@ -179,6 +211,7 @@ export class ToolCall {
     this.arguments = opts.arguments || null;
     this.kind = opts.kind || null;
     this.icon = opts.icon || null; // 工具专属图标 (来自 Kotlin Tool schema)
+    this.errorContext = null; // P5.7: 失败时的结构化 context(reason/tool/...)
     this.startTime = Date.now();
     this.endTime = null;
     this.status = "running";
@@ -271,9 +304,7 @@ export class ToolCall {
         `<div style="padding:var(--space-3) var(--space-3) 0;color:var(--fg-2);font-size:12px;"><i class="fas fa-spinner spin"></i>&nbsp;执行中...</div>`,
       );
     } else if (this.status === "failed") {
-      parts.push(
-        `<div class="inline-alert error" style="margin:var(--space-2) var(--space-3);"><i class="fas fa-times-circle alert-icon"></i><div class="alert-body"><div class="alert-title">执行失败</div><div class="alert-message">${escapeHtml(this.error || "未知错误")}</div></div></div>`,
-      );
+      parts.push(this._renderErrorBlock("执行失败", "fa-times-circle", "error"));
     } else if (this.status === "stopped") {
       // 跟 failed 区分:stopped 是“被中断/超时”,failed 是“后端报错误”
       parts.push(
@@ -296,6 +327,51 @@ export class ToolCall {
             <div style="padding:var(--space-3) var(--space-3) 0;">
                 <div style="font-size:11px;font-weight:600;color:var(--fg-2);text-transform:uppercase;letter-spacing:0.4px;margin-bottom:var(--space-1);">入参</div>
                 <pre style="background:var(--bg-code);color:var(--code-fg);padding:var(--space-2);border-radius:var(--radius-sm);font-size:11px;font-family:var(--font-mono);max-height:140px;overflow:auto;margin:0;">${escapeHtml(json)}</pre>
+            </div>
+        `;
+  }
+
+  /**
+   * 渲染工具失败/停止的统一错误块。
+   * - title: "执行失败" / "工具未完成" 等
+   * - iconClass: fas fa-* icon class
+   * - variant: "error" (红) / "warning" (黄)
+   *
+   * 支持两类错误内容:
+   *   1) this.error 是纯文本 (e.g. "工具执行超时(...)" / "Connection refused")
+   *   2) this.error 是主消息 + this.errorContext 是结构化字段
+   *      (e.g. { reason: "CONFIRMATION_DENIED", tool: "get_project_stats" })
+   *      context 渲染成 key/value 列表,放在主消息下方,避免一坨 JSON
+   *      渲染成一整行没法看。
+   */
+  _renderErrorBlock(title, iconClass, variant) {
+    const msg = escapeHtml(this.error || "未知错误");
+    let ctxHtml = "";
+    if (
+      this.errorContext &&
+      typeof this.errorContext === "object" &&
+      Object.keys(this.errorContext).length > 0
+    ) {
+      const rows = Object.entries(this.errorContext)
+        .map(
+          ([k, v]) =>
+            `<div class="cs-error-context-row"><span class="cs-error-key">${escapeHtml(
+              k,
+            )}</span><span class="cs-error-value">${escapeHtml(
+              String(v),
+            )}</span></div>`,
+        )
+        .join("");
+      ctxHtml = `<div class="cs-error-context">${rows}</div>`;
+    }
+    return `
+            <div class="inline-alert ${variant}" style="margin:var(--space-2) var(--space-3);">
+                <i class="${iconClass} alert-icon"></i>
+                <div class="alert-body">
+                    <div class="alert-title">${escapeHtml(title)}</div>
+                    <div class="alert-message">${msg}</div>
+                    ${ctxHtml}
+                </div>
             </div>
         `;
   }
@@ -560,8 +636,24 @@ export class ToolCall {
           this.error = null;
         }
       } else {
+        // P5.7: 如果 result 是 {success:false, error, reason, tool} 这种 JSON,
+        // 拆出 error 作主消息,reason/tool 等作 context 渲染成 key-value 列表,
+        // 而不是把整坨 JSON 一行显示出来。
+        const parsedErr = parseToolError(result);
+        if (parsedErr) {
+          this.error = parsedErr.message;
+          this.errorContext = parsedErr.context;
+          console.log(
+            `[cs-tool-call] complete: parsed error string -> ` +
+              `messageLen=${parsedErr.message.length}, ` +
+              `contextKeys=${Object.keys(parsedErr.context).join(",")}, ` +
+              `toolId=${this.toolCallId}, name=${this.name}`,
+          );
+        } else {
+          this.error = result || "执行失败";
+          this.errorContext = null;
+        }
         this.result = null;
-        this.error = result || "执行失败";
       }
     } else if (result && typeof result === "object") {
       this.result = result;
