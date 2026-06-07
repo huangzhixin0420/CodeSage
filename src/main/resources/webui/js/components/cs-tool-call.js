@@ -61,7 +61,9 @@ export class ToolCall {
     this.el.setAttribute("data-cs-tool", this.toolCallId);
     this._renderHeader();
     this._renderBody();
-    // 启动超时看门狗(5 分钟还没 complete/fail/stop 就 auto-stop)
+    console.log(`[cs-tool-call] created: toolId=${this.toolCallId}, name=${this.name}, turnId=${this.turnId}`);
+    // 启动超时看门狗(30s 还没 complete/fail/stop 就 auto-stop;2026-06 从 5min 降到 30s,
+    // 因为后端 EventConsumer 已修复 Terminal 事件必送达,5min 太宽松掩盖问题)
     this._startWatchdog();
   }
 
@@ -356,6 +358,7 @@ export class ToolCall {
 
   /** 标记完成,接收 result */
   complete(success, result) {
+    console.log(`[cs-tool-call] complete: toolId=${this.toolCallId}, success=${success}, ageMs=${Date.now() - this.startTime}`);
     this._clearWatchdog();
     this.status = success ? "completed" : "failed";
     this.endTime = Date.now();
@@ -421,6 +424,7 @@ export class ToolCall {
   }
 
   fail(error) {
+    console.warn(`[cs-tool-call] fail: toolId=${this.toolCallId}, error=${error}, ageMs=${Date.now() - this.startTime}`);
     this._clearWatchdog();
     this.status = "failed";
     this.endTime = Date.now();
@@ -436,6 +440,7 @@ export class ToolCall {
    * - stopped: 本轮没人通知结果,可能是被中断或被遗忘
    */
   stop(reason) {
+    console.warn(`[cs-tool-call] stop: toolId=${this.toolCallId}, reason=${reason}, ageMs=${Date.now() - this.startTime}`);
     this._clearWatchdog();
     this.status = "stopped";
     this.endTime = Date.now();
@@ -455,12 +460,13 @@ export class ToolCall {
       () => {
         if (this.status === "running") {
           console.warn(
-            `[cs-tool-call] watchdog: ${this.name} (${this.toolCallId}) running >5min, auto-stopping`,
+            `[cs-tool-call] watchdog fired: toolId=${this.toolCallId}, name=${this.name}, ` +
+            `turnId=${this.turnId}, ageMs=${Date.now() - this.startTime}, statusBefore=running`,
           );
-          this.stop("工具执行超时(>5 分钟未收到 complete/error 事件)");
+          this.stop("工具执行超时(>30 秒未收到 complete/error 事件)");
         }
       },
-      5 * 60 * 1000,
+      30 * 1000,
     );
   }
 

@@ -107,7 +107,9 @@ class EnhancedAgentLoop(
         isContinuation: Boolean = false
     ): Flow<AgentStreamEvent> = channelFlow {
         var session = session
-        interrupted = false
+        // 注: 不在 run() 开头重置 interrupted — interrupt 标志应该跨 run 持久,
+        // 否则用户先按 stop 再发消息时,新 run 会"忘记"中断状态,执行完才看到 Done。
+        // (历史 bug: 旧版这里 unconditional reset,导致 cancel-then-send 行为不对)
         var phase = ConversationPhase.INIT
         var currentModelLocal = currentModel
         var turnNumber = 0
@@ -352,21 +354,45 @@ class EnhancedAgentLoop(
                             contextManager.addMessage(assistantMsg)
 
                             val allToolResults = mutableListOf<Triple<ToolCall, String, Boolean>>()
+                            val inFlightIds = mutableListOf<String>()
 
-                            for (toolCall in assistantMsg.toolCalls) {
-                                if (interrupted) break
+                            logger.debug("[EnhancedAgentLoop] for loop START, toolCalls.size=${assistantMsg.toolCalls.size}, interrupted=$interrupted")
+                            for ((idx, toolCall) in assistantMsg.toolCalls.withIndex()) {
+                                logger.debug("[EnhancedAgentLoop]   iter $idx, toolId=${toolCall.id}, interrupted=$interrupted")
+                                // 2026-06 修复: 取消时不再 break — 改成 continue + 发 ToolCallError,
+                                // 让所有 in-flight 工具都有终态,UI 卡片不会转圈等 30s watchdog
+                                if (interrupted) {
+                                    logger.warn(
+                                        "[EnhancedAgentLoop] interrupted during TOOL_EXECUTE, " +
+                                            "emitting ToolCallError for in-flight tool: " +
+                                            "toolId=${toolCall.id}, name=${toolCall.name}, " +
+                                            "turn=$turnNumber, inFlightNotified=${inFlightIds.size}"
+                                    )
+                                    emitEvent(AgentStreamEvent.ToolCallError(
+                                        toolCallId = toolCall.id,
+                                        error = "Cancelled by user (in-flight when stop was requested)"
+                                    ))
+                                    continue
+                                }
 
                                 phase = ConversationPhase.TOOL_EXECUTE
+                                inFlightIds += toolCall.id
                                 logger.info("[Tool] id=${toolCall.id}, name=${toolCall.name}, args=${toolCall.arguments}")
                                 // ToolCallStart 已在流式检测阶段发出，此处不再重复
                                 hooks.preToolExecution(toolCall.name, parseArguments(toolCall.arguments))
 
                                 val toolStartTime = System.currentTimeMillis()
                                 val toolResult = executeTool(toolCall, session, ::emitEvent)
+                                logger.debug("[EnhancedAgentLoop]   iter $idx, toolId=${toolCall.id}, executeTool returned len=${toolResult.length}")
                                 val toolDuration = System.currentTimeMillis() - toolStartTime
                                 val success = parseToolSuccess(toolResult)
 
-                                logger.info("[Tool] id=${toolCall.id}, name=${toolCall.name}, success=$success, duration=${toolDuration}ms, resultLength=${toolResult.length}")
+                                logger.info(
+                                    "[EnhancedAgentLoop] tool executed: " +
+                                        "toolId=${toolCall.id}, name=${toolCall.name}, " +
+                                        "success=$success, durationMs=$toolDuration, " +
+                                        "resultLen=${toolResult.length}, turn=$turnNumber"
+                                )
                                 logger.debug("[Tool] id=${toolCall.id}, result=$toolResult")
 
                                 hooks.postToolExecution(toolCall.name, toolResult, success)
@@ -380,6 +406,10 @@ class EnhancedAgentLoop(
                                 )
 
                                 allToolResults.add(Triple(toolCall, toolResult, success))
+                            }
+
+                            if (inFlightIds.isNotEmpty()) {
+                                logger.info("[EnhancedAgentLoop] tool batch done: turn=$turnNumber, count=${inFlightIds.size}, results=${allToolResults.size}")
                             }
 
                             // RESULT_INTEGRATE: 整合工具结果到上下文
@@ -609,10 +639,13 @@ class EnhancedAgentLoop(
      * 发送中断信号
      */
     fun interrupt() {
+        // 注: phase/turnNumber 是 run() 内的局部变量,这里访问不到。
+        // 具体 turn/phase 由 run() 协程的 next 循环日志负责,这里只记 interrupt 事件本身。
+        logger.info("[EnhancedAgentLoop] interrupt() called, interrupted_before=$interrupted")
         interrupted = true
         // T0.2 修复：同时关阖 emitter 避免其内部协程泄漏
         batchEmitter.shutdown()
-        logger.info("Conversation loop interrupt signal sent")
+        logger.info("[EnhancedAgentLoop] interrupt signal sent")
     }
 
     /**

@@ -572,6 +572,7 @@ class ChatView {
 
   stopGeneration() {
     if (!this._isGenerating) return;
+    console.log(`[chat] stopGeneration: turnId=${state.get("currentTurnId")}, isGenerating=${this._isGenerating}`);
     // 1) 立刻告诉 Kotlin 停 — 协程会被 cancel,后面 text/thinking 等事件不会再到
     bridge.send({ type: "stop_generation" });
     // 2) 本地立刻重置 UI,避免“状态显示就绪但按钮还是停止”的不一致
@@ -1223,8 +1224,12 @@ class ChatView {
   }
 
   _onToolCallStart(turnId, toolId, toolName, summary, args, icon) {
+    console.log(`[chat] _onToolCallStart: turnId=${turnId}, toolId=${toolId}, name=${toolName}`);
     const turn = this.turns.get(turnId);
-    if (!turn) return;
+    if (!turn) {
+      console.warn(`[chat] _onToolCallStart: unknown turnId=${turnId}, toolId=${toolId}`);
+      return;
+    }
     const tc = new ToolCall({
       toolCallId: toolId,
       turnId,
@@ -1241,15 +1246,17 @@ class ChatView {
   }
 
   _onToolCallDelta(turnId, toolId, delta) {
+    // 不打 log:ToolCallDelta 高频
     const tc = this.toolCalls.get(toolId);
     if (tc) tc.appendDelta(delta);
   }
 
   _onToolCallComplete(turnId, toolId, success, result) {
+    console.log(`[chat] _onToolCallComplete: turnId=${turnId}, toolId=${toolId}, success=${success}`);
     const tc = this.toolCalls.get(toolId);
     if (!tc) {
       // 工具卡片还没创建 (理论不会发生) — 记录一下
-      console.warn("[chat] tool_call_complete for unknown tool", toolId);
+      console.warn(`[chat] _onToolCallComplete: unknown toolId=${toolId} (turnId=${turnId})`);
       return;
     }
     // result 可能是完整 result 对象或 null
@@ -1257,8 +1264,12 @@ class ChatView {
   }
 
   _onToolCallError(turnId, toolId, error) {
+    console.warn(`[chat] _onToolCallError: turnId=${turnId}, toolId=${toolId}, error=${error}`);
     const tc = this.toolCalls.get(toolId);
-    if (!tc) return;
+    if (!tc) {
+      console.warn(`[chat] _onToolCallError: unknown toolId=${toolId} (turnId=${turnId})`);
+      return;
+    }
     // error 可能是 string, 也可能是 { message: string, stack: string } 这样的对象
     const errMsg =
       typeof error === "string"

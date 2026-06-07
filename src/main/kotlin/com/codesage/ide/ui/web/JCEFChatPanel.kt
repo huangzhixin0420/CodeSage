@@ -40,6 +40,9 @@ class JCEFChatPanel(
     private val logger = Logger.getLogger<JCEFChatPanel>()
     private val fileResolver = FileReferenceResolver(project)
     private val eventRouter = EventRouter()
+    // 2026-06 重构: 取代原 shouldEmit + recentEventCache 的 buggy dedup。
+    // 显式事件投递语义(Terminal/Coalescable) + per-turn 状态隔离 + Done 展开 + 完整 logger。
+    private val eventConsumer = EventConsumer(eventRouter, ::sendToJS)
     private val settingsHandler = SettingsBridgeHandler({ msg -> sendToJS(msg) }, project)
     private val providerHandler = ProviderBridgeHandler { msg -> sendToJS(msg) }
     private val migrationHandler = MigrationBridgeHandler { msg -> sendToJS(msg) }
@@ -67,10 +70,6 @@ class JCEFChatPanel(
     // 上限 PENDING_MESSAGES_MAX = 200：超过时丢最早（FIFO），并打 warn 日志便于定位。
     private val pendingMessages = ArrayDeque<String>()
     private val pendingMessagesLock = Any()
-
-    // 事件去重(高频事件节流)
-    private val recentEventCache = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    private val dedupWindowMs = 500L
 
     // C7 修复：bridge 未 ready 时积压消息上限
     private val PENDING_MESSAGES_MAX = 200
@@ -503,48 +502,6 @@ class JCEFChatPanel(
         }
     }
 
-    /**
-     * 通过 EventRouter 转发一个事件
-     * 对外暴露的统一入口(原 messageCallback 调用方也走这里)
-     */
-    private fun routeEvent(event: AgentStreamEvent, turnId: String) {
-        if (!shouldEmit(event)) return
-
-        // Thinking 事件特殊处理:首条发 thinking_start
-        if (event is AgentStreamEvent.Thinking) {
-            val first = thinkingStarted.putIfAbsent(turnId, true) == null
-            if (first) {
-                sendToJS(mapOf("type" to "thinking_start", "turnId" to turnId, "message" to event.message))
-            } else {
-                sendToJS(mapOf("type" to "thinking_update", "turnId" to turnId, "message" to event.message))
-            }
-            return
-        }
-
-        // Done 事件展开为 thinking_complete + turn_complete
-        if (event is AgentStreamEvent.Done) {
-            sendToJS(mapOf("type" to "thinking_complete", "turnId" to turnId, "elapsedMs" to 0))
-            sendToJS(mapOf("type" to "turn_complete", "turnId" to turnId))
-            thinkingStarted.remove(turnId)
-            return
-        }
-
-        val msg = eventRouter.toMessage(event, turnId) ?: return
-        sendToJS(msg)
-    }
-
-    private fun shouldEmit(event: AgentStreamEvent): Boolean {
-        val key = event::class.simpleName ?: return true
-        val now = System.currentTimeMillis()
-        val last = recentEventCache[key]
-        return if (last != null && now - last < dedupWindowMs) {
-            false
-        } else {
-            recentEventCache[key] = now
-            true
-        }
-    }
-
     // ===== Public API =====
 
     fun initialize(
@@ -598,41 +555,30 @@ class JCEFChatPanel(
                     ))
             }
 
-            currentCollectJob?.cancel()
+            val prev = currentCollectJob
+            if (prev != null) {
+                logger.info("[JCEFChatPanel] cancelling previous collectJob before new turn, turnId=$turnId")
+                prev.cancel()
+            }
             currentCollectJob = scope.launch {
-                var turnStarted = false
-                var meaningfulEventReceived = false
                 val startTime = System.currentTimeMillis()
                 try {
-                    onSendMessage(message, images, userLanguage).collect { rawEvent ->
-                        if (!turnStarted) {
-                            turnStarted = true
-                            logger.info("[MessageCallback] first event after ${System.currentTimeMillis() - startTime}ms, type=${rawEvent::class.simpleName}")
+                    val flow = onSendMessage(message, images, userLanguage)
+                    // 2026-06 重构: 走 EventConsumer 统一处理投递语义 + Done 展开 + per-turn 状态
+                    // EventConsumer 内部已打 INFO/WARN/ERROR 日志,这里只关心 collectJob 生命周期
+                    eventConsumer.consumeTurn(
+                        flow = flow,
+                        turnId = turnId,
+                        onTurnEnd = {
+                            thinkingStarted.remove(turnId)
+                            logger.info("[JCEFChatPanel] collectJob turnEnd, turnId=$turnId, durationMs=${System.currentTimeMillis() - startTime}")
                         }
-                        if (rawEvent !is AgentStreamEvent.Done) meaningfulEventReceived = true
-                        routeEvent(rawEvent, turnId)
-                    }
-                    if (!turnStarted) {
-                        sendToJS(
-                            mapOf(
-                                "type" to "error",
-                                "turnId" to turnId,
-                                "message" to "未收到AI响应。请检查:1) 是否已配置API Key;2) 网络连接是否正常。",
-                            )
-                        )
-                    } else if (!meaningfulEventReceived) {
-                        sendToJS(
-                            mapOf(
-                                "type" to "error",
-                                "turnId" to turnId,
-                                "message" to "AI 未返回有效内容,可能是上下文异常或请求被跳过",
-                            )
-                        )
-                    }
+                    )
                 } catch (e: kotlinx.coroutines.CancellationException) {
-                    logger.info("[MessageCallback] user cancelled")
+                    logger.info("[JCEFChatPanel] collectJob cancelled (user stopped or new turn), turnId=$turnId")
+                    throw e  // 重新抛,让上层 scope 知道
                 } catch (e: Throwable) {
-                    logger.error("[MessageCallback] error", e)
+                    logger.error("[JCEFChatPanel] collectJob error", e)
                     sendToJS(
                         mapOf(
                             "type" to "error",
