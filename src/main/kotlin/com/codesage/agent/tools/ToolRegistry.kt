@@ -220,7 +220,7 @@ internal fun writeFileTool() = Tool(
 
 internal fun listDirectoryTool() = Tool(
     name = "list_directory",
-    description = "列出指定目录下的文件和子目录。返回文件名、类型（file/directory）和相对路径。",
+    description = "列出指定目录下的文件和子目录。返回文件名、类型（file/directory）和相对路径。recursive=true 时递归深度受 max_depth 限制（0-20，默认 3）；truncated=true 表示在 max_depth 处还有子目录未展开，调大 max_depth 重试。",
     parameters = ToolParameters(
         properties = mapOf(
             "path" to ToolProperty(
@@ -238,7 +238,7 @@ internal fun listDirectoryTool() = Tool(
 
 internal fun searchCodeTool() = Tool(
     name = "search_code",
-    description = "在项目中搜索代码。支持正则表达式或普通文本搜索，可按文件类型过滤。",
+    description = "在项目中搜索代码。支持正则表达式或普通文本搜索，可按文件类型过滤。max_results 限制 1-1000（默认 200），超出时 truncated=true；partial_scan_files 统计大文件只扫了前 1000 行的次数。请用更精确的 pattern 或 file_pattern 缩小范围。",
     parameters = ToolParameters(
         properties = mapOf(
             "query" to ToolProperty(
@@ -332,7 +332,7 @@ internal fun delegateTaskTool() = Tool(
 
 internal fun findFileTool() = Tool(
     name = "find_file",
-    description = "Find files by name pattern (supports glob/regex). Returns matching file paths.",
+    description = "Find files by name pattern (supports glob/regex). Returns matching file paths. Truncated at max_results (1-1000, default 50); truncated=true means there are more matches — narrow the pattern to enumerate all.",
     parameters = ToolParameters(
         properties = mapOf(
             "pattern" to ToolProperty("string", "File name pattern to search for (e.g. '*.kt', 'build.gradle')"),
@@ -345,7 +345,7 @@ internal fun findFileTool() = Tool(
 
 internal fun grepCodeTool() = Tool(
     name = "grep_code",
-    description = "Search for text patterns in file contents with line context (like grep). Returns matches with surrounding lines.",
+    description = "Search for text patterns in file contents with line context (like grep). Returns matches with surrounding lines. context_lines clamped to [0, 50]; max_results clamped to [1, 1000] (default 200). truncated=true or partial_scan_files>0 means results are incomplete — narrow the query.",
     parameters = ToolParameters(
         properties = mapOf(
             "query" to ToolProperty("string", "Search text or regex pattern"),

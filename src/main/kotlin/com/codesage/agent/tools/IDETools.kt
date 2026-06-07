@@ -281,6 +281,8 @@ class IDETools(private val project: Project?) {
     fun listDirectory(args: JsonObject): ToolResult {
         val path = args["path"]?.jsonPrimitive?.content
         val recursive = args["recursive"]?.jsonPrimitive?.booleanOrNull ?: false
+        // H3: 暴露 max_depth 给 LLM 控制。硬上限 20 防止误传大值。
+        val maxDepth = (args["max_depth"]?.jsonPrimitive?.intOrNull ?: 3).coerceIn(0, 20)
 
         val resolvedPath = if (path != null) resolvePath(path) else project?.basePath
             ?: return ToolResult.Error("No project path available")
@@ -295,13 +297,17 @@ class IDETools(private val project: Project?) {
                 }
 
                 val entries = mutableListOf<JsonObject>()
-                collectDirectoryEntries(dir, entries, recursive, 0, 3)
+                val state = DirectoryState()
+                collectDirectoryEntries(dir, entries, recursive, 0, maxDepth, state)
 
+                // H3: 显式告知 LLM 是否撞到 maxDepth
                 ToolResult.Success(
                     JsonObject(
                         mapOf(
                             "path" to JsonPrimitive(path ?: resolvedPath),
-                            "entries" to JsonArray(entries)
+                            "entries" to JsonArray(entries),
+                            "truncated" to JsonPrimitive(state.hitMaxDepth),
+                            "max_depth" to JsonPrimitive(maxDepth)
                         )
                     )
                 )
@@ -312,12 +318,18 @@ class IDETools(private val project: Project?) {
         })
     }
 
+    private class DirectoryState {
+        // H3: 递归到 maxDepth 时还有子目录没展开 → 标记 truncated
+        var hitMaxDepth: Boolean = false
+    }
+
     private fun collectDirectoryEntries(
         dir: VirtualFile,
         entries: MutableList<JsonObject>,
         recursive: Boolean,
         depth: Int,
-        maxDepth: Int
+        maxDepth: Int,
+        state: DirectoryState
     ) {
         val children = dir.children ?: return
         for (child in children) {
@@ -332,8 +344,13 @@ class IDETools(private val project: Project?) {
             )
             entries.add(entry)
 
-            if (recursive && child.isDirectory && depth < maxDepth) {
-                collectDirectoryEntries(child, entries, true, depth + 1, maxDepth)
+            if (recursive && child.isDirectory) {
+                if (depth < maxDepth) {
+                    collectDirectoryEntries(child, entries, true, depth + 1, maxDepth, state)
+                } else {
+                    // 子目录存在但 depth 到了 maxDepth，标记截断
+                    state.hitMaxDepth = true
+                }
             }
         }
     }
@@ -346,6 +363,8 @@ class IDETools(private val project: Project?) {
             ?: return ToolResult.Error("Missing 'query' parameter")
         val filePattern = args["file_pattern"]?.jsonPrimitive?.content
         val path = args["path"]?.jsonPrimitive?.content
+        // H2: 加 max_results 兜底，避免 LLM 传宽泛 query 触发 OOM
+        val maxResults = (args["max_results"]?.jsonPrimitive?.intOrNull ?: 200).coerceIn(1, 1000)
 
         val searchPath = if (path != null) resolvePath(path) else project?.basePath
             ?: return ToolResult.Error("No project path available")
@@ -362,14 +381,20 @@ class IDETools(private val project: Project?) {
                     Regex(Regex.escape(query))
                 }
 
-                searchInVirtualFile(root, regex, filePattern, matches, 0, 100)
+                val state = SearchState()
+                searchInVirtualFile(root, regex, filePattern, matches, 0, 100, maxResults, state)
 
+                // H2: 透出 truncated + partial_scan_files，让 LLM 知道匹配被
+                // 截在哪一种上限上（results 上限 vs 大文件前 N 行扫描）
                 ToolResult.Success(
                     JsonObject(
                         mapOf(
                             "query" to JsonPrimitive(query),
                             "matches" to JsonArray(matches),
-                            "total" to JsonPrimitive(matches.size)
+                            "total" to JsonPrimitive(matches.size),
+                            "truncated" to JsonPrimitive(matches.size >= maxResults),
+                            "max_results" to JsonPrimitive(maxResults),
+                            "partial_scan_files" to JsonPrimitive(state.partialScanFiles)
                         )
                     )
                 )
@@ -380,27 +405,37 @@ class IDETools(private val project: Project?) {
         })
     }
 
+    private class SearchState {
+        // H2: 记录大文件被部分扫描的文件数（仅前 CHUNK_LINES 行）
+        var partialScanFiles: Int = 0
+    }
+
     private fun searchInVirtualFile(
         file: VirtualFile,
         regex: Regex,
         filePattern: String?,
         matches: MutableList<JsonObject>,
         depth: Int,
-        maxDepth: Int
+        maxDepth: Int,
+        maxResults: Int,
+        state: SearchState
     ) {
+        if (matches.size >= maxResults) return
         if (depth > maxDepth) return
         if (file.name.startsWith(".")) return
 
         if (file.isDirectory) {
             file.children?.forEach { child ->
-                searchInVirtualFile(child, regex, filePattern, matches, depth + 1, maxDepth)
+                searchInVirtualFile(child, regex, filePattern, matches, depth + 1, maxDepth, maxResults, state)
             }
         } else {
             if (filePattern != null && !matchPattern(file.name, filePattern)) return
 
             try {
-                val content = if (file.length > LARGE_FILE_THRESHOLD) {
+                val partialScan = file.length > LARGE_FILE_THRESHOLD
+                val content = if (partialScan) {
                     // 大文件只搜索前 CHUNK_LINES 行
+                    state.partialScanFiles++
                     val raw = String(file.contentsToByteArray(), StandardCharsets.UTF_8)
                     raw.lines().take(CHUNK_LINES).joinToString("\n")
                 } else {
@@ -408,7 +443,9 @@ class IDETools(private val project: Project?) {
                 }
                 val lines = content.lines()
                 lines.forEachIndexed { index, line ->
+                    if (matches.size >= maxResults) return@forEachIndexed
                     regex.findAll(line).forEach { match ->
+                        if (matches.size >= maxResults) return@forEach
                         matches.add(
                             JsonObject(
                                 mapOf(
@@ -416,7 +453,8 @@ class IDETools(private val project: Project?) {
                                     "line" to JsonPrimitive(index + 1),
                                     "column" to JsonPrimitive(match.range.first + 1),
                                     "text" to JsonPrimitive(match.value),
-                                    "context" to JsonPrimitive(line.trim())
+                                    "context" to JsonPrimitive(line.trim()),
+                                    "partial_scan" to JsonPrimitive(partialScan)
                                 )
                             )
                         )
@@ -597,7 +635,8 @@ class IDETools(private val project: Project?) {
         val pattern = args["pattern"]?.jsonPrimitive?.content
             ?: return ToolResult.Error("Missing 'pattern' parameter")
         val path = args["path"]?.jsonPrimitive?.content
-        val maxResults = args["max_results"]?.jsonPrimitive?.intOrNull ?: 50
+        // H1: 硬上限 1000，避免 LLM 误传大值导致 OOM
+        val maxResults = (args["max_results"]?.jsonPrimitive?.intOrNull ?: 50).coerceIn(1, 1000)
 
         val searchPath = if (path != null) resolvePath(path) else project?.basePath
             ?: return ToolResult.Error("No project path available")
@@ -616,12 +655,15 @@ class IDETools(private val project: Project?) {
 
                 findFilesRecursive(root, regex, results, maxResults)
 
+                // H1: 把截断信息显式回传给 LLM
                 ToolResult.Success(
                     JsonObject(
                         mapOf(
                             "pattern" to JsonPrimitive(pattern),
                             "matches" to JsonArray(results),
-                            "total" to JsonPrimitive(results.size)
+                            "total" to JsonPrimitive(results.size),
+                            "truncated" to JsonPrimitive(results.size >= maxResults),
+                            "max_results" to JsonPrimitive(maxResults)
                         )
                     )
                 )
@@ -665,7 +707,10 @@ class IDETools(private val project: Project?) {
             ?: return ToolResult.Error("Missing 'query' parameter")
         val path = args["path"]?.jsonPrimitive?.content
         val filePattern = args["file_pattern"]?.jsonPrimitive?.content
-        val contextLines = args["context_lines"]?.jsonPrimitive?.intOrNull ?: 2
+        // M1: 负数 / 极大 contextLines 都会触发 subList 越界（与 readFile
+        // subList bug 同源）。硬夹到 [0, 50]。
+        val contextLines = (args["context_lines"]?.jsonPrimitive?.intOrNull ?: 2).coerceIn(0, 50)
+        val maxResults = (args["max_results"]?.jsonPrimitive?.intOrNull ?: 200).coerceIn(1, 1000)
 
         val searchPath = if (path != null) resolvePath(path) else project?.basePath
             ?: return ToolResult.Error("No project path available")
@@ -682,14 +727,18 @@ class IDETools(private val project: Project?) {
                     Regex(Regex.escape(query))
                 }
 
-                grepInFile(root, regex, filePattern, matches, contextLines, 0, 100)
+                val state = SearchState()
+                grepInFile(root, regex, filePattern, matches, contextLines, 0, 100, maxResults, state)
 
                 ToolResult.Success(
                     JsonObject(
                         mapOf(
                             "query" to JsonPrimitive(query),
                             "matches" to JsonArray(matches),
-                            "total" to JsonPrimitive(matches.size)
+                            "total" to JsonPrimitive(matches.size),
+                            "truncated" to JsonPrimitive(matches.size >= maxResults),
+                            "max_results" to JsonPrimitive(maxResults),
+                            "partial_scan_files" to JsonPrimitive(state.partialScanFiles)
                         )
                     )
                 )
@@ -706,20 +755,25 @@ class IDETools(private val project: Project?) {
         matches: MutableList<JsonObject>,
         contextLines: Int,
         depth: Int,
-        maxDepth: Int
+        maxDepth: Int,
+        maxResults: Int,
+        state: SearchState
     ) {
+        if (matches.size >= maxResults) return
         if (depth > maxDepth) return
         if (file.name.startsWith(".")) return
         if (file.name in setOf("node_modules", "build", ".gradle", "target", "__pycache__", ".idea")) return
 
         if (file.isDirectory) {
             file.children?.forEach { child ->
-                grepInFile(child, regex, filePattern, matches, contextLines, depth + 1, maxDepth)
+                grepInFile(child, regex, filePattern, matches, contextLines, depth + 1, maxDepth, maxResults, state)
             }
         } else {
             if (filePattern != null && !matchPattern(file.name, filePattern)) return
             try {
-                val content = if (file.length > LARGE_FILE_THRESHOLD) {
+                val partialScan = file.length > LARGE_FILE_THRESHOLD
+                val content = if (partialScan) {
+                    state.partialScanFiles++
                     val raw = String(file.contentsToByteArray(), StandardCharsets.UTF_8)
                     raw.lines().take(CHUNK_LINES).joinToString("\n")
                 } else {
@@ -727,6 +781,7 @@ class IDETools(private val project: Project?) {
                 }
                 val lines = content.lines()
                 lines.forEachIndexed { index, line ->
+                    if (matches.size >= maxResults) return@forEachIndexed
                     if (regex.find(line) != null) {
                         val start = (index - contextLines).coerceAtLeast(0)
                         val end = (index + contextLines + 1).coerceAtMost(lines.size)
@@ -737,7 +792,8 @@ class IDETools(private val project: Project?) {
                                     "file" to JsonPrimitive(file.path),
                                     "line" to JsonPrimitive(index + 1),
                                     "text" to JsonPrimitive(line.trim()),
-                                    "context" to JsonPrimitive(context)
+                                    "context" to JsonPrimitive(context),
+                                    "partial_scan" to JsonPrimitive(partialScan)
                                 )
                             )
                         )
