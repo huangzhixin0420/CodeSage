@@ -359,7 +359,7 @@ internal fun grepCodeTool() = Tool(
 
 internal fun getFileInfoTool() = Tool(
     name = "get_file_info",
-    description = "Get metadata about a file: size, type, extension, modification time.",
+    description = "Get metadata about a file: size, type, extension, modification time (epoch ms + ISO 8601), readability/writability, and line_count (for files < 1MB).",
     parameters = ToolParameters(
         properties = mapOf(
             "path" to ToolProperty("string", "File path")

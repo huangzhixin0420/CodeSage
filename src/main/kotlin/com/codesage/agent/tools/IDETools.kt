@@ -870,18 +870,34 @@ class IDETools(private val project: Project?) {
                 val file = LocalFileSystem.getInstance().findFileByPath(resolvedPath)
                     ?: return@Computable ToolResult.Error("File not found: $path")
 
-                ToolResult.Success(
-                    JsonObject(
-                        mapOf(
-                            "path" to JsonPrimitive(path),
-                            "name" to JsonPrimitive(file.name),
-                            "size" to JsonPrimitive(file.length),
-                            "is_directory" to JsonPrimitive(file.isDirectory),
-                            "extension" to JsonPrimitive(file.extension ?: ""),
-                            "last_modified" to JsonPrimitive(file.timeStamp)
-                        )
-                    )
+                // L1: line_count 仅对 < 1MB 的常规文件计算；大文件用 readFile
+                // 的 offset/limit 自取。
+                val lineCount = if (!file.isDirectory && file.length < 1_000_000) {
+                    String(file.contentsToByteArray(), StandardCharsets.UTF_8).lines().size
+                } else null
+
+                // L2: ISO 8601 时间戳，与原始 long 并存（不破坏现有调用方）
+                val lastModifiedIso = try {
+                    java.time.Instant.ofEpochMilli(file.timeStamp).toString()
+                } catch (_: Exception) {
+                    null
+                }
+
+                val fields = mutableMapOf<String, JsonElement>(
+                    "path" to JsonPrimitive(path),
+                    "name" to JsonPrimitive(file.name),
+                    "size" to JsonPrimitive(file.length),
+                    "is_directory" to JsonPrimitive(file.isDirectory),
+                    "extension" to JsonPrimitive(file.extension ?: ""),
+                    "last_modified" to JsonPrimitive(file.timeStamp),
+                    // L1
+                    "is_readable" to JsonPrimitive(File(file.path).canRead()),
+                    "is_writable" to JsonPrimitive(file.isWritable),
                 )
+                if (lineCount != null) fields["line_count"] = JsonPrimitive(lineCount)
+                if (lastModifiedIso != null) fields["last_modified_iso"] = JsonPrimitive(lastModifiedIso)
+
+                ToolResult.Success(JsonObject(fields))
             } catch (e: Exception) {
                 ToolResult.Error("Failed to get file info: ${e.message}")
             }
