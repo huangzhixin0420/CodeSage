@@ -408,7 +408,7 @@ open class AgentCore(
     fun setHooks(newHooks: AgentHooks) {
         hooks = newHooks
         // 注意：不再重新创建成员变量 enhancedLoop。
-        // 新的 hooks 会在下一次 chatWithTools / continueConversation 创建新 EnhancedAgentLoop 时自动应用。
+        // 新的 hooks 会在下一次 chatWithTools 创建新 EnhancedAgentLoop 时自动应用。
     }
 
     /**
@@ -816,16 +816,6 @@ open class AgentCore(
                 )
             }
         }
-    }
-
-    /**
-     * 检查当前是否可以继续上一次因预算耗尽而暂停的对话
-     */
-    fun canContinue(): Boolean = false  // Budget system removed
-    /** 继续上一次对话：预算系统已删除，方法保留以兼容旧调用方，始终返回 null */
-    fun continueConversation(extraIterations: Int): Flow<AgentStreamEvent>? {
-        logger.warn("continueConversation: budget system removed, no continuation available")
-        return null
     }
 
     fun interrupt() {

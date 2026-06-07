@@ -267,8 +267,7 @@ class SubAgentExecutorTest {
         val result = executor.spawn(
             parentSessionId = "test",
             taskDescription = "Should be rejected",
-            toolset = "dev",
-            maxIterations = 5
+            toolset = "dev"
         )
         assertFalse(result.success, "Sub-agent at MAX depth should fail")
         assertTrue(
@@ -291,7 +290,6 @@ class SubAgentExecutorTest {
     fun `sub task config should have defaults`() {
         val config = SubAgentExecutor.SubTaskConfig(description = "Simple task")
         assertEquals("dev", config.toolset)
-        assertEquals(10, config.maxIterations)
         assertTrue(config.contextFiles.isEmpty())
     }
 

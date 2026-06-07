@@ -196,32 +196,6 @@ class PluginConfigState {
     @Tag("autoSaveEnabled")
     var autoSaveEnabled: Boolean = true
 
-    // ==================== 预算与轮次管理 ====================
-
-    @Tag("maxIterationsPerTask")
-    var maxIterationsPerTask: Int = 30
-
-    @Tag("maxTokensPerTask")
-    var maxTokensPerTask: Int = 0
-
-    @Tag("maxDurationSecondsPerTask")
-    var maxDurationSecondsPerTask: Int = 600
-
-    @Tag("enableIterationBudget")
-    var enableIterationBudget: Boolean = true
-
-    @Tag("enableTokenBudget")
-    var enableTokenBudget: Boolean = false
-
-    @Tag("enableTimeBudget")
-    var enableTimeBudget: Boolean = true
-
-    @Tag("budgetWarningThreshold")
-    var budgetWarningThreshold: Int = 70
-
-    @Tag("subAgentBudgetRatio")
-    var subAgentBudgetRatio: Double = 0.5
-
     @Tag("allowContinueOnExhaustion")
     var allowContinueOnExhaustion: Boolean = true
 }
@@ -379,56 +353,6 @@ class PluginConfig : PersistentStateComponent<PluginConfigState> {
         get() = state.truncationStrategy
         set(value) {
             state.truncationStrategy = value
-        }
-
-    // ==================== 预算与轮次管理 ====================
-
-    var maxIterationsPerTask: Int
-        get() = state.maxIterationsPerTask
-        set(value) {
-            state.maxIterationsPerTask = value.coerceAtLeast(1)
-        }
-
-    var maxTokensPerTask: Int
-        get() = state.maxTokensPerTask
-        set(value) {
-            state.maxTokensPerTask = value.coerceAtLeast(0)
-        }
-
-    var maxDurationSecondsPerTask: Int
-        get() = state.maxDurationSecondsPerTask
-        set(value) {
-            state.maxDurationSecondsPerTask = value.coerceIn(10, 3600)
-        }
-
-    var enableIterationBudget: Boolean
-        get() = state.enableIterationBudget
-        set(value) {
-            state.enableIterationBudget = value
-        }
-
-    var enableTokenBudget: Boolean
-        get() = state.enableTokenBudget
-        set(value) {
-            state.enableTokenBudget = value
-        }
-
-    var enableTimeBudget: Boolean
-        get() = state.enableTimeBudget
-        set(value) {
-            state.enableTimeBudget = value
-        }
-
-    var budgetWarningThreshold: Int
-        get() = state.budgetWarningThreshold
-        set(value) {
-            state.budgetWarningThreshold = value.coerceIn(10, 90)
-        }
-
-    var subAgentBudgetRatio: Double
-        get() = state.subAgentBudgetRatio
-        set(value) {
-            state.subAgentBudgetRatio = value.coerceIn(0.1, 1.0)
         }
 
     var allowContinueOnExhaustion: Boolean

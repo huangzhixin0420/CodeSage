@@ -321,10 +321,6 @@ internal fun delegateTaskTool() = Tool(
                     "dev", "research", "test", "browser"
                 )
             ),
-            "max_iterations" to ToolProperty(
-                type = "integer",
-                description = "Budget for the sub-agent, default 10"
-            ),
             "context_files" to ToolProperty(
                 type = "array",
                 description = "Files the sub-agent needs access to"

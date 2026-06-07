@@ -61,12 +61,6 @@
             id="com.codesage.ide.settings.ProviderSettingsConfigurable"
             displayName="Providers &amp; General"
         />
-        <applicationConfigurable
-            parentId="com.codesage.ide.settings.PluginSettingsConfigurable"
-            instance="com.codesage.ide.settings.BudgetSettingsConfigurable"
-            id="com.codesage.ide.settings.BudgetSettingsConfigurable"
-            displayName="Budget &amp; Rounds"
-        />
         -->
 
         <!-- Tool Window -->
