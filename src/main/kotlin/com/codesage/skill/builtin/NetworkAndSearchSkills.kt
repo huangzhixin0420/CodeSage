@@ -1,6 +1,7 @@
 package com.codesage.skill.builtin
 
 import com.codesage.skill.*
+import com.codesage.shared.net.ProxyAwareHttpClientFactory
 import com.codesage.shared.utils.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -38,11 +39,9 @@ class WebRequestSkill : Skill {
     )
 
     private val logger = Logger.getLogger<WebRequestSkill>()
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
+    // v2.2:走共享代理感知 client
+    private val client: OkHttpClient
+        get() = ProxyAwareHttpClientFactory.build()
 
     // Blocked URL patterns to prevent SSRF
     private val BLOCKED_URL_PATTERNS = listOf(

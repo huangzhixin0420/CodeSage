@@ -258,6 +258,129 @@ class ExtendedToolsTest {
         }
     }
 
+    /**
+     * 连接超时(模拟 SOCKS 代理连不上、目标无响应等场景)。
+     * 之前只 catch (Exception),返回的 message 是裸的 "timeout" — 用户不知道
+     * 是连接阶段还是读取阶段、是代理问题还是目标问题。
+     * v2.2:返回带 timeout 时长 + 调试建议的友好消息。
+     */
+    @Test
+    fun `http_request should return friendly timeout error`() = runBlocking {
+        // MockWebServer 不响应 — OkHttp 会触发 connect / read timeout
+        // 把 body 故意 bodyLength=0 但不 setBody,客户端 read 会卡住
+        mockServer.enqueue(
+            MockResponse()
+                .setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE),
+        )
+
+        val tools = ExtendedTools(project = null)
+        tools.ssrfProtectionEnabled = false
+        // 强制短超时(1.5s),测试不会等满 15s
+        val args = makeArgs(
+            "url" to JsonPrimitive(mockServer.url("/hang").toString()),
+            "timeout" to JsonPrimitive(1500),
+        )
+        val result = tools.httpRequest(args)
+
+        assertTrue(result is ToolResult.Error, "Expected error but got: $result")
+        val msg = (result as ToolResult.Error).message
+        assertTrue(
+            msg.contains("timed out", ignoreCase = true) || msg.contains("timeout", ignoreCase = true),
+            "应明确提到超时,实际: $msg",
+        )
+        // v2.2:错误消息应包含 URL 便于排查
+        assertTrue(msg.contains(mockServer.url("/hang").host), "错误应包含 URL host,实际: $msg")
+    }
+
+    /**
+     * 重定向循环 — 目标服务器反复重定向同一个 URL。
+     * OkHttp 默认 maxRedirects=20,超过抛 ProtocolException("Too many follow-up requests: 21")。
+     * v2.2:catch 住并归类为"重定向循环",而不是裸露的 ProtocolException。
+     */
+    @Test
+    fun `http_request should detect redirect loop and return clear error`() = runBlocking {
+        // 队列 25 个 302,全部指回自己,确保 OkHttp 触发 maxRedirects 异常
+        repeat(25) {
+            mockServer.enqueue(
+                MockResponse()
+                    .setResponseCode(302)
+                    .addHeader("Location", mockServer.url("/loop").toString()),
+            )
+        }
+
+        val tools = ExtendedTools(project = null)
+        tools.ssrfProtectionEnabled = false
+        val args = makeArgs("url" to JsonPrimitive(mockServer.url("/loop").toString()))
+        val result = tools.httpRequest(args)
+
+        assertTrue(result is ToolResult.Error, "Expected error but got: $result")
+        val msg = (result as ToolResult.Error).message
+        assertTrue(
+            msg.contains("重定向", ignoreCase = true) || msg.contains("redirect", ignoreCase = true) || msg.contains("follow", ignoreCase = true),
+            "应明确提到重定向循环,实际: $msg",
+        )
+        // 错误消息应包含 URL
+        assertTrue(msg.contains(mockServer.url("/loop").host), "错误应包含 URL host,实际: $msg")
+    }
+
+    /**
+     * 连接失败 — 目标主机拒绝连接(端口未监听 / 防火墙拒绝)。
+     * 用 127.0.0.1 的随机端口模拟,关闭 SSRF 防护确保不被提前拦截。
+     * v2.2:catch ConnectException,告诉用户"目标拒绝连接"。
+     */
+    @Test
+    fun `http_request should return clear error on connect refused`() = runBlocking {
+        val tools = ExtendedTools(project = null)
+        tools.ssrfProtectionEnabled = false
+        // 选一个肯定不会监听的端口 — 1 通常保留,马上 connection refused
+        val args = makeArgs(
+            "url" to JsonPrimitive("http://127.0.0.1:1/should-fail"),
+            "timeout" to JsonPrimitive(2000),
+        )
+        val result = tools.httpRequest(args)
+
+        assertTrue(result is ToolResult.Error, "Expected error but got: $result")
+        val msg = (result as ToolResult.Error).message
+        // 我们的新 catch 会归类为"连接失败"或"超时"等(具体看 OS 返回哪种异常)
+        assertTrue(
+            msg.contains("连接失败", ignoreCase = true) ||
+                msg.contains("拒绝", ignoreCase = true) ||
+                msg.contains("timed out", ignoreCase = true) ||
+                msg.contains("connect", ignoreCase = true) ||
+                msg.contains("不可达", ignoreCase = true),
+            "应明确说明连接失败,实际: $msg",
+        )
+    }
+
+    /**
+     * v2.2:HTTP 客户端默认配置应开启 followRedirects / followSslRedirects。
+     * (OkHttp 默认就是 true,这里是回归测试,免得以后有人误关。)
+     */
+    @Test
+    fun `http_request should follow 3xx redirects automatically`() = runBlocking {
+        // 先 302 到 /target,再 200
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(302)
+                .addHeader("Location", mockServer.url("/target").toString()),
+        )
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("redirected!"),
+        )
+
+        val tools = ExtendedTools(project = null)
+        tools.ssrfProtectionEnabled = false
+        val args = makeArgs("url" to JsonPrimitive(mockServer.url("/start").toString()))
+        val result = tools.httpRequest(args)
+
+        assertTrue(result is ToolResult.Success, "Expected success after redirect, got: $result")
+        val data = (result as ToolResult.Success).data.jsonObject
+        assertEquals(200, data["status_code"]?.jsonPrimitive?.int)
+        assertEquals("redirected!", data["body"]?.jsonPrimitive?.content)
+    }
+
     // ===== Data Processing Tools =====
 
     @Test

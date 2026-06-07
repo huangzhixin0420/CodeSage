@@ -2,6 +2,7 @@ package com.codesage.agent.tools.handlers
 
 import com.codesage.agent.tools.*
 import com.codesage.model.dto.Tool
+import com.codesage.shared.net.ProxyAwareHttpClientFactory
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.Dispatchers
@@ -24,11 +25,9 @@ import java.util.concurrent.TimeUnit
  */
 object WebScraperToolHandlers {
     private val logger = Logger.getLogger<WebScraperToolHandlers>()
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .build()
+    // v2.2:走共享代理感知 client
+    private val client: OkHttpClient
+        get() = ProxyAwareHttpClientFactory.build()
 
     fun createWebScraperHandler(): ToolHandler = object : ToolHandler {
         override val tool: Tool = webScraperTool()

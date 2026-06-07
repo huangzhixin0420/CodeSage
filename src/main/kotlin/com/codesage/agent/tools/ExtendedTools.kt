@@ -2,6 +2,7 @@ package com.codesage.agent.tools
 
 import com.codesage.shared.security.ShellInjectionDetector
 import com.codesage.shared.security.SsrfGuard
+import com.codesage.shared.net.ProxyAwareHttpClientFactory
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.project.Project
 import kotlinx.coroutines.Dispatchers
@@ -266,11 +267,10 @@ class ExtendedTools(private val project: Project?) {
 
     // === HTTP Tool ===
 
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
+    // v2.2:走共享的代理感知 OkHttpClient(ProxyAwareHttpClientFactory),
+    // 行为受 settings.json 的 network.proxy 控制(系统默认 / 手动 / 直连)
+    private val httpClient: OkHttpClient
+        get() = ProxyAwareHttpClientFactory.build()
 
     // C5 修复：SSRF 防护已迁移到 [com.codesage.shared.security.SsrfGuard]。
     // 旧实现用 11 个 Regex 拼凑，可被以下绕过：十进制/八进制 IP、子域名欺骗、DNS rebinding、
@@ -326,6 +326,7 @@ class ExtendedTools(private val project: Project?) {
             else -> return@withContext ToolResult.Error("Unsupported HTTP method: $method")
         }
 
+        // 共享 client 已配 15s 超时;工具用户可传 timeout(1-60s)覆盖
         val client = httpClient.newBuilder()
             .connectTimeout(timeout.toLong(), TimeUnit.MILLISECONDS)
             .readTimeout(timeout.toLong(), TimeUnit.MILLISECONDS)
@@ -363,9 +364,42 @@ class ExtendedTools(private val project: Project?) {
                     )
                 )
             }
+        } catch (e: java.net.SocketTimeoutException) {
+            // connect / read / write 三种 timeout 都会到这里
+            logger.error("HTTP request timed out: $url (timeout=${timeout}ms)", e)
+            ToolResult.Error(
+                "HTTP request timed out (${timeout}ms): $url — " +
+                    "可能是目标无响应、代理(SOCKS/HTTP)不可达、或网络被防火墙屏蔽。"
+            )
+        } catch (e: java.net.UnknownHostException) {
+            logger.error("HTTP unknown host: $url", e)
+            ToolResult.Error(
+                "HTTP 域名无法解析: $url — ${e.message}。" +
+                    "检查 DNS 设置,或确认目标域名拼写正确。"
+            )
+        } catch (e: java.net.ConnectException) {
+            logger.error("HTTP connect failed: $url", e)
+            ToolResult.Error(
+                "HTTP 连接失败: $url — ${e.message}。" +
+                    "目标主机拒绝连接(可能服务已下线、端口被防火墙拦截、或代理配置错误)。"
+            )
+        } catch (e: java.net.ProtocolException) {
+            // OkHttp 抛 "Too many follow-up requests: N" — 重定向循环
+            logger.error("HTTP redirect loop: $url (${e.message})", e)
+            ToolResult.Error(
+                "HTTP 重定向循环: $url — ${e.message}。" +
+                    "服务器反复重定向,可能是配置错误、登录墙、或 CDN 配置异常。" +
+                    "如需绕过重定向,可在请求里设 headers 携带认证 Cookie。"
+            )
+        } catch (e: javax.net.ssl.SSLException) {
+            logger.error("HTTP SSL error: $url", e)
+            ToolResult.Error(
+                "HTTP SSL/TLS 错误: $url — ${e.message}。" +
+                    "证书过期、不被信任、或协议版本不匹配。考虑用 HTTP 而非 HTTPS,或更新本地证书。"
+            )
         } catch (e: Exception) {
             logger.error("HTTP request failed: $url", e)
-            ToolResult.Error("HTTP request failed: ${e.message}")
+            ToolResult.Error("HTTP request failed ($url): ${e.message}")
         }
     }
 

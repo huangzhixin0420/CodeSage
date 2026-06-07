@@ -58,6 +58,12 @@ const GROUP_DEFS = [
   },
   { id: "mcp", icon: "fa-plug", label: "MCP", subtitle: "外部工具服务器" },
   {
+    id: "network",
+    icon: "fa-globe",
+    label: "网络",
+    subtitle: "代理 / 直连",
+  },
+  {
     id: "advanced",
     icon: "fa-screwdriver-wrench",
     label: "高级",
@@ -72,6 +78,7 @@ class SettingsView {
     this.data = null; // 当前 settings 副本
     this._saveDebounced = debounce(() => this._save(), 500);
     this._onSaveError = null;
+    this._onNetworkTestResult = null;  // 由 NetworkBridgeHandler 回调(测试代理结果)
   }
 
   // ===== Lifecycle =====
@@ -320,6 +327,25 @@ class SettingsView {
       toast.error("迁移失败: " + (msg.message || "未知错误"));
     } else if (msg.type === "legacy_migration_skipped") {
       // no-op
+    } else if (msg.type === "network_proxy_test_result") {
+      // v2.2:网络设置页"测试连接"按钮的回调
+      if (typeof this._onNetworkTestResult === "function") {
+        this._onNetworkTestResult(msg);
+        this._onNetworkTestResult = null;
+      }
+    } else if (msg.type === "network_proxy_saved") {
+      toast.success("代理配置已保存,立即生效");
+    } else if (msg.type === "network_proxy_config") {
+      // v2.2:首次打开网络页时,后端主动推一次当前配置(密码不回传)
+      // 这里只用来更新 view.data,渲染走 _renderMain
+      if (msg.config && this.data) {
+        const cur = (this.data.network && this.data.network.proxy) || {};
+        this.data.network = {
+          ...(this.data.network || {}),
+          proxy: { ...cur, ...msg.config },
+        };
+        this._renderMain();
+      }
     }
   }
 
@@ -804,6 +830,143 @@ const GROUP_RENDERERS = {
     view._bindMcpActions(root);
   },
 
+  network: (view, root) => {
+    if (!view.data) return;
+    const s = view.data;
+    const proxy = s.network?.proxy || { mode: "system", type: "http", host: "", port: 0, username: "", noProxy: [] };
+    const mode = proxy.mode || "system";
+    // 注意:密码不通过 settings_update 走(只走 network_set_proxy + PasswordSafe)
+    // 这里只展示 mode / host / port / noProxy,密码字段在用户点"修改"时才出现
+    root.innerHTML = `
+      <h2 class="cs-settings-h2">网络</h2>
+      <p class="cs-settings-section-desc">配置 HTTP 代理。LLM 调用的 httpRequest 工具、Provider 连通性测试、网页抓取、MCP HTTP 都共享这份配置;模型 API(Anthropic / OpenAI / Gemini)走各自的客户端,不受影响。</p>
+      <div class="cs-settings-section">
+        ${view._formField({
+          id: "proxyMode",
+          label: "代理模式",
+          description: mode === "system"
+            ? "走 IntelliJ HTTP Proxy 设置(默认行为,JVM ProxySelector)"
+            : mode === "direct"
+            ? "完全直连,不走任何代理"
+            : "使用下方手动配置的代理(覆盖 IntelliJ 设置)",
+          children: view._select("network.proxy.mode", mode, [
+            { value: "system", label: "系统默认(跟随 IntelliJ)" },
+            { value: "manual", label: "手动配置" },
+            { value: "direct", label: "直连(不用代理)" },
+          ]),
+        })}
+
+        <div class="cs-form-row" id="manual-proxy-fields" style="display:${mode === "manual" ? "flex" : "none"};">
+          <hr class="cs-form-divider" />
+          <p class="cs-form-hint">手动配置代理。密码存 IntelliJ PasswordSafe,不会明文写入 settings.json。</p>
+          ${view._formField({
+            id: "proxyType",
+            label: "代理类型",
+            children: view._select("network.proxy.type", proxy.type || "http", [
+              { value: "http", label: "HTTP 代理" },
+              { value: "socks", label: "SOCKS5 代理" },
+            ]),
+          })}
+          ${view._formField({
+            id: "proxyHost",
+            label: "主机",
+            children: view._input("network.proxy.host", proxy.host || "", "proxy.example.com"),
+          })}
+          ${view._formField({
+            id: "proxyPort",
+            label: "端口",
+            children: view._input("network.proxy.port", String(proxy.port || ""), "8080"),
+          })}
+          ${view._formField({
+            id: "proxyUsername",
+            label: "用户名",
+            description: "可选,需要认证时填",
+            children: view._input("network.proxy.username", proxy.username || "", ""),
+          })}
+          ${view._formField({
+            id: "proxyPassword",
+            label: "密码",
+            description: proxy.passwordRef ? "已设置(留空不修改)" : "需要认证时填,存 IntelliJ PasswordSafe",
+            children: `<input type="password" class="cs-input" data-cs-field="network.proxy.password" placeholder="${proxy.passwordRef ? "(已设置,留空不修改)" : "密码"}" autocomplete="off" />`,
+          })}
+          ${view._formField({
+            id: "noProxy",
+            label: "不走代理",
+            description: "逗号分隔的域名/IP,匹配这些的请求走直连(支持 *.example.com / 127.0.0.1 / 192.168.1.0/24)",
+            children: view._input("network.proxy.noProxy", (proxy.noProxy || []).join(", "), "localhost, 127.0.0.1, *.internal"),
+          })}
+          <div class="cs-form-row cs-form-row-actions">
+            <button type="button" class="cs-button variant-secondary size-md" data-cs-action="test-proxy">
+              <i class="fas fa-plug"></i>&nbsp;测试连接
+            </button>
+            <span class="cs-test-result" data-cs-role="proxy-test-result"></span>
+          </div>
+        </div>
+      </div>
+    `;
+    view._bindFields(root);
+    view._bindNetworkActions(root);
+
+    // v2.2:覆盖 network.proxy.* 字段的保存逻辑
+    // — 不走通用 _saveDebounced → settings_update(那个会把 passwordRef 字符串当字面值存,
+    //   密码丢了,用户还以为保存了),改走 network_set_proxy:
+    //   1) 密码存 PasswordSafe(留空 = 保留旧密码)
+    //   2) 立即生效(ProxyAwareHttpClientFactory.updateConfig)
+    //   3) settings.json 同步更新(仅不含密码)
+    const networkFields = root.querySelectorAll('[data-cs-field^="network.proxy."]');
+    networkFields.forEach((el) => {
+      // 关键:不再触发通用 _saveDebounced,改触发 _saveNetworkProxy
+      el.addEventListener("input", () => view._saveNetworkProxy(root), { capture: true });
+      el.addEventListener("change", () => view._saveNetworkProxy(root), { capture: true });
+    });
+    view._saveNetworkProxy = (scope) => {
+      const get = (k) => {
+        const e = scope.querySelector(`[data-cs-field="${k}"]`);
+        return e ? e.value : "";
+      };
+      // 注意:payload 里**不能** 有 type 字段,否则会覆盖外层桥消息的 type
+      const payload = {
+        mode: get("network.proxy.mode") || "system",
+        proxyType: get("network.proxy.type") || "http",
+        host: get("network.proxy.host") || "",
+        port: parseInt(get("network.proxy.port"), 10) || 0,
+        username: get("network.proxy.username") || "",
+        password: get("network.proxy.password") || "",
+        noProxy: (get("network.proxy.noProxy") || "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      };
+      bridge.send({ type: "network_set_proxy", ...payload });
+      // 同步 view.data(避免 settings_data 回来前 view.data 跟 UI 不一致)
+      if (view.data) {
+        view.data.network = view.data.network || {};
+        view.data.network.proxy = {
+          ...(view.data.network.proxy || {}),
+          mode: payload.mode,
+          type: payload.type,
+          host: payload.host,
+          port: payload.port,
+          username: payload.username,
+          noProxy: payload.noProxy,
+          // passwordRef 是后端存的字符串,这里用前一次的值占位(避免下个 settings_get 把它刷掉)
+          passwordRef: view.data.network.proxy?.passwordRef || "",
+        };
+      }
+    };
+
+    // 模式切换时显示/隐藏手动配置区
+    const modeSelect = root.querySelector('[data-cs-field="network.proxy.mode"]');
+    if (modeSelect) {
+      modeSelect.addEventListener("change", () => {
+        const fields = root.querySelector("#manual-proxy-fields");
+        if (fields) {
+          fields.style.display = modeSelect.value === "manual" ? "flex" : "none";
+        }
+      });
+    }
+  },
+
   advanced: (view, root) => {
     if (!view.data) return;
     const s = view.data;
@@ -1186,6 +1349,69 @@ SettingsView.prototype._openMcpModal = function (id) {
     }
   });
   modal.open();
+};
+
+SettingsView.prototype._bindNetworkActions = function (root) {
+  const self = this;
+  // 读当前 form 数据(避免每次手敲 setNetworkProxy 都要重新拼)
+  const readForm = () => {
+    const get = (key) => {
+      const el = root.querySelector(`[data-cs-field="${key}"]`);
+      return el ? el.value : "";
+    };
+    return {
+      mode: get("network.proxy.mode") || "system",
+      proxyType: get("network.proxy.type") || "http",
+      host: get("network.proxy.host") || "",
+      port: parseInt(get("network.proxy.port"), 10) || 0,
+      username: get("network.proxy.username") || "",
+      password: get("network.proxy.password") || "",
+      noProxy: (get("network.proxy.noProxy") || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    };
+  };
+
+  const testBtn = root.querySelector('[data-cs-action="test-proxy"]');
+  const resultEl = root.querySelector('[data-cs-role="proxy-test-result"]');
+  if (testBtn) {
+    testBtn.addEventListener("click", () => {
+      const form = readForm();
+      if (form.mode !== "manual") {
+        resultEl.className = "cs-test-result pending";
+        resultEl.innerHTML = `<i class="fas fa-circle-info"></i> 当前模式是 ${form.mode},无需测试`;
+        return;
+      }
+      if (!form.host || form.port <= 0) {
+        resultEl.className = "cs-test-result fail";
+        resultEl.innerHTML = '<i class="fas fa-exclamation-circle"></i> 请先填写主机和端口';
+        return;
+      }
+      testBtn.disabled = true;
+      testBtn.innerHTML = '<i class="fas fa-spinner spin"></i>&nbsp;探测中...';
+      resultEl.className = "cs-test-result pending";
+      resultEl.innerHTML = '<i class="fas fa-spinner spin"></i> 探测中...';
+      const handler = (msg) => {
+        if (msg?.type !== "network_proxy_test_result") return;
+        window.removeEventListener("__codesage_proxy_test__", handler);
+        testBtn.disabled = false;
+        testBtn.innerHTML = '<i class="fas fa-plug"></i>&nbsp;测试连接';
+        if (msg.ok) {
+          resultEl.className = "cs-test-result success";
+          resultEl.innerHTML = `<i class="fas fa-check-circle"></i> 连接成功 (${msg.latencyMs}ms)`;
+        } else {
+          resultEl.className = "cs-test-result fail";
+          resultEl.innerHTML = `<i class="fas fa-times-circle"></i> ${escapeHtml(msg.error || "未知错误")}`;
+        }
+      };
+      // 通过自定义全局事件挂载(简单实现,跟 settings.js 现有 set_api_key_result 风格一致)
+      const origAdd = window.addEventListener.bind(window);
+      // 注册一个一次性的 bridge handler:接收到 network_proxy_test_result 就触发
+      self._onNetworkTestResult = handler;
+      bridge.send({ type: "network_test_proxy", ...form });
+    });
+  }
 };
 
 SettingsView.prototype._bindProviderActions = function (root) {

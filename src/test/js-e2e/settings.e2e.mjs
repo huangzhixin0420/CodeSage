@@ -275,6 +275,119 @@ async function runE2E() {
   await new Promise((r) => setTimeout(r, 250));
   assert(view.data.providers.length === 0, `确认删除后 providers 应为空,实际长度 ${view.data.providers.length}`);
 
+    // ============== 场景 14: 网络设置 — 代理配置 UI ==============
+    // v2.2 新增:用户可在设置页 → 网络 分组配置代理。
+    //   - 模式:系统默认 / 手动 / 直连
+    //   - 手动模式展开:类型、主机、端口、用户名、密码、noProxy 列表、测试连接
+    //   - 密码存 PasswordSafe(settings.json 不存)
+    console.log("\n[14] 网络设置 — 代理配置 UI");
+    // 切到 network 分组
+    view.currentGroup = "network";
+    view.data.network = {
+      proxy: { mode: "system", type: "http", host: "", port: 0, username: "", passwordRef: "", noProxy: [] },
+    };
+    view._renderMain();
+    const main2 = root.querySelector('[data-cs-role="main"]');
+
+    // 1) 渲染 h2 标题 + section 描述
+    const h2 = main2.querySelector(".cs-settings-h2");
+    assert(h2?.textContent === "网络", `标题应为 "网络",实际 "${h2?.textContent}"`);
+
+    // 2) 模式 select 应存在,3 个选项
+    const modeSelect = main2.querySelector('[data-cs-field="network.proxy.mode"]');
+    assert(modeSelect, "应能找到代理模式下拉框");
+    const modeOptions = Array.from(modeSelect?.options || []).map((o) => o.value);
+    assert(
+      modeOptions.includes("system") && modeOptions.includes("manual") && modeOptions.includes("direct"),
+      `模式选项应包含 system / manual / direct,实际 ${JSON.stringify(modeOptions)}`,
+    );
+
+    // 3) system 模式下手动配置区应隐藏
+    const manualFields = main2.querySelector("#manual-proxy-fields");
+    assert(manualFields, "应存在 #manual-proxy-fields 容器");
+    assert(
+      manualFields.style.display === "none",
+      `默认 system 模式下手配区应隐藏,实际 display=${manualFields.style.display}`,
+    );
+
+    // 4) 切到 manual,手动配置区应展开
+    modeSelect.value = "manual";
+    modeSelect.dispatchEvent(new w.Event("change"));
+    assert(
+      manualFields.style.display === "flex",
+      `切到 manual 模式手配区应展开,实际 display=${manualFields.style.display}`,
+    );
+
+    // 5) 手动配置字段应齐
+    const typeSel = main2.querySelector('[data-cs-field="network.proxy.type"]');
+    const hostInput = main2.querySelector('[data-cs-field="network.proxy.host"]');
+    const portInput = main2.querySelector('[data-cs-field="network.proxy.port"]');
+    const userInput = main2.querySelector('[data-cs-field="network.proxy.username"]');
+    const passInput = main2.querySelector('[data-cs-field="network.proxy.password"]');
+    const noProxyInput = main2.querySelector('[data-cs-field="network.proxy.noProxy"]');
+    const testBtn = main2.querySelector('[data-cs-action="test-proxy"]');
+    assert(typeSel, "应有 type select");
+    assert(hostInput, "应有 host input");
+    assert(portInput, "应有 port input");
+    assert(userInput, "应有 username input");
+    assert(passInput, "应有 password input (type=password)");
+    assert(passInput.type === "password", `密码 input 应是 type=password,实际 ${passInput.type}`);
+    assert(noProxyInput, "应有 noProxy input");
+    assert(testBtn, "应有\"测试连接\"按钮");
+
+    // 6) 模拟用户填配置 + 触发 input → 应该发 network_set_proxy 桥消息
+    hostInput.value = "proxy.example.com";
+    hostInput.dispatchEvent(new w.Event("input"));
+    portInput.value = "8080";
+    portInput.dispatchEvent(new w.Event("input"));
+    userInput.value = "alice";
+    userInput.dispatchEvent(new w.Event("input"));
+    noProxyInput.value = "localhost, *.internal";
+    noProxyInput.dispatchEvent(new w.Event("input"));
+
+    const setSends = w.__e2e_sent.filter((s) => s?.type === "network_set_proxy");
+    assert(
+      setSends.length >= 1,
+      `填字段应触发 network_set_proxy 桥消息,实际 ${setSends.length} 条`,
+    );
+    const lastSet = setSends[setSends.length - 1];
+    assert(
+      lastSet.host === "proxy.example.com" && lastSet.port === 8080 && lastSet.username === "alice",
+      `payload 应包含用户填的值,实际 host=${lastSet.host} port=${lastSet.port} user=${lastSet.username}`,
+    );
+    assert(
+      Array.isArray(lastSet.noProxy) && lastSet.noProxy.includes("localhost") && lastSet.noProxy.includes("*.internal"),
+      `noProxy 应解析为数组,实际 ${JSON.stringify(lastSet.noProxy)}`,
+    );
+
+    // 7) 关键回归:填的字段**不应该** 走通用 settings_update(那个不带密码)
+    const updSends = w.__e2e_sent.filter((s) => s?.type === "settings_update");
+    // settings_update 可能在更早的渲染里被触发了(其他字段)— 我们只关心本次测试期间是否被触发
+    // 由于我们替换了 save handler,本次 input 不应新增 settings_update
+    const beforeCount = w.__e2e_sent.length;
+    // 再触发一次 input
+    hostInput.value = "proxy2.example.com";
+    hostInput.dispatchEvent(new w.Event("input"));
+    await new Promise((r) => setTimeout(r, 50));
+    const newUpdSends = w.__e2e_sent.slice(beforeCount).filter((s) => s?.type === "settings_update");
+    assert(
+      newUpdSends.length === 0,
+      `覆盖后,网络字段的 input 不应再触发 settings_update,实际 ${newUpdSends.length} 条`,
+    );
+
+    // 8) 测试连接按钮存在 + 点击应发 network_test_proxy
+    w.__e2e_sent = [];
+    testBtn.click();
+    const testSends = w.__e2e_sent.filter((s) => s?.type === "network_test_proxy");
+    assert(
+      testSends.length === 1,
+      `点测试按钮应发 network_test_proxy,实际 ${testSends.length} 条`,
+    );
+    assert(
+      testSends[0]?.host === "proxy2.example.com" && testSends[0]?.port === 8080,
+      `测试 payload 应带当前 form 值,实际 host=${testSends[0]?.host}`,
+    );
+
   // ============== 总结 ==============
   console.log(`\n=== 测试结果 ===`);
   console.log(`通过: ${passed}`);

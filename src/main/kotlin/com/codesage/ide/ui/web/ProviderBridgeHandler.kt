@@ -4,6 +4,7 @@ import com.codesage.shared.config.PluginConfig
 import com.codesage.shared.security.SsrfGuard
 import com.codesage.shared.utils.Logger
 import okhttp3.MediaType.Companion.toMediaType
+import com.codesage.shared.net.ProxyAwareHttpClientFactory
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -29,11 +30,15 @@ class ProviderBridgeHandler(
 ) {
     private val logger = Logger.getLogger<ProviderBridgeHandler>()
 
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
-        .writeTimeout(5, TimeUnit.SECONDS)
-        .build()
+    // v2.2:走共享代理感知 client,Provider 测试场景需要更短超时(5s) +
+    // 不重定向(避免测一个端点被重定向到别的域)
+    private val client: OkHttpClient
+        get() = ProxyAwareHttpClientFactory.build().newBuilder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(5, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .build()
 
     /**
      * 处理来自 Web UI 的消息

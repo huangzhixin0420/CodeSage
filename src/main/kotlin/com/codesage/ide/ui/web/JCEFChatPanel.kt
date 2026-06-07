@@ -53,6 +53,8 @@ class JCEFChatPanel(
     private val settingsHandler = SettingsBridgeHandler({ msg -> sendToJS(msg) }, project)
     private val providerHandler = ProviderBridgeHandler { msg -> sendToJS(msg) }
     private val migrationHandler = MigrationBridgeHandler { msg -> sendToJS(msg) }
+    // v2.2:代理配置 get/set/test,密码走 PasswordSafe
+    private val networkHandler = NetworkBridgeHandler(project, { msg -> sendToJS(msg) })
 
     private var browser: JBCefBrowser? = null
     private var jsQuery: JBCefJSQuery? = null
@@ -99,6 +101,29 @@ class JCEFChatPanel(
         } else {
             logger.warn("JCEF is not supported in this environment")
             add(createFallbackPanel(), BorderLayout.CENTER)
+        }
+
+        // v2.2:启动时把 settings.json 里的代理配置应用到共享 OkHttp client。
+        // 这保证插件一启动 4 个共享 client 就有正确代理行为(默认 system 模式,
+        // 走 JVM/IntelliJ HTTP Proxy);用户在设置页改了之后,networkHandler 会
+        // 立即调 ProxyAwareHttpClientFactory.updateConfig 同步。
+        try {
+            val repo = com.codesage.shared.config.SettingsRepository.getInstance()
+            val settings = repo.get()
+            val cfg = settings.network.proxy
+            val pw = if (cfg.passwordRef.isNotEmpty() && cfg.username.isNotBlank()) {
+                com.intellij.ide.passwordSafe.PasswordSafe.instance
+                    .getPassword(
+                        com.intellij.credentialStore.CredentialAttributes(
+                            serviceName = "CodeSage",
+                            userName = "codesage.network.proxy",
+                        )
+                    )
+            } else null
+            com.codesage.shared.net.ProxyAwareHttpClientFactory.updateConfig(cfg, pw)
+            logger.info("Proxy config applied at startup: mode=${cfg.mode}, type=${cfg.type}, host=${cfg.host}:${cfg.port}")
+        } catch (e: Exception) {
+            logger.warn("Failed to apply proxy config at startup: ${e.message}")
         }
     }
 
@@ -661,6 +686,17 @@ class JCEFChatPanel(
                         json.jsonObject.entries.associate { (k, v) -> k to v },
                     )
                     if (!handled) logger.debug("Unhandled migration message: $type")
+                }
+
+                "network_get_proxy",
+                "network_set_proxy",
+                "network_test_proxy",
+                    -> {
+                    val handled = networkHandler.handle(
+                        type,
+                        json.jsonObject.entries.associate { (k, v) -> k to v },
+                    )
+                    if (!handled) logger.debug("Unhandled network message: $type")
                 }
 
                 "__client_error__" -> {

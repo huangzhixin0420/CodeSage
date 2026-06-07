@@ -37,6 +37,7 @@ data class SettingsFile(
     val shortcuts: ShortcutsSection = ShortcutsSection(),
     val mcp: McpSection = McpSection(),
     val advanced: AdvancedSection = AdvancedSection(),
+    val network: NetworkSection = NetworkSection(),
 )
 
 @Serializable
@@ -133,6 +134,43 @@ data class McpServerEntry(
 @Serializable
 data class McpSection(
     val servers: List<McpServerEntry> = emptyList(),
+)
+
+/**
+ * 网络设置 v1
+ *
+ * 当前只有代理配置;后续要加 CA 证书、HTTP/2 设置等可以在这里扩展。
+ *
+ * 代理模式 (mode):
+ *   - "system" : 走 IntelliJ HTTP Proxy 设置(默认,JVM ProxySelector)
+ *   - "manual" : 用本节手动配置的代理
+ *   - "direct" : 完全直连,不走任何代理
+ *
+ * 手动配置下:
+ *   - type = "http" : HTTP 代理(RFC 7230,CONNECT 走 http tunnel)
+ *   - type = "socks" : SOCKS5 代理
+ *   - host/port : 代理主机端口
+ *   - username/passwordRef : 代理认证;
+ *       passwordRef 形如 "passwordsafe:codesage.network.proxy" —
+ *       实际密码存在 IntelliJ PasswordSafe,settings.json 只存引用。
+ *   - noProxy : 命中规则(域名/IP)列表,这些 URL 走直连,跳过代理
+ *
+ * 优先级:JVM/IntelliJ 代理 < 本节配置 < (未来)按请求覆盖
+ */
+@Serializable
+data class NetworkSection(
+    val proxy: ProxyConfig = ProxyConfig(),
+)
+
+@Serializable
+data class ProxyConfig(
+    val mode: String = "system",             // system / manual / direct
+    val type: String = "http",               // http / socks(仅 manual 模式有意义)
+    val host: String = "",
+    val port: Int = 0,
+    val username: String = "",               // 空 = 不需要认证
+    val passwordRef: String = "",            // passwordsafe:codesage.network.proxy
+    val noProxy: List<String> = emptyList(), // 主机名/IP 列表,匹配则直连
 )
 
 @Serializable
