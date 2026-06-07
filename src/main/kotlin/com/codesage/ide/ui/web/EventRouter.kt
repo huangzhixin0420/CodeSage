@@ -1,6 +1,7 @@
 package com.codesage.ide.ui.web
 
 import com.codesage.agent.core.AgentStreamEvent
+import com.codesage.shared.utils.Logger
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -43,6 +44,7 @@ class EventRouter {
     private val lastSubAgentTask = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val lastSubAgentToolset = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val lastSubAgentStart = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val logger = Logger.getLogger<EventRouter>() // 防御性日志：捕获 sessionId 漂移等 UI 一侧难复现的 bug
 
     init {
         // === 文本 / 错误 / 状态 ===
@@ -137,6 +139,16 @@ class EventRouter {
             )
         }
         register<AgentStreamEvent.SubAgentComplete> { e, turnId ->
+            // 防御性日志：如果 Complete.sessionId 在 Start 索引里没找到，
+            // 说明 EnhancedAgentLoop 那一侧 sessionId 还是漂移的（应该
+            // 修在源头，但这里留个 WARN 让 UI 侧也能立刻发现回归）。
+            if (!lastSubAgentStart.containsKey(e.sessionId)) {
+                logger.warn(
+                    "[EventRouter] SubAgentComplete.sessionId=${e.sessionId} has no matching " +
+                        "SubAgentStart; task/toolset/elapsedMs will be empty/0. " +
+                        "Check EnhancedAgentLoop.executeDelegateTask sessionId unification."
+                )
+            }
             mapOf(
                 "type" to "tool_call_complete",
                 "turnId" to turnId,

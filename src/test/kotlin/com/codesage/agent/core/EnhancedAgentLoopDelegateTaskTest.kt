@@ -69,14 +69,34 @@ class EnhancedAgentLoopDelegateTaskTest {
 
         // SubAgentComplete 的 success 来自 sub-agent 的执行结果
         val completion = completeEvents.first()
+        val startSession = startEvents.first().sessionId
         assertTrue(completion.success, "Sub-agent should have succeeded")
         assertEquals("sub-agent finished the task", completion.output)
-        assertEquals("sub_test_123", completion.sessionId)
+        // 关键断言：SubAgentStart 和 SubAgentComplete 共享同一个 sessionId。
+        // 这是修复 sessionId 漂移 bug 的核心契约 — 之前 EventRouter 因为 id 漂移
+        // 会导致 UI 上 task / toolset / elapsedMs 全为空。
+        assertTrue(
+            startSession.isNotEmpty() && startSession.startsWith("sub_"),
+            "SubAgentStart.sessionId should be non-empty and start with 'sub_', got: '$startSession'"
+        )
+        assertEquals(
+            startSession,
+            completion.sessionId,
+            "SubAgentStart.sessionId and SubAgentComplete.sessionId MUST match " +
+                "(UI EventRouter keys its lastSubAgent* maps by this id). " +
+                "start='$startSession' complete='${completion.sessionId}'"
+        )
 
         // 验证 fake executor 确实被调用了
         assertEquals(1, fakeSubAgentExecutor.spawnCallCount)
         assertEquals("Write a unit test", fakeSubAgentExecutor.lastTaskDescription)
         assertEquals("dev", fakeSubAgentExecutor.lastToolset)
+        // 新增：验证 caller 透传的 subSessionIdOverride 也被 fake 收到了
+        assertEquals(
+            startSession,
+            fakeSubAgentExecutor.lastSubSessionIdOverride,
+            "spawn should have been called with subSessionIdOverride == startSession"
+        )
     }
 
     @Test
@@ -330,22 +350,26 @@ class EnhancedAgentLoopDelegateTaskTest {
         var spawnCallCount = 0
         var lastTaskDescription: String? = null
         var lastToolset: String? = null
+        var lastSubSessionIdOverride: String? = null
 
         override suspend fun spawn(
             parentSessionId: String,
             taskDescription: String,
             toolset: String,
-            maxIterations: Int,
             contextFiles: List<String>,
             progressCallback: suspend (String) -> Unit,
             parentJob: kotlinx.coroutines.Job?,
+            subSessionIdOverride: String?,
         ): SubAgentResult {
             spawnCallCount++
             lastTaskDescription = taskDescription
             lastToolset = toolset
+            lastSubSessionIdOverride = subSessionIdOverride
             // 通知一下 progress 回调，模拟一次进度
             progressCallback("[fake] sub-agent running...")
-            return expectedResult
+            // 返回时把 caller 传进来的 subSessionIdOverride 透传回去，让
+            // EnhancedAgentLoop.executeDelegateTask 能保持 sessionId 一致。
+            return expectedResult.copy(sessionId = subSessionIdOverride ?: expectedResult.sessionId)
         }
     }
 }

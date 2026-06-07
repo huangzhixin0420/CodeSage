@@ -41,7 +41,6 @@ enum class ConversationPhase {
  *
  * 重构自 AgentCore.chatWithTools()，从「简单 while 循环」进化为「状态机驱动的完整闭环」。
  * 核心特性：
- * - 迭代预算管理（IterationBudget）
  * - 错误分类与恢复（AgentErrorRecovery）
  * - 优先流式路径（即使无消费者也用流式做健康检测）
  * - 流式 context scrubber（过滤内部标签）
@@ -210,8 +209,8 @@ class EnhancedAgentLoop(
                 val (cleanedMessages, orphanCount) = cleanupOrphanToolResults(messages, toolUseIds)
                 if (orphanCount > 0) {
                     logger.warn(
-                        "[Turn $turnNumber] Dropped $orphanCount orphan tool_result message(s) " +
-                                "with toolCallIds not matching any tool_use in the context"
+                        "[Turn $turnNumber] Cleaned $orphanCount orphan tool pair(s) " +
+                                "(orphan tool_result + unfulfilled tool_use) before sending to LLM"
                     )
                 }
                 val processedMessages = hooks.preLLMCall(cleanedMessages)
@@ -700,22 +699,63 @@ class EnhancedAgentLoop(
         emit: suspend (AgentStreamEvent) -> Unit
     ): String {
         val args = parseArguments(toolCall.arguments)
-        val executor = subAgentExecutor
-            ?: return "{\"success\":false,\"error\":\"SubAgent executor not configured\"}"
+        val executor = subAgentExecutor ?: run {
+            // 之前这里只 return 一行 JSON 错误，不知道是 wiring 断在哪一段
+            logger.error(
+                "[DelegateTask] subAgentExecutor is null | toolCallId=${toolCall.id} " +
+                    "parentSession=${session.id} — wiring broken (AgentCore.subAgentDepth " +
+                    "or EnhancedAgentLoop 构造参数透传失败)"
+            )
+            return "{\"success\":false,\"error\":\"SubAgent executor not configured\"}"
+        }
 
         val taskDescription = args["task_description"] as? String
-            ?: return "{\"success\":false,\"error\":\"Missing task_description\"}"
+        if (taskDescription == null) {
+            // 不再静默：打 WARN 把 raw args + 解析结果打出来，方便定位是
+            // 1) LLM 真的没传 task_description
+            // 2) LLM 传了但 JSON 畸形（parseArguments 吞错返回 emptyMap）
+            // 3) LLM 传了但 value 类型不是 string（罕见）
+            logger.warn(
+                "[DelegateTask] task_description missing | toolCallId=${toolCall.id} " +
+                    "rawArgs=${toolCall.arguments.take(500)} " +
+                    "parsedKeys=${args.keys} " +
+                    "taskDescriptionType=${args["task_description"]?.javaClass?.simpleName}"
+            )
+            return "{\"success\":false,\"error\":\"Missing task_description\"}"
+        }
         val toolset = args["toolset"] as? String ?: "dev"
-        val maxIterations = (args["max_iterations"] as? Number)?.toInt() ?: 10
         val contextFiles = when (val files = args["context_files"]) {
             is List<*> -> files.filterIsInstance<String>()
             else -> emptyList()
         }
 
+        // 兼容老 LLM prompt / 老用户习惯：曾几何时 delegate_task 工具的 schema
+        // 里有 `max_iterations` 参数（已被 f8000c7 移除），如果模型还在传，
+        // 打个 WARN 让用户能从 idea.log 看到"这个参数已废弃、被忽略"。
+        // 不抛错、不返回 JSON 错误——保证老 prompt 仍然能跑。
+        if (args.containsKey("max_iterations")) {
+            logger.warn(
+                "[DelegateTask] ignoring deprecated parameter 'max_iterations' " +
+                    "(value=${args["max_iterations"]}); the budget system was removed in f8000c7."
+            )
+        }
+
+        // 关键修复：subSessionId 在 executeDelegateTask 入口生成一次，
+        // 后面 SubAgentStart / SubAgentProgress / SubAgentComplete / catch 兜底
+        // **全部复用同一个 id**。修复了之前 EventRouter 因 sessionId 漂移导致
+        // task / toolset / elapsedMs 全为空的 UI bug。
+        val subSessionId = "sub_${session.id}_${System.currentTimeMillis()}"
+        val startTs = System.currentTimeMillis()
+        logger.info(
+            "[DelegateTask] entry | toolCallId=${toolCall.id} parentSession=${session.id} " +
+                "subSession=$subSessionId toolset=$toolset taskLen=${taskDescription.length} " +
+                "contextFiles=${contextFiles.size}"
+        )
+
         return try {
             emit(
                 AgentStreamEvent.SubAgentStart(
-                    sessionId = "sub_${session.id}_${System.currentTimeMillis()}",
+                    sessionId = subSessionId,
                     taskDescription = taskDescription,
                     toolset = toolset
                 )
@@ -725,16 +765,18 @@ class EnhancedAgentLoop(
                 parentSessionId = session.id,
                 taskDescription = taskDescription,
                 toolset = toolset,
-                maxIterations = maxIterations,
                 contextFiles = contextFiles,
                 // P2: 透传父协程 Job，让子 agent 在父被 cancel 时能感知
                 // （结构化并发 + catch CancellationException 抽 cancelled summary）
                 parentJob = currentCoroutineContext()[Job],
+                // 关键：把入口生成的 subSessionId 透传给 spawn，让 SubAgentComplete
+                // 用的 sessionId 跟 Start 是同一个串。
+                subSessionIdOverride = subSessionId,
                 progressCallback = { progress ->
                     try {
                         emit(
                             AgentStreamEvent.SubAgentProgress(
-                                sessionId = "sub_${session.id}",
+                                sessionId = subSessionId,
                                 message = progress
                             )
                         )
@@ -746,7 +788,7 @@ class EnhancedAgentLoop(
 
             emit(
                 AgentStreamEvent.SubAgentComplete(
-                    sessionId = result.sessionId,
+                    sessionId = subSessionId,
                     success = result.success,
                     output = result.output,
                     iterationsUsed = result.iterationsUsed,
@@ -757,18 +799,34 @@ class EnhancedAgentLoop(
                 )
             )
 
+            logger.info(
+                "[DelegateTask] done | toolCallId=${toolCall.id} subSession=$subSessionId " +
+                    "success=${result.success} cancelled=${result.cancelled} " +
+                    "iterations=${result.iterationsUsed} tools=${result.toolsUsed} " +
+                    "elapsedMs=${System.currentTimeMillis() - startTs}"
+            )
+
             // P1: 返回纯文本摘要（不再 JSON 包装）。
             // 父 LLM 收到的是子 agent 的自然语言最终 turn（见 buildSubAgentPrompt 的
             // "Final-Turn Output Contract"）。iterations / tools 等元数据通过
             // SubAgentComplete 事件给 UI，不进父 LLM context。
             result.output
         } catch (e: Exception) {
+            // 关键修复：之前 catch 里 SubAgentComplete.sessionId = "sub_${session.id}"
+            // （无时间戳），跟 Start 不匹配，UI 看到 start/complete 两个不同 sub-agent。
+            // 现在统一用 subSessionId。
             emit(
                 AgentStreamEvent.SubAgentComplete(
-                    sessionId = "sub_${session.id}",
+                    sessionId = subSessionId,
                     success = false,
                     output = e.message ?: "Unknown error"
                 )
+            )
+            // 关键修复：之前 `e` 没传给 logger，栈丢光。现在带 throwable 一起进 idea.log。
+            logger.error(
+                "[DelegateTask] failed | toolCallId=${toolCall.id} subSession=$subSessionId " +
+                    "elapsedMs=${System.currentTimeMillis() - startTs}",
+                e
             )
             // P1: 失败也走纯文本兜底，不返回 JSON
             "SubAgent execution failed: ${e.message}"
@@ -829,19 +887,39 @@ class EnhancedAgentLoop(
                 Role.ASSISTANT -> {
                     val declared = assistantDeclaredByIndex[idx] ?: return@mapIndexed msg
                     // assistant 声明了 tool_use，但 toolResultIds 里完全没有它的对应
-                    // 说明这条 assistant 的 tool_use 没完成。把 toolCalls 清空以避免
-                    // 触发 2013。保留 content 字段（assistant 可能也写了文本）。
+                    // 说明这条 assistant 的 tool_use 没完成。**部分**未完成也会触发
+                    // strict 提供商（如 MiniMax-M3 / DeepSeek）返 "tool call result
+                    // does not follow tool call (2013)" 400——assistant.toolCalls 里
+                    // 留有 unfulfilled 的 id = 声明了一个没有 result 的 tool_use。
+                    // 修复：之前保守策略只在"全部未完成"时清空 toolCalls，"部分未完成"
+                    // 时保留整个 toolCalls，导致 strict provider 2013。子 agent 在
+                    // 短 context 下尤其容易撞上（parent 多 turn 时 partial 罕见）。
+                    // 保留 content 字段（assistant 可能也写了文本）。
                     val unfulfilled = declared - toolResultIds
-                    if (unfulfilled.isNotEmpty() && unfulfilled.size == declared.size) {
-                        // 全部没完成——这条 assistant 整个 toolCalls 都丢
-                        orphanCount += unfulfilled.size
-                        logger.warn(
-                            "[cleanup] Dropping ${unfulfilled.size} unfulfilled tool_use(s) " +
-                                    "from assistant message at index=$idx: $unfulfilled"
-                        )
-                        msg.copy(toolCalls = null)
-                    } else {
-                        msg
+                    when {
+                        unfulfilled.isEmpty() -> msg  // 全部有 tool_result，OK
+                        unfulfilled.size == declared.size -> {
+                            // 全部没完成——这条 assistant 整个 toolCalls 都丢
+                            orphanCount += unfulfilled.size
+                            logger.warn(
+                                "[cleanup] Dropping ${unfulfilled.size} unfulfilled tool_use(s) " +
+                                        "from assistant message at index=$idx (all unfulfilled): $unfulfilled"
+                            )
+                            msg.copy(toolCalls = null)
+                        }
+                        else -> {
+                            // 部分没完成 — 只过滤掉 unfulfilled 的 tool_use，保留
+                            // 已有 tool_result 的那些。assistant 文本保留不变。
+                            val fulfilled = msg.toolCalls!!.filterNot { it.id in unfulfilled }
+                            orphanCount += unfulfilled.size
+                            logger.warn(
+                                "[cleanup] Dropping ${unfulfilled.size} unfulfilled tool_use(s) " +
+                                        "from assistant message at index=$idx (partial): $unfulfilled; " +
+                                        "keeping ${fulfilled.size} fulfilled tool_use(s): " +
+                                        "${fulfilled.mapNotNull { it.id }}"
+                            )
+                            msg.copy(toolCalls = fulfilled)
+                        }
                     }
                 }
                 else -> msg

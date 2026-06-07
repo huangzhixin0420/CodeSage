@@ -587,11 +587,14 @@ class EnhancedAgentLoopTest {
 
     /**
      * 部分完成（assistant 发出 2 个 tool_use，1 个有 tool_result，另一个没有）：
-     * 保守策略下保留 assistant 消息的 tool_calls（因为有 1 个对应上了），
-     * orphan 只清 orphan tool_result。
+     * **修复前**：保守保留整个 toolCalls（"因为有 1 个对应上了"），导致 strict 提供商
+     * （MiniMax-M3 / DeepSeek）返 "tool call result does not follow tool call (2013)" 400。
+     * **修复后**：从 toolCalls 里过滤掉 unfulfilled 的 id，只保留有 tool_result 的。
+     * 子 agent 在短 context 下这个 case 比主 agent 频繁（主 agent 多 turn 时
+     * partial unfulfilled 比较罕见，所以之前 c26a17f 的测试在主 agent 形态下没暴露）。
      */
     @Test
-    fun `cleanupOrphanToolResults keeps assistant tool_calls when partial tool_results exist`() {
+    fun `cleanupOrphanToolResults filters unfulfilled tool_uses when partial tool_results exist`() {
         val loop = EnhancedAgentLoop(
             gateway = createFakeGateway(),
             toolRegistry = ToolRegistry.createDefault(),
@@ -605,7 +608,7 @@ class EnhancedAgentLoopTest {
         val messages = listOf(
             Message(
                 role = Role.ASSISTANT,
-                content = "",
+                content = "I will read two files.",
                 toolCalls = listOf(
                     ToolCall("id_done", "read_file", "{}"),
                     ToolCall("id_pending", "read_file", "{}"),
@@ -619,11 +622,20 @@ class EnhancedAgentLoopTest {
         @Suppress("UNCHECKED_CAST")
         val cleanedList = cleaned as List<Message>
 
-        // 部分完成：保守保留 toolCalls，orphanCount=0
-        assertEquals(0, orphanCount, "Partial completion should not flag orphans")
+        // 部分完成：过滤掉 unfulfilled 的 id_pending，只保留 id_done
+        assertEquals(1, orphanCount, "Should count 1 unfulfilled tool_use (id_pending)")
         assertEquals(2, cleanedList.size)
         val assistant = cleanedList.first { it.role == Role.ASSISTANT }
-        assertEquals(2, assistant.toolCalls?.size, "Should keep both tool_calls")
+        // 修复后断言：toolCalls 被过滤，只剩 1 个 fulfilled 的
+        val remainingIds = assistant.toolCalls?.mapNotNull { it.id } ?: emptyList()
+        assertEquals(
+            listOf("id_done"),
+            remainingIds,
+            "Should keep only the fulfilled tool_use (id_done), filter out unfulfilled (id_pending) " +
+                    "to avoid 2013 on strict providers (MiniMax-M3 / DeepSeek)"
+        )
+        // 关键：assistant 的文本 content 保留不变（用户能看到的部分不被破坏）
+        assertEquals("I will read two files.", assistant.content)
     }
 
     // ===== helpers for new tests =====

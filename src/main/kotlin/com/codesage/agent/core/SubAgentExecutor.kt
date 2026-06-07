@@ -121,7 +121,6 @@ open class SubAgentExecutor(
      * @param parentSessionId 父会话 ID
      * @param taskDescription 任务描述
      * @param toolset 工具集名称（dev, research, test, browser）
-     * @param maxIterations 子 Agent 的迭代预算
      * @param contextFiles 子 Agent 需要访问的文件列表
      * @param progressCallback 进度回调（实时汇报给父 agent）
      */
@@ -129,7 +128,6 @@ open class SubAgentExecutor(
         parentSessionId: String,
         taskDescription: String,
         toolset: String = "dev",
-        maxIterations: Int = 10,
         contextFiles: List<String> = emptyList(),
         progressCallback: suspend (String) -> Unit = {},
         /**
@@ -139,6 +137,14 @@ open class SubAgentExecutor(
          * 可选：老调用方传 null 即可（行为不变）。
          */
         parentJob: Job? = null,
+        /**
+         * 外部预先生成的 subSessionId（用于在 [EnhancedAgentLoop.executeDelegateTask]
+         * 里把 SubAgentStart / SubAgentProgress / SubAgentComplete 三个事件的
+         * sessionId 统一成一个串 — 修复 UI EventRouter 因为 sessionId 漂移导致
+         * task / toolset / elapsedMs 全为空的 bug）。null = 内部自生成（保持
+         * [spawnParallel] 等老调用方行为不变）。
+         */
+        subSessionIdOverride: String? = null,
     ): SubAgentResult {
         // 1. 递归深度检查
         if (depth >= MAX_RECURSION_DEPTH) {
@@ -157,7 +163,11 @@ open class SubAgentExecutor(
 
         logger.info("[SubAgent] Spawning for task: ${taskDescription.take(80)} (depth=$depth)")
 
-        val subSessionId = "sub_${parentSessionId}_${System.currentTimeMillis()}"
+        val subSessionId = subSessionIdOverride
+            ?: "sub_${parentSessionId}_${System.currentTimeMillis()}"
+        if (subSessionIdOverride != null) {
+            logger.info("[SubAgent] using caller-supplied subSessionId=$subSessionId (events will share this id)")
+        }
 
         // 2. 按 toolset 过滤工具集
         val subToolRegistry = createToolRegistryForToolset(toolset)
@@ -396,7 +406,6 @@ open class SubAgentExecutor(
                         parentSessionId = parentSessionId,
                         taskDescription = config.description,
                         toolset = config.toolset,
-                        maxIterations = config.maxIterations,
                         contextFiles = config.contextFiles,
                         progressCallback = { progress -> progressCallback(index, progress) }
                     )
@@ -495,7 +504,6 @@ open class SubAgentExecutor(
     data class SubTaskConfig(
         val description: String,
         val toolset: String = "dev",
-        val maxIterations: Int = 10,
         val contextFiles: List<String> = emptyList()
     )
 
