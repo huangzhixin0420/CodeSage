@@ -60,11 +60,14 @@ class EventRouter {
             null
         }
 
-        // === 思考 ===
-        // 首次 Thinking 事件发 thinking_start,后续 thinking_update
-        // 这部分状态在调用方处理(因为是 per-turn),所以这里统一发 thinking_update
+        // === 思考（Agent 状态消息）===
         register<AgentStreamEvent.Thinking> { e, turnId ->
             mapOf("type" to "thinking_update", "turnId" to turnId, "message" to e.message)
+        }
+
+        // === 模型推理内容 ===
+        register<AgentStreamEvent.ModelReasoning> { e, turnId ->
+            mapOf("type" to "model_reasoning_delta", "turnId" to turnId, "delta" to e.delta)
         }
 
         // === 工具调用 ===

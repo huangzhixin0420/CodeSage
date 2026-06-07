@@ -55,9 +55,14 @@ sealed class AgentStreamEvent {
     ) : AgentStreamEvent()
 
     /**
-     * 思考中/状态更新
+     * 思考中/状态更新（Agent 状态消息，如"思考中..."）
      */
     data class Thinking(val message: String) : AgentStreamEvent()
+
+    /**
+     * 模型推理内容增量（与 Thinking 分离，用于承载模型实际的 reasoning/thinking 输出）
+     */
+    data class ModelReasoning(val delta: String) : AgentStreamEvent()
 
     /**
      * 发生错误

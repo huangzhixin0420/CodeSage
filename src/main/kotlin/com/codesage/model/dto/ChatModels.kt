@@ -68,6 +68,7 @@ data class StreamToolCallDelta(
 data class StreamChunk(
     val id: String,
     val delta: String,
+    val reasoningDelta: String? = null,
     val done: Boolean = false,
     val toolCallDeltas: List<StreamToolCallDelta> = emptyList(),
     val finishReason: String? = null,

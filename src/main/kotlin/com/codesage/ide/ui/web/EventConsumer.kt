@@ -197,14 +197,19 @@ class EventConsumer(
      */
     private fun sendDoneExpansion(turnId: String, state: TurnState) {
         val thinkingMsg = mapOf<String, Any?>("type" to "thinking_complete", "turnId" to turnId, "elapsedMs" to 0)
+        val modelReasoningMsg = mapOf<String, Any?>("type" to "model_reasoning_complete", "turnId" to turnId, "elapsedMs" to 0)
         val turnMsg = mapOf<String, Any?>("type" to "turn_complete", "turnId" to turnId)
         try {
             sendToJS(thinkingMsg)
             state.metrics.delivered++
+            if (state.firstModelReasoningSent) {
+                sendToJS(modelReasoningMsg)
+                state.metrics.delivered++
+            }
             sendToJS(turnMsg)
             state.metrics.delivered++
             if (logger.isDebugEnabled) {
-                logger.debug("[EventConsumer] Done expanded: thinking_complete + turn_complete, turnId=$turnId")
+                logger.debug("[EventConsumer] Done expanded: thinking_complete + model_reasoning_complete + turn_complete, turnId=$turnId")
             }
         } catch (e: Throwable) {
             logger.warn("[EventConsumer] sendToJS threw during Done expansion: turnId=$turnId", e)
@@ -233,15 +238,24 @@ class EventConsumer(
             val rawMsg = eventRouter.toMessage(event, state.turnId) ?: continue
             // Thinking 首/续:首条 thinking_start,后续 thinking_update
             // (EventRouter 默认 Thinking 出 "thinking_update",这里覆写 type 字段)
-            val msg = if (event is AgentStreamEvent.Thinking) {
-                if (!state.firstThinkingSent) {
-                    state.firstThinkingSent = true
-                    rawMsg.toMutableMap().apply { this["type"] = "thinking_start" }
-                } else {
-                    rawMsg
+            val msg = when (event) {
+                is AgentStreamEvent.Thinking -> {
+                    if (!state.firstThinkingSent) {
+                        state.firstThinkingSent = true
+                        rawMsg.toMutableMap().apply { this["type"] = "thinking_start" }
+                    } else {
+                        rawMsg
+                    }
                 }
-            } else {
-                rawMsg
+                is AgentStreamEvent.ModelReasoning -> {
+                    if (!state.firstModelReasoningSent) {
+                        state.firstModelReasoningSent = true
+                        rawMsg.toMutableMap().apply { this["type"] = "model_reasoning_start" }
+                    } else {
+                        rawMsg
+                    }
+                }
+                else -> rawMsg
             }
             try {
                 sendToJS(msg)
@@ -329,8 +343,9 @@ class EventConsumer(
             }
             is AgentStreamEvent.TextDelta,
             is AgentStreamEvent.Thinking,
+            is AgentStreamEvent.ModelReasoning,
             is AgentStreamEvent.ToolCallDelta -> {
-                // 异常路径:这三种应该是 Coalescable,不应走 Terminal 分支
+                // 异常路径:这四种应该是 Coalescable,不应走 Terminal 分支
                 // 落到这里说明 classifier 与事件流不一致 — 立刻 WARN
                 logger.warn(
                     "[EventConsumer] delivered via Terminal path (classifier/state mismatch): " +
@@ -354,6 +369,11 @@ class EventConsumer(
          * 由 flushPending 在 sendToJS 前根据此标志改写 msg["type"]。
          */
         var firstThinkingSent: Boolean = false
+        /**
+         * ModelReasoning 事件首/续状态 — per-turn 隔离。
+         * 首次 ModelReasoning 路由为 "model_reasoning_start",后续为 "model_reasoning_delta"。
+         */
+        var firstModelReasoningSent: Boolean = false
     }
 }
 

@@ -99,8 +99,9 @@ data class AnthropicStreamEvent(
 
 @Serializable
 data class AnthropicDelta(
-    val type: String? = null,  // text_delta / input_json_delta
+    val type: String? = null,  // text_delta / input_json_delta / thinking_delta
     val text: String? = null,
+    val thinking: String? = null,
     @SerialName("partial_json")
     val partialJson: String? = null,
     @SerialName("stop_reason")

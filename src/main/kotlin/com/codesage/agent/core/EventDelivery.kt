@@ -22,6 +22,7 @@ sealed class EventDelivery {
 val AgentStreamEvent.delivery: EventDelivery
     get() = when (this) {
         is AgentStreamEvent.TextDelta -> EventDelivery.Coalescable
+        is AgentStreamEvent.ModelReasoning -> EventDelivery.Coalescable
         is AgentStreamEvent.Thinking -> EventDelivery.Coalescable
         is AgentStreamEvent.ToolCallDelta -> EventDelivery.Coalescable
         // 其余 21+ 种全部 Terminal:状态变更类,精确送达
@@ -38,6 +39,7 @@ val AgentStreamEvent.delivery: EventDelivery
 val AgentStreamEvent.coalesceKey: String?
     get() = when (this) {
         is AgentStreamEvent.TextDelta -> "text_delta"
+        is AgentStreamEvent.ModelReasoning -> "model_reasoning"
         is AgentStreamEvent.Thinking -> "thinking"
         is AgentStreamEvent.ToolCallDelta -> "tool_delta/${this.toolCallId}"
         else -> null
@@ -59,6 +61,9 @@ val AgentStreamEvent.coalesceKey: String?
 fun AgentStreamEvent.mergeWith(other: AgentStreamEvent): AgentStreamEvent? = when {
     this is AgentStreamEvent.TextDelta && other is AgentStreamEvent.TextDelta ->
         AgentStreamEvent.TextDelta(this.delta + other.delta)
+    this is AgentStreamEvent.ModelReasoning && other is AgentStreamEvent.ModelReasoning ->
+        // 拼接:模型推理内容是流式累积的
+        AgentStreamEvent.ModelReasoning(this.delta + other.delta)
     this is AgentStreamEvent.Thinking && other is AgentStreamEvent.Thinking ->
         // latest-wins: Thinking 是状态指示,新值覆盖旧值
         other

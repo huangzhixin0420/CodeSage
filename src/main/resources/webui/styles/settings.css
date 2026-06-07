@@ -22,7 +22,7 @@
     overflow: hidden;
 }
 
-body.cs-settings-open .main-area > *:not(.chat-header):not(.cs-settings-root) {
+body.cs-settings-open .main-area > *:not(.cs-settings-root) {
     display: none;
 }
 body.cs-settings-open .cs-settings-root {
@@ -249,8 +249,9 @@ body.cs-settings-open .cs-settings-root {
     color: var(--fg-primary);
     font-size: var(--text-sm, 12px);
     font-family: var(--font-sans);
-    transition: border-color var(--duration-fast, 120ms) var(--ease-out),
-                box-shadow var(--duration-fast, 120ms) var(--ease-out);
+    transition:
+        border-color var(--duration-fast, 120ms) var(--ease-out),
+        box-shadow var(--duration-fast, 120ms) var(--ease-out);
 }
 .cs-input::placeholder {
     color: var(--fg-tertiary);
@@ -600,7 +601,8 @@ body.cs-settings-open .cs-settings-root {
     border-radius: var(--radius-md);
     padding: var(--space-3) var(--space-4);
     margin-bottom: var(--space-3);
-    transition: border-color var(--duration-fast) var(--ease-out),
+    transition:
+        border-color var(--duration-fast) var(--ease-out),
         background var(--duration-fast) var(--ease-out);
 }
 .cs-provider-card:hover {

@@ -277,6 +277,11 @@ class EnhancedAgentLoop(
                             emitEvent(batchEmitter.acquireTextDelta(chunk.delta))
                         }
 
+                        // 模型推理内容：实时 emit
+                        if (!chunk.reasoningDelta.isNullOrEmpty()) {
+                            emitEvent(AgentStreamEvent.ModelReasoning(chunk.reasoningDelta))
+                        }
+
                         // 工具调用增量：检测开始、累积参数
                         for (tcDelta in chunk.toolCallDeltas) {
                             val builder = streamingToolCalls.getOrPut(tcDelta.index) {

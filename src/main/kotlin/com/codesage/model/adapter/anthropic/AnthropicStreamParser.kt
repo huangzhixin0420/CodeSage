@@ -94,6 +94,15 @@ class AnthropicStreamParser {
                         )
                     }
 
+                    "thinking_delta" -> {
+                        StreamChunk(
+                            id = "",
+                            delta = "",
+                            reasoningDelta = delta.thinking ?: "",
+                            done = false
+                        )
+                    }
+
                     "input_json_delta" -> {
                         // 累积工具参数 JSON 片段
                         toolInputs.getOrPut(index) { StringBuilder() }.append(delta.partialJson ?: "")

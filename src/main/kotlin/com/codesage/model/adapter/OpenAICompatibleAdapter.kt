@@ -114,6 +114,7 @@ abstract class OpenAICompatibleAdapter(
             val streamData = json.decodeFromString<VendorStreamData>(jsonStr)
             val choice = streamData.choices.firstOrNull()
             val delta = choice?.delta?.content ?: ""
+            val reasoningDelta = choice?.delta?.reasoningContent
             val finishReason = choice?.finishReason
 
             // 解析流式工具调用增量
@@ -129,6 +130,7 @@ abstract class OpenAICompatibleAdapter(
             StreamChunk(
                 id = streamData.id,
                 delta = delta,
+                reasoningDelta = reasoningDelta,
                 done = false,
                 toolCallDeltas = toolCallDeltas,
                 finishReason = finishReason
@@ -298,6 +300,8 @@ data class VendorStreamChoice(
 @Serializable
 data class VendorDelta(
     val content: String? = null,
+    @SerialName("reasoning_content")
+    val reasoningContent: String? = null,
     @SerialName("tool_calls")
     val toolCalls: List<VendorToolCallDelta>? = null
 )

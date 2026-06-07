@@ -78,7 +78,7 @@ class SettingsView {
     this.data = null; // 当前 settings 副本
     this._saveDebounced = debounce(() => this._save(), 500);
     this._onSaveError = null;
-    this._onNetworkTestResult = null;  // 由 NetworkBridgeHandler 回调(测试代理结果)
+    this._onNetworkTestResult = null; // 由 NetworkBridgeHandler 回调(测试代理结果)
   }
 
   // ===== Lifecycle =====
@@ -626,13 +626,15 @@ const GROUP_RENDERERS = {
       <h2 class="cs-settings-h2">Models</h2>
       <p class="cs-settings-section-desc">配置 LLM Provider 与 API Key。每个 Provider 独立管理。</p>
       <div class="cs-settings-section">
-        ${(s.providers && s.providers.length > 0)
-          ? s.providers.map((p, i) => view._renderProviderCard(p, i)).join("")
-          : `<div class="cs-provider-empty">
+        ${
+          s.providers && s.providers.length > 0
+            ? s.providers.map((p, i) => view._renderProviderCard(p, i)).join("")
+            : `<div class="cs-provider-empty">
               <i class="fas fa-robot"></i>
               <p>还没有配置任何 Provider</p>
               <p class="cs-form-hint">点击下方按钮添加,或运行 <code>CodeSage: 从环境变量迁移 Provider</code> 命令自动导入</p>
-            </div>`}
+            </div>`
+        }
         <button class="cs-button cs-provider-add-btn" data-cs-action="add-provider">
           <i class="fas fa-plus"></i>&nbsp;添加 Provider
         </button>
@@ -833,7 +835,14 @@ const GROUP_RENDERERS = {
   network: (view, root) => {
     if (!view.data) return;
     const s = view.data;
-    const proxy = s.network?.proxy || { mode: "system", type: "http", host: "", port: 0, username: "", noProxy: [] };
+    const proxy = s.network?.proxy || {
+      mode: "system",
+      type: "http",
+      host: "",
+      port: 0,
+      username: "",
+      noProxy: [],
+    };
     const mode = proxy.mode || "system";
     // 注意:密码不通过 settings_update 走(只走 network_set_proxy + PasswordSafe)
     // 这里只展示 mode / host / port / noProxy,密码字段在用户点"修改"时才出现
@@ -844,11 +853,12 @@ const GROUP_RENDERERS = {
         ${view._formField({
           id: "proxyMode",
           label: "代理模式",
-          description: mode === "system"
-            ? "走 IntelliJ HTTP Proxy 设置(默认行为,JVM ProxySelector)"
-            : mode === "direct"
-            ? "完全直连,不走任何代理"
-            : "使用下方手动配置的代理(覆盖 IntelliJ 设置)",
+          description:
+            mode === "system"
+              ? "走 IntelliJ HTTP Proxy 设置(默认行为,JVM ProxySelector)"
+              : mode === "direct"
+                ? "完全直连,不走任何代理"
+                : "使用下方手动配置的代理(覆盖 IntelliJ 设置)",
           children: view._select("network.proxy.mode", mode, [
             { value: "system", label: "系统默认(跟随 IntelliJ)" },
             { value: "manual", label: "手动配置" },
@@ -870,30 +880,49 @@ const GROUP_RENDERERS = {
           ${view._formField({
             id: "proxyHost",
             label: "主机",
-            children: view._input("network.proxy.host", proxy.host || "", "proxy.example.com"),
+            children: view._input(
+              "network.proxy.host",
+              proxy.host || "",
+              "proxy.example.com",
+            ),
           })}
           ${view._formField({
             id: "proxyPort",
             label: "端口",
-            children: view._input("network.proxy.port", String(proxy.port || ""), "8080"),
+            children: view._input(
+              "network.proxy.port",
+              String(proxy.port || ""),
+              "8080",
+            ),
           })}
           ${view._formField({
             id: "proxyUsername",
             label: "用户名",
             description: "可选,需要认证时填",
-            children: view._input("network.proxy.username", proxy.username || "", ""),
+            children: view._input(
+              "network.proxy.username",
+              proxy.username || "",
+              "",
+            ),
           })}
           ${view._formField({
             id: "proxyPassword",
             label: "密码",
-            description: proxy.passwordRef ? "已设置(留空不修改)" : "需要认证时填,存 IntelliJ PasswordSafe",
+            description: proxy.passwordRef
+              ? "已设置(留空不修改)"
+              : "需要认证时填,存 IntelliJ PasswordSafe",
             children: `<input type="password" class="cs-input" data-cs-field="network.proxy.password" placeholder="${proxy.passwordRef ? "(已设置,留空不修改)" : "密码"}" autocomplete="off" />`,
           })}
           ${view._formField({
             id: "noProxy",
             label: "不走代理",
-            description: "逗号分隔的域名/IP,匹配这些的请求走直连(支持 *.example.com / 127.0.0.1 / 192.168.1.0/24)",
-            children: view._input("network.proxy.noProxy", (proxy.noProxy || []).join(", "), "localhost, 127.0.0.1, *.internal"),
+            description:
+              "逗号分隔的域名/IP,匹配这些的请求走直连(支持 *.example.com / 127.0.0.1 / 192.168.1.0/24)",
+            children: view._input(
+              "network.proxy.noProxy",
+              (proxy.noProxy || []).join(", "),
+              "localhost, 127.0.0.1, *.internal",
+            ),
           })}
           <div class="cs-form-row cs-form-row-actions">
             <button type="button" class="cs-button variant-secondary size-md" data-cs-action="test-proxy">
@@ -913,11 +942,17 @@ const GROUP_RENDERERS = {
     //   1) 密码存 PasswordSafe(留空 = 保留旧密码)
     //   2) 立即生效(ProxyAwareHttpClientFactory.updateConfig)
     //   3) settings.json 同步更新(仅不含密码)
-    const networkFields = root.querySelectorAll('[data-cs-field^="network.proxy."]');
+    const networkFields = root.querySelectorAll(
+      '[data-cs-field^="network.proxy."]',
+    );
     networkFields.forEach((el) => {
       // 关键:不再触发通用 _saveDebounced,改触发 _saveNetworkProxy
-      el.addEventListener("input", () => view._saveNetworkProxy(root), { capture: true });
-      el.addEventListener("change", () => view._saveNetworkProxy(root), { capture: true });
+      el.addEventListener("input", () => view._saveNetworkProxy(root), {
+        capture: true,
+      });
+      el.addEventListener("change", () => view._saveNetworkProxy(root), {
+        capture: true,
+      });
     });
     view._saveNetworkProxy = (scope) => {
       const get = (k) => {
@@ -944,7 +979,7 @@ const GROUP_RENDERERS = {
         view.data.network.proxy = {
           ...(view.data.network.proxy || {}),
           mode: payload.mode,
-          type: payload.type,
+          type: payload.proxyType,
           host: payload.host,
           port: payload.port,
           username: payload.username,
@@ -956,12 +991,15 @@ const GROUP_RENDERERS = {
     };
 
     // 模式切换时显示/隐藏手动配置区
-    const modeSelect = root.querySelector('[data-cs-field="network.proxy.mode"]');
+    const modeSelect = root.querySelector(
+      '[data-cs-field="network.proxy.mode"]',
+    );
     if (modeSelect) {
       modeSelect.addEventListener("change", () => {
         const fields = root.querySelector("#manual-proxy-fields");
         if (fields) {
-          fields.style.display = modeSelect.value === "manual" ? "flex" : "none";
+          fields.style.display =
+            modeSelect.value === "manual" ? "flex" : "none";
         }
       });
     }
@@ -1012,7 +1050,8 @@ SettingsView.prototype._renderProviderCard = function (p, index) {
   // 操作按钮也去掉 inline style,用统一的 .cs-icon-btn-tiny.danger / .cs-button 体系。
   // Provider 名称 + 类型 一起展示(类型作为 badge),一眼能看出口味。
   const isMcp = p.type?.startsWith("mcp");
-  const typeLabel = PROVIDER_TYPES.find((t) => t.value === p.type)?.label || p.type || "未知";
+  const typeLabel =
+    PROVIDER_TYPES.find((t) => t.value === p.type)?.label || p.type || "未知";
   const modelList = p.models || [];
   const visibleModels = modelList.slice(0, 3);
   const hiddenCount = modelList.length - visibleModels.length;
@@ -1385,7 +1424,8 @@ SettingsView.prototype._bindNetworkActions = function (root) {
       }
       if (!form.host || form.port <= 0) {
         resultEl.className = "cs-test-result fail";
-        resultEl.innerHTML = '<i class="fas fa-exclamation-circle"></i> 请先填写主机和端口';
+        resultEl.innerHTML =
+          '<i class="fas fa-exclamation-circle"></i> 请先填写主机和端口';
         return;
       }
       testBtn.disabled = true;

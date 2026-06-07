@@ -940,6 +940,7 @@ open class AgentCore(
                 is AgentStreamEvent.ToolConfirmationNeeded -> result.appendLine("[需要确认: ${event.toolName} - ${event.reason}]")
                 is AgentStreamEvent.Error -> result.appendLine("[错误: ${event.message}]")
                 is AgentStreamEvent.Thinking -> result.appendLine("[${event.message}]")
+                is AgentStreamEvent.ModelReasoning -> result.appendLine("[推理: ${event.delta}]")
                 is AgentStreamEvent.SubAgentStart -> result.appendLine("[子Agent启动: ${event.taskDescription}]")
                 is AgentStreamEvent.SubAgentProgress -> result.appendLine("[子Agent进度: ${event.message}]")
                 is AgentStreamEvent.SubAgentComplete -> result.appendLine("[子Agent完成: ${if (event.success) "成功" else "失败"}]")

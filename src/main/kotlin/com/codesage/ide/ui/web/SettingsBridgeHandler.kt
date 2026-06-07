@@ -264,6 +264,17 @@ class SettingsBridgeHandler(
                     )
                 }
             ),
+            "network" to mapOf(
+                "proxy" to mapOf(
+                    "mode" to s.network.proxy.mode,
+                    "type" to s.network.proxy.type,
+                    "host" to s.network.proxy.host,
+                    "port" to s.network.proxy.port,
+                    "username" to s.network.proxy.username,
+                    "passwordRef" to s.network.proxy.passwordRef,
+                    "noProxy" to s.network.proxy.noProxy,
+                ),
+            ),
             "advanced" to mapOf(
                 "enableTelemetry" to s.advanced.enableTelemetry,
                 "telemetryEndpoint" to s.advanced.telemetryEndpoint,
