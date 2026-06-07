@@ -584,3 +584,335 @@ body.cs-settings-open .cs-settings-root {
 .settings-row-control {
     flex-shrink: 0;
 }
+
+/* ============================================================
+ * 14. Models Page — Provider 卡片 + 表单
+ * 历史: v2.0 settings.js 写出了一堆 cs-provider-* / cs-form-grid / cs-form-row
+ *      / cs-password-* / cs-test-result / cs-icon-btn-tiny 类名,
+ *      但 CSS 一条都没写,导致 Models 页面"样式都是乱的"。
+ *      本节把所有这些孤儿类补齐。
+ * ============================================================ */
+
+/* ---------- Provider Card (列表项) ---------- */
+.cs-provider-card {
+    background: var(--surface-raised);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    margin-bottom: var(--space-3);
+    transition: border-color var(--duration-fast) var(--ease-out),
+        background var(--duration-fast) var(--ease-out);
+}
+.cs-provider-card:hover {
+    border-color: var(--border-strong);
+}
+.cs-provider-card:last-of-type {
+    margin-bottom: 0;
+}
+
+.cs-provider-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+    min-height: 28px;
+}
+
+.cs-provider-card-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex: 1;
+    min-width: 0;
+}
+.cs-provider-card-title strong {
+    font-weight: var(--weight-semibold);
+    color: var(--fg-primary);
+    font-size: var(--text-md);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cs-provider-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+.cs-provider-card-actions .cs-button {
+    /* 行内紧凑一点,不撑高卡片 */
+    padding: 3px 8px;
+}
+
+.cs-provider-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding-left: 14px; /* 跟 dot 对齐,看起来是一体的 */
+}
+.cs-provider-card-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: var(--text-sm);
+    min-height: 22px;
+}
+.cs-provider-card-label {
+    color: var(--fg-tertiary);
+    min-width: 64px;
+    flex-shrink: 0;
+    font-size: var(--text-xs);
+}
+.cs-provider-card-value {
+    color: var(--fg-secondary);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    word-break: break-all;
+    flex: 1;
+    min-width: 0;
+}
+.cs-provider-card-value code,
+.cs-provider-card-row code {
+    font-family: var(--font-mono);
+    color: var(--fg-primary);
+}
+
+.cs-provider-card-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--fg-tertiary);
+}
+.cs-provider-card-dot.enabled {
+    background: var(--success);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 20%, transparent);
+}
+.cs-provider-card-dot.disabled {
+    background: var(--fg-tertiary);
+}
+
+.cs-provider-card-type {
+    font-size: var(--text-2xs);
+    padding: 1px 6px;
+    border-radius: var(--radius-xs);
+    background: var(--surface-sunken);
+    color: var(--fg-tertiary);
+    font-weight: var(--weight-medium);
+    margin-left: var(--space-1);
+    text-transform: lowercase;
+    letter-spacing: 0.2px;
+}
+
+/* 模型 chip 列表(替换原来逗号拼接的可读性灾难) */
+.cs-model-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    flex: 1;
+    align-items: center;
+}
+.cs-model-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-sunken);
+    color: var(--fg-secondary);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    border: 1px solid var(--border-subtle);
+    line-height: 1.4;
+}
+.cs-model-chip-more {
+    color: var(--fg-tertiary);
+    font-size: var(--text-xs);
+    padding: 0 4px;
+}
+
+/* ---------- Provider 列表空状态 ---------- */
+.cs-provider-empty {
+    padding: var(--space-6) var(--space-4);
+    text-align: center;
+    color: var(--fg-tertiary);
+    background: var(--surface-sunken);
+    border: 1px dashed var(--border-default);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-3);
+}
+.cs-provider-empty i {
+    font-size: 24px;
+    margin-bottom: var(--space-2);
+    display: block;
+    color: var(--fg-tertiary);
+}
+.cs-provider-empty p {
+    margin: 0 0 var(--space-3) 0;
+    font-size: var(--text-sm);
+}
+
+/* ---------- Provider Form (modal 内) ---------- */
+.cs-provider-form {
+    display: flex;
+    flex-direction: column;
+    /* modal 自身有 padding,这里只管内部栅格 */
+}
+
+.cs-form-grid {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+}
+.cs-form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.cs-form-row > label {
+    font-size: var(--text-sm);
+    color: var(--fg-secondary);
+    font-weight: var(--weight-medium);
+    line-height: 1.4;
+}
+.cs-form-row > label .req {
+    color: var(--error);
+    margin-left: 2px;
+    font-weight: var(--weight-semibold);
+}
+/* 模态框内的输入统一高度 — 跟 chat 输入框视觉一致 */
+.cs-provider-form .cs-input,
+.cs-provider-form .cs-select,
+.cs-provider-form .cs-password-input > input {
+    height: 32px;
+    font-size: var(--text-sm);
+}
+.cs-provider-form .cs-textarea {
+    min-height: 64px;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    resize: vertical;
+}
+
+.cs-form-hint {
+    font-size: var(--text-xs);
+    color: var(--fg-tertiary);
+    line-height: 1.4;
+}
+.cs-form-hint code {
+    font-family: var(--font-mono);
+    background: var(--surface-sunken);
+    padding: 1px 4px;
+    border-radius: 2px;
+    color: var(--fg-secondary);
+}
+
+/* 密码输入框(带眼睛切换按钮) */
+.cs-password-input {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+.cs-password-input > input {
+    flex: 1;
+    width: 100%;
+    padding-right: 32px;
+}
+.cs-password-toggle {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    color: var(--fg-tertiary);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--radius-xs);
+    font-size: 13px;
+    line-height: 1;
+    transition: color var(--duration-fast) var(--ease-out);
+}
+.cs-password-toggle:hover {
+    color: var(--fg-primary);
+}
+.cs-password-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+/* 测试连接 — 状态行 */
+.cs-form-row-actions {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+.cs-test-result {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--text-sm);
+    min-height: 18px;
+    line-height: 1.4;
+}
+.cs-test-result i {
+    font-size: 13px;
+}
+.cs-test-result.pending {
+    color: var(--fg-tertiary);
+}
+.cs-test-result.success {
+    color: var(--success);
+}
+.cs-test-result.fail {
+    color: var(--error);
+}
+
+/* ---------- 小图标按钮(眼睛、删除等) ---------- */
+.cs-icon-btn-tiny {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--fg-tertiary);
+    padding: 3px 5px;
+    cursor: pointer;
+    border-radius: var(--radius-xs);
+    transition: all var(--duration-fast) var(--ease-out);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    line-height: 1;
+}
+.cs-icon-btn-tiny:hover {
+    background: var(--surface-hover);
+    color: var(--fg-primary);
+}
+.cs-icon-btn-tiny:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+}
+.cs-icon-btn-tiny.danger {
+    color: var(--error);
+}
+.cs-icon-btn-tiny.danger:hover {
+    background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+/* ---------- "添加 Provider" 按钮 ---------- */
+.cs-provider-add-btn {
+    margin-top: var(--space-1);
+    width: 100%;
+    justify-content: center;
+    padding: 10px;
+    border: 1px dashed var(--border-default);
+    background: transparent;
+    color: var(--fg-secondary);
+    font-weight: var(--weight-medium);
+}
+.cs-provider-add-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+}

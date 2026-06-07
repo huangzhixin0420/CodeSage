@@ -600,8 +600,14 @@ const GROUP_RENDERERS = {
       <h2 class="cs-settings-h2">Models</h2>
       <p class="cs-settings-section-desc">配置 LLM Provider 与 API Key。每个 Provider 独立管理。</p>
       <div class="cs-settings-section">
-        ${(s.providers || []).map((p, i) => view._renderProviderCard(p, i)).join("")}
-        <button class="cs-button size-md variant-secondary" data-cs-action="add-provider">
+        ${(s.providers && s.providers.length > 0)
+          ? s.providers.map((p, i) => view._renderProviderCard(p, i)).join("")
+          : `<div class="cs-provider-empty">
+              <i class="fas fa-robot"></i>
+              <p>还没有配置任何 Provider</p>
+              <p class="cs-form-hint">点击下方按钮添加,或运行 <code>CodeSage: 从环境变量迁移 Provider</code> 命令自动导入</p>
+            </div>`}
+        <button class="cs-button cs-provider-add-btn" data-cs-action="add-provider">
           <i class="fas fa-plus"></i>&nbsp;添加 Provider
         </button>
       </div>
@@ -839,23 +845,32 @@ const GROUP_RENDERERS = {
 };
 
 SettingsView.prototype._renderProviderCard = function (p, index) {
+  // v2.2 重写:从内联样式 + 逗号拼接字符串,改成真正的卡片+chip 列表;
+  // 操作按钮也去掉 inline style,用统一的 .cs-icon-btn-tiny.danger / .cs-button 体系。
+  // Provider 名称 + 类型 一起展示(类型作为 badge),一眼能看出口味。
   const isMcp = p.type?.startsWith("mcp");
+  const typeLabel = PROVIDER_TYPES.find((t) => t.value === p.type)?.label || p.type || "未知";
+  const modelList = p.models || [];
+  const visibleModels = modelList.slice(0, 3);
+  const hiddenCount = modelList.length - visibleModels.length;
+  const hasKey = !!p.apiKeyRef;
   return `
     <div class="cs-provider-card" data-provider-id="${escapeHtml(p.id)}">
       <div class="cs-provider-card-header">
         <div class="cs-provider-card-title">
-          <span class="cs-provider-card-dot ${p.enabled ? "enabled" : "disabled"}"></span>
+          <span class="cs-provider-card-dot ${p.enabled ? "enabled" : "disabled"}" title="${p.enabled ? "已启用" : "已禁用"}"></span>
           <strong>${escapeHtml(p.name || p.id)}</strong>
+          <span class="cs-provider-card-type">${escapeHtml(typeLabel)}</span>
         </div>
         <div class="cs-provider-card-actions">
-          <button class="cs-button size-sm variant-ghost" data-cs-action="toggle-provider" data-id="${escapeHtml(p.id)}">
+          <button class="cs-button size-sm variant-ghost" data-cs-action="toggle-provider" data-id="${escapeHtml(p.id)}" title="${p.enabled ? "禁用" : "启用"}">
             <i class="fas fa-${p.enabled ? "pause" : "play"}"></i>
             ${p.enabled ? "禁用" : "启用"}
           </button>
-          <button class="cs-button size-sm variant-ghost" data-cs-action="edit-provider" data-id="${escapeHtml(p.id)}">
+          <button class="cs-button size-sm variant-ghost" data-cs-action="edit-provider" data-id="${escapeHtml(p.id)}" title="编辑 Provider">
             <i class="fas fa-pen"></i>&nbsp;编辑
           </button>
-          <button class="cs-button size-sm variant-ghost" data-cs-action="remove-provider" data-id="${escapeHtml(p.id)}" style="color:var(--error);">
+          <button class="cs-icon-btn-tiny danger" data-cs-action="remove-provider" data-id="${escapeHtml(p.id)}" title="删除 Provider" aria-label="删除 Provider">
             <i class="fas fa-trash"></i>
           </button>
         </div>
@@ -863,26 +878,29 @@ SettingsView.prototype._renderProviderCard = function (p, index) {
       <div class="cs-provider-card-body">
         <div class="cs-provider-card-row">
           <span class="cs-provider-card-label">Base URL</span>
-          <code class="cs-provider-card-value">${escapeHtml(p.baseUrl || "(未设置)")}</code>
+          <span class="cs-provider-card-value">${escapeHtml(p.baseUrl || "(未设置)")}</span>
         </div>
         <div class="cs-provider-card-row">
           <span class="cs-provider-card-label">API Key</span>
           <span class="cs-provider-card-value" data-cs-role="api-key">
-            <span data-cs-role="api-key-masked" style="font-family:var(--font-mono);letter-spacing:1px;">••••••••••••</span>
-            <span data-cs-role="api-key-value" style="display:none;">${escapeHtml(p.apiKeyRef || "")}</span>
-            <button class="cs-icon-btn-tiny" data-cs-action="toggle-api-key" aria-label="显示/隐藏 Key" type="button" style="margin-left:6px;border:none;background:transparent;color:var(--fg-2);cursor:pointer;padding:2px 4px;">
+            <span data-cs-role="api-key-masked">••••••••••••</span>
+            <span data-cs-role="api-key-value" hidden>${escapeHtml(p.apiKeyRef || "")}</span>
+            <button class="cs-icon-btn-tiny" data-cs-action="toggle-api-key" aria-label="显示/隐藏 Key" title="${hasKey ? "显示/隐藏 Key" : "未设置 Key"}" type="button">
               <i class="fas fa-eye"></i>
             </button>
+            ${hasKey ? "" : `<span class="cs-form-hint" style="margin-left:6px;">未设置</span>`}
           </span>
         </div>
         <div class="cs-provider-card-row">
-          <span class="cs-provider-card-label">模型 (${(p.models || []).length})</span>
-          <span class="cs-provider-card-value">${(p.models || [])
-            .slice(0, 3)
-            .map((m) => escapeHtml(m.id))
-            .join(
-              ", ",
-            )}${(p.models || []).length > 3 ? ` +${(p.models || []).length - 3}` : ""}</span>
+          <span class="cs-provider-card-label">模型 (${modelList.length})</span>
+          ${
+            modelList.length === 0
+              ? `<span class="cs-provider-card-value"><span class="cs-form-hint">未配置</span></span>`
+              : `<span class="cs-model-chip-list">
+                  ${visibleModels.map((m) => `<span class="cs-model-chip">${escapeHtml(m.id)}</span>`).join("")}
+                  ${hiddenCount > 0 ? `<span class="cs-model-chip-more">+${hiddenCount}</span>` : ""}
+                </span>`
+          }
         </div>
       </div>
     </div>
@@ -1189,15 +1207,21 @@ SettingsView.prototype._bindProviderActions = function (root) {
     });
   });
   // API Key 可见性切换 — 默认隐藏,点眼睛图标才显示
+  // v2.2:用 [hidden] 属性而不是 style.display,跟 card 渲染用的 hidden 一致
   root.querySelectorAll('[data-cs-action="toggle-api-key"]').forEach((btn) => {
     btn.addEventListener("click", () => {
       const wrap = btn.closest('[data-cs-role="api-key"]');
       if (!wrap) return;
       const masked = wrap.querySelector('[data-cs-role="api-key-masked"]');
       const value = wrap.querySelector('[data-cs-role="api-key-value"]');
-      const isHidden = value.style.display === "none";
-      masked.style.display = isHidden ? "none" : "";
-      value.style.display = isHidden ? "" : "none";
+      const isHidden = value.hasAttribute("hidden");
+      if (isHidden) {
+        value.removeAttribute("hidden");
+        masked.setAttribute("hidden", "");
+      } else {
+        value.setAttribute("hidden", "");
+        masked.removeAttribute("hidden");
+      }
       btn.innerHTML = isHidden
         ? '<i class="fas fa-eye-slash"></i>'
         : '<i class="fas fa-eye"></i>';
@@ -1230,11 +1254,9 @@ SettingsView.prototype._confirmDeleteProvider = function (p) {
   const modal = new Modal({ title: "删除 Provider", content, size: "sm" });
   const footer = document.createElement("div");
   footer.className = "cs-modal-footer";
-  footer.style.cssText =
-    "padding:12px 0 0;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border-subtle);margin-top:16px;";
   footer.innerHTML = `
     <button class="cs-button variant-ghost size-md" data-cs-action="cancel">取消</button>
-    <button class="cs-button size-md" data-cs-action="confirm" style="background:var(--error);color:white;">删除</button>
+    <button class="cs-button variant-danger size-md" data-cs-action="confirm">删除</button>
   `;
   content.parentElement.appendChild(footer);
   footer
@@ -1481,8 +1503,6 @@ SettingsView.prototype._openProviderModal = function (provider, options = {}) {
   const body = content.closest(".cs-modal-body");
   const footer = document.createElement("div");
   footer.className = "cs-modal-footer";
-  footer.style.cssText =
-    "padding:12px 0 0;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border-subtle);margin-top:16px;";
   footer.innerHTML = `
     <button class="cs-button variant-ghost size-md" data-cs-action="cancel">取消</button>
     <button class="cs-button variant-primary size-md" data-cs-action="save">保存</button>
