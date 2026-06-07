@@ -40,6 +40,33 @@ const KIND_LABEL = {
   subagent: "子 Agent",
 };
 
+/**
+ * 工具 watchdog 超时表(毫秒)
+ *
+ * 2026-06 设计:
+ *  - 默认 30s — 适配"read_file/edit_file/grep_code"等本地工具
+ *  - subagent: 10 分钟 — sub-agent 任务可能跑很久(多步工具调用 + LLM 推理),
+ *    30s 会误伤,5min 也偏紧
+ *  - mcp__* (MCP 工具): 5 分钟 — 跨网络,可能慢
+ *
+ * 注: 优先按 toolName 精确匹配,再按前缀匹配(mcp__),最后 fallback 默认值。
+ * 以后想加新规则: 在 TOOL_TIMEOUTS_MS 加一行,或扩展 getToolTimeoutMs。
+ */
+const TOOL_TIMEOUTS_MS = {
+  default: 30_000,
+  // delegate_task 工具自身执行时间 = sub-agent 整体运行时间,可能很慢
+  delegate_task: 10 * 60_000,
+  // subagent kind 卡片: SubAgentStart → SubAgentComplete 之间的时间窗
+  subagent: 10 * 60_000,
+};
+const MCP_TOOL_TIMEOUT_MS = 5 * 60_000;
+
+function getToolTimeoutMs(toolName) {
+  if (TOOL_TIMEOUTS_MS[toolName] !== undefined) return TOOL_TIMEOUTS_MS[toolName];
+  if (toolName && toolName.startsWith("mcp__")) return MCP_TOOL_TIMEOUT_MS;
+  return TOOL_TIMEOUTS_MS.default;
+}
+
 export class ToolCall {
   constructor(opts) {
     this.toolCallId = opts.toolCallId;
@@ -61,7 +88,7 @@ export class ToolCall {
     this.el.setAttribute("data-cs-tool", this.toolCallId);
     this._renderHeader();
     this._renderBody();
-    console.log(`[cs-tool-call] created: toolId=${this.toolCallId}, name=${this.name}, turnId=${this.turnId}`);
+    console.log(`[cs-tool-call] created: toolId=${this.toolCallId}, name=${this.name}, turnId=${this.turnId}, timeoutMs=${getToolTimeoutMs(this.name)}`);
     // 启动超时看门狗(30s 还没 complete/fail/stop 就 auto-stop;2026-06 从 5min 降到 30s,
     // 因为后端 EventConsumer 已修复 Terminal 事件必送达,5min 太宽松掩盖问题)
     this._startWatchdog();
@@ -451,22 +478,34 @@ export class ToolCall {
   }
 
   /**
-   * 5 分钟超时看门狗:如果 construct 之后 5min 还没收到 complete/fail/stop,
-   * 自动调 stop() 避免卡片永远转圈
+   * 看门狗: 如果 construct 之后 N 秒(per-tool 配置)还没收到 complete/fail/stop,
+   * 自动调 stop() 避免卡片永远转圈。
+   *
+   * N 由 getToolTimeoutMs(this.name) 决定:
+   *  - subagent: 10 分钟
+   *  - mcp__*: 5 分钟
+   *  - 其它(本地工具): 30 秒
+   *
+   * 注: 5min→30s 是 2026-06 重构的一部分(backend EventConsumer 已修复 Terminal
+   * 必送达,5min 太宽松会掩盖问题)。但 sub-agent 任务天然跑得久,所以单独豁免。
    */
   _startWatchdog() {
     this._clearWatchdog();
+    const timeoutMs = getToolTimeoutMs(this.name);
+    this._watchdogTimeoutMs = timeoutMs;
     this._watchdogId = setTimeout(
       () => {
         if (this.status === "running") {
+          const timeoutSec = Math.round(timeoutMs / 1000);
           console.warn(
             `[cs-tool-call] watchdog fired: toolId=${this.toolCallId}, name=${this.name}, ` +
-            `turnId=${this.turnId}, ageMs=${Date.now() - this.startTime}, statusBefore=running`,
+            `turnId=${this.turnId}, ageMs=${Date.now() - this.startTime}, ` +
+            `timeoutMs=${timeoutMs}, statusBefore=running`,
           );
-          this.stop("工具执行超时(>30 秒未收到 complete/error 事件)");
+          this.stop(`工具执行超时(>${timeoutSec} 秒未收到 complete/error 事件)`);
         }
       },
-      30 * 1000,
+      timeoutMs,
     );
   }
 

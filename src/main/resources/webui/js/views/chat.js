@@ -1230,6 +1230,14 @@ class ChatView {
       console.warn(`[chat] _onToolCallStart: unknown turnId=${turnId}, toolId=${toolId}`);
       return;
     }
+    // 2026-06 修复: delegate_task 不渲染独立卡片 — 它的全部执行在 subagent 卡片里展示。
+    // 但仍登记到 toolCalls map(作为 hidden 占位),这样 _onToolCallComplete / _onToolCallError
+    // 进来时能找到并 toast error(成功时静默,因为 subagent 卡片已经显示结果)。
+    if (toolName === "delegate_task") {
+      console.log(`[chat] _onToolCallStart: delegate_task toolId=${toolId}, hidden (subagent card handles display)`);
+      this.toolCalls.set(toolId, { toolCallId: toolId, name: toolName, turnId, hidden: true });
+      return;
+    }
     const tc = new ToolCall({
       toolCallId: toolId,
       turnId,
@@ -1248,15 +1256,30 @@ class ChatView {
   _onToolCallDelta(turnId, toolId, delta) {
     // 不打 log:ToolCallDelta 高频
     const tc = this.toolCalls.get(toolId);
-    if (tc) tc.appendDelta(delta);
+    if (!tc) return;
+    // delegate_task 隐藏占位:不调 appendDelta(对象上没有这个方法)
+    if (tc.hidden) return;
+    tc.appendDelta(delta);
   }
 
   _onToolCallComplete(turnId, toolId, success, result) {
-    console.log(`[chat] _onToolCallComplete: turnId=${turnId}, toolId=${toolId}, success=${success}`);
+    console.log(`[chat] _onToolCallComplete: turnId=${turnId}, toolId=${toolId}, success=${success}, hidden=${this.toolCalls.get(toolId)?.hidden}`);
     const tc = this.toolCalls.get(toolId);
     if (!tc) {
       // 工具卡片还没创建 (理论不会发生) — 记录一下
       console.warn(`[chat] _onToolCallComplete: unknown toolId=${toolId} (turnId=${turnId})`);
+      return;
+    }
+    // delegate_task 隐藏占位: 成功静默(结果已由 subagent 卡片展示),
+    // 失败 toast(用户需要知道 sub-agent 启动失败,例如 task_description 缺失)
+    if (tc.hidden) {
+      if (!success) {
+        const errMsg = (typeof result === "string" ? result : JSON.stringify(result)) || "未知错误";
+        toast.error(`delegate_task 失败: ${errMsg}`);
+      } else {
+        console.log(`[chat] _onToolCallComplete: hidden delegate_task toolId=${toolId} success, no UI (subagent handles)`);
+      }
+      this.toolCalls.delete(toolId);
       return;
     }
     // result 可能是完整 result 对象或 null
@@ -1264,17 +1287,22 @@ class ChatView {
   }
 
   _onToolCallError(turnId, toolId, error) {
-    console.warn(`[chat] _onToolCallError: turnId=${turnId}, toolId=${toolId}, error=${error}`);
+    console.warn(`[chat] _onToolCallError: turnId=${turnId}, toolId=${toolId}, error=${error}, hidden=${this.toolCalls.get(toolId)?.hidden}`);
     const tc = this.toolCalls.get(toolId);
     if (!tc) {
       console.warn(`[chat] _onToolCallError: unknown toolId=${toolId} (turnId=${turnId})`);
       return;
     }
-    // error 可能是 string, 也可能是 { message: string, stack: string } 这样的对象
     const errMsg =
       typeof error === "string"
         ? error
         : error?.message || JSON.stringify(error) || "未知错误";
+    // delegate_task 隐藏占位: 错误也走 toast(用户需要知道)
+    if (tc.hidden) {
+      toast.error(`delegate_task 错误: ${errMsg}`);
+      this.toolCalls.delete(toolId);
+      return;
+    }
     tc.fail(errMsg);
   }
 
