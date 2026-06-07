@@ -621,6 +621,130 @@ async function runE2E() {
       `点 <a> 内部子元素也应被拦截,实际 ${JSON.stringify(nestedSent)}`,
     );
 
+    // ============== 场景 12: 附件按钮 — 反馈链 + 超时保护 ==============
+    // 回归 bug: 用户报告"点了附件按钮没反应"。原因有 3:
+    //   1. 只 bridge.send 没 toast,用户看不到点击已被处理
+    //   2. bridge 未 ready 时 send 排队,也没有错误反馈
+    //   3. 选中回调前如果 FileChooser 弹不出来(IDE 窗口遮挡/JCEF 异常),用户无感知
+    // 修法: 立刻 toast.info 反馈 + 8s 超时兜底,成功回调时清掉超时。
+    console.log("\n[12] 附件按钮 — 即时 toast 反馈 + 8s 超时保护");
+
+    // 场景 8 触发的 attach_file 流程可能还留着 _pendingAttach — 先清掉,避免污染
+    chat._clearPendingAttach?.();
+    w.document.querySelectorAll(".cs-toast").forEach((t) => t.remove());
+
+    const attachBtn = w.document.getElementById("attach-btn");
+    const imageBtn = w.document.getElementById("image-btn");
+    assert(attachBtn !== null, "应能找到 #attach-btn (回形针按钮)");
+    assert(imageBtn !== null, "应能找到 #image-btn (图片按钮)");
+
+    // 把 _pendingAttach 安全地打印出来(timer 是 Node Timeout,会循环引用)
+    const dumpPending = () => {
+        if (!chat._pendingAttach) return "null";
+        return `{type: ${JSON.stringify(chat._pendingAttach.type)}, hasTimer: ${!!chat._pendingAttach.timer}}`;
+    };
+
+    // ---- 1) 点回形针 → 桥消息 + toast ----
+    w.__e2e_sent = [];
+    w.document.querySelectorAll(".cs-toast").forEach((t) => t.remove());
+    attachBtn.click();
+    const fileSends = w.__e2e_sent.filter((s) => s && s.type === "attach_file");
+    assert(
+      fileSends.length === 1,
+      `点 attach-btn 应发 1 条 attach_file,实际 ${fileSends.length} 条`,
+    );
+    let toasts = Array.from(w.document.querySelectorAll(".cs-toast .cs-toast-message"))
+      .map((el) => el.textContent);
+    assert(
+      toasts.some((t) => t.includes("正在打开文件选择器")),
+      `点 attach-btn 应立即弹 toast 反馈,实际 toasts=${JSON.stringify(toasts)}`,
+    );
+
+    // 关键:_pendingAttach 应被设置(8s 超时启动)
+    assert(
+      chat._pendingAttach && chat._pendingAttach.type === "attach_file",
+      `_pendingAttach 应记录本次类型,实际 ${dumpPending()}`,
+    );
+
+    // ---- 2) 点图片 → 桥消息 + toast ----
+    w.__e2e_sent = [];
+    w.document.querySelectorAll(".cs-toast").forEach((t) => t.remove());
+    imageBtn.click();
+    const imgSends = w.__e2e_sent.filter((s) => s && s.type === "attach_image");
+    assert(
+      imgSends.length === 1,
+      `点 image-btn 应发 1 条 attach_image,实际 ${imgSends.length} 条`,
+    );
+    toasts = Array.from(w.document.querySelectorAll(".cs-toast .cs-toast-message"))
+      .map((el) => el.textContent);
+    assert(
+      toasts.some((t) => t.includes("正在打开图片选择器")),
+      `点 image-btn 应立即弹 toast 反馈,实际 toasts=${JSON.stringify(toasts)}`,
+    );
+    assert(
+      chat._pendingAttach && chat._pendingAttach.type === "attach_image",
+      `点 image-btn 后 _pendingAttach 应切到 attach_image,实际 ${dumpPending()}`,
+    );
+
+    // ---- 3) 文件选中回调 file_references_added 到达 → 超时应清掉 ----
+    dispatchEvent({
+      type: "file_references_added",
+      references: [{ name: "Test.kt", relativePath: "src/Test.kt" }],
+    });
+    assert(
+      chat._pendingAttach === null,
+      `file_references_added 回调后 _pendingAttach 应被清掉,实际 ${dumpPending()}`,
+    );
+
+    // ---- 4) 图片选中回调 input_attachments 到达 → 超时应清掉 ----
+    w.document.querySelectorAll(".cs-toast").forEach((t) => t.remove());
+    imageBtn.click(); // 重新触发一次,_pendingAttach 应被覆盖
+    assert(
+      chat._pendingAttach && chat._pendingAttach.type === "attach_image",
+      `重复点 image-btn 应重启超时,实际 ${dumpPending()}`,
+    );
+    dispatchEvent({
+      type: "input_attachments",
+      attachments: [
+        {
+          type: "image",
+          name: "shot.png",
+          data: "data:image/png;base64,iVBORw0KGgo=",
+          size: 1024,
+        },
+      ],
+    });
+    assert(
+      chat._pendingAttach === null,
+      `input_attachments 回调后 _pendingAttach 应被清掉,实际 ${dumpPending()}`,
+    );
+
+    // ---- 5) bridge 未 ready 时: 不发桥消息,只弹 error toast ----
+    // mock bridge 在 e2e 隔离副本里 — 我们动态 import 拿引用,临时改 ready 位
+    const mockBridgeMod = await import("file:///tmp/e2e-webui/webui/js/bridge.js");
+    const mockBridge = mockBridgeMod.bridge;
+    w.document.querySelectorAll(".cs-toast").forEach((t) => t.remove());
+    w.__e2e_sent = [];
+    const _origReady = mockBridge.bridgeReady;
+    mockBridge.bridgeReady = false;
+    attachBtn.click();
+    mockBridge.bridgeReady = _origReady;
+    const earlySends = w.__e2e_sent.filter((s) => s && s.type === "attach_file");
+    assert(
+      earlySends.length === 0,
+      `bridge 未 ready 时点 attach-btn 不应发桥消息,实际 ${earlySends.length} 条`,
+    );
+    toasts = Array.from(w.document.querySelectorAll(".cs-toast .cs-toast-message"))
+      .map((el) => el.textContent);
+    assert(
+      toasts.some((t) => t.includes("插件尚未初始化完成")),
+      `bridge 未 ready 时应弹错误 toast,实际 toasts=${JSON.stringify(toasts)}`,
+    );
+    assert(
+      chat._pendingAttach === null,
+      `bridge 未 ready 时不应启动超时,实际 ${dumpPending()}`,
+    );
+
     // ============== 总结 ==============
     console.log(`\n=== 测试结果 ===`);
     console.log(`通过: ${passed}`);

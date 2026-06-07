@@ -5,6 +5,7 @@ import com.codesage.agent.core.ChatMode
 import com.codesage.shared.serialization.SafeJsonEncoder
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefJSQuery
@@ -329,7 +330,30 @@ class JCEFChatPanel(
      *         用户仍需用 @ 引用,这个我们不偷跑,跟现在 attach_file 行为一致)
      */
     private fun openFilePicker(imagesOnly: Boolean) {
+        // 用户报告"点了附件按钮没反应"的根因之一:
+        // 旧实现同步调 FileChooser.chooseFiles(),在 JCEF 嵌入式场景下,如果
+        // IDE 窗口最小化 / 被遮挡 / 在不同 focus group,弹出的文件选择器可能不
+        // 可见或延迟弹出。同时某些平台环境 FileChooser 内部要求 EDT 线程。
+        // 修法: 1) 包到 invokeLater 强制走 EDT;
+        //       2) 显式取 IDE 主 frame 作为 parent,避免模态弹到错的窗口组;
+        //       3) 详细日志,便于追查"为什么没反应"。
+        ApplicationManager.getApplication().invokeLater {
+            openFilePickerImpl(imagesOnly)
+        }
+    }
+
+    private fun openFilePickerImpl(imagesOnly: Boolean) {
+        logger.info("[openFilePicker] called, imagesOnly=$imagesOnly, project=${project?.name}")
         val p = project
+        if (p == null) {
+            logger.warn("[openFilePicker] project is null, cannot open FileChooser")
+            sendToJS(mapOf(
+                "type" to "toast",
+                "level" to "error",
+                "message" to "请先打开一个项目再使用附件功能",
+            ))
+            return
+        }
         val descriptor: FileChooserDescriptor = if (imagesOnly) {
             FileChooserDescriptorFactory.createAllButJarContentsDescriptor()
                 .withTitle("选择图片")
@@ -345,7 +369,11 @@ class JCEFChatPanel(
         }
 
         try {
-            FileChooser.chooseFiles(descriptor, p, null) { files ->
+            // 用 IDE 主 frame 作 parent,弹出的对话框一定在 IDE 窗口附近,不被遮挡
+            val parent = com.intellij.openapi.wm.WindowManager.getInstance().getFrame(p)
+            logger.info("[openFilePicker] calling FileChooser.chooseFiles with parent=$parent")
+            FileChooser.chooseFiles(descriptor, p, parent, /* toSelect */ null) { files ->
+                logger.info("[openFilePicker] callback fired, files.size=${files.size}")
                 if (files.isEmpty()) {
                     // 用户取消 — 不发事件,前端预览区保留之前的内容
                     return@chooseFiles
@@ -375,7 +403,7 @@ class JCEFChatPanel(
             }
         } catch (e: Throwable) {
             // 测试环境 / 非 IDE 环境可能没装 platform → 静默吞掉,不要炸
-            logger.warn("[attach] FileChooser failed: ${e.message}")
+            logger.warn("[openFilePicker] FileChooser failed: ${e.message}", e)
             // v2.1 兜底:FileChooser 失败时给前端一个明确反馈,免得用户以为"没反应"。
             sendToJS(mapOf("type" to "toast", "level" to "error", "message" to "文件选择器打开失败:${e.message ?: "未知错误"}"))
         }

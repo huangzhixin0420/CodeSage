@@ -371,15 +371,58 @@ class ChatView {
 
         // 工具按钮
         document.getElementById("attach-btn")?.addEventListener("click", () => {
-            bridge.send({ type: "attach_file" });
+            this._requestAttach("attach_file", "文件");
         });
         document.getElementById("image-btn")?.addEventListener("click", () => {
-            bridge.send({ type: "attach_image" });
+            this._requestAttach("attach_image", "图片");
         });
         document.getElementById("mention-btn")?.addEventListener("click", () => {
             ta.value = ta.value + (ta.value && !ta.value.endsWith(" ") ? " @" : "@");
             ta.focus();
         });
+    }
+
+    /**
+     * 附件按钮的统一入口 — 修"点击没反应"反馈链。
+     *
+     * 旧实现只 `bridge.send(...)` 然后就什么都不做。问题是:
+     *   1. 用户点完没有**即时**视觉反馈,要等到文件选择器弹出才知道点上了
+     *      (但文件选择器也可能被遮挡 / 弹到其他屏幕 / 在 JCEF 嵌入式环境不出现)
+     *   2. bridge 还没 ready 时 send 是排队,Kotlin 收不到也不会报错
+     *   3. 选中后回调被 try/catch 吞了,用户也不知道到底成功没
+     *
+     * 这里: 1) 立刻弹一个"正在打开选择器"toast(让用户确认点上了),
+     *      2) 设 8s 超时,超时还没收到回调发 error toast(避免"无声失败"),
+     *      3) 把这条 type 存起来,选中后由 _onFileReferencesAdded /
+     *         setInputAttachments 主动清掉超时,避免误报。
+     */
+    _requestAttach(type, kindLabel) {
+        if (!bridge.bridgeReady) {
+            _toast?.error?.("插件尚未初始化完成,请稍候再试");
+            return;
+        }
+        _toast?.info?.(`正在打开${kindLabel}选择器…`);
+        this._pendingAttach = {
+            type,
+            timer: setTimeout(() => {
+                // 8s 还没回调 — 大概率 FileChooser 没弹出来或被挡住
+                if (this._pendingAttach && this._pendingAttach.type === type) {
+                    this._pendingAttach = null;
+                    _toast?.error?.(
+                        `${kindLabel}选择器未响应 (8s 超时),可能 IDE 窗口被遮挡或 JCEF 环境受限`,
+                    );
+                }
+            }, 8000),
+        };
+        bridge.send({ type });
+    }
+
+    /** 文件 / 图片成功回调时调,清掉超时定时器(避免误报) */
+    _clearPendingAttach() {
+        if (this._pendingAttach) {
+            clearTimeout(this._pendingAttach.timer);
+            this._pendingAttach = null;
+        }
     }
 
     _send(text) {
@@ -404,6 +447,8 @@ class ChatView {
     setInputAttachments(attachments) {
         this._inputAttachments = attachments || [];
         this._renderInputAttachments();
+        // 清掉 _requestAttach 的 8s 超时,避免误报"选择器未响应"
+        this._clearPendingAttach();
         // v2.1 反馈:用户点图片按钮 → 选完图片后,之前的反馈只有 18x18 的小缩略图,
         // 太隐蔽,用户体感"点了没反应"。这里:
         //   1. 自动 focus textarea,光标停在末尾,方便用户继续打字
@@ -445,6 +490,8 @@ class ChatView {
     //   - toast 反馈:点击反馈立刻可见,免得"没反应"
     _onFileReferencesAdded(refs) {
         if (!refs || refs.length === 0) return;
+        // 清掉 _requestAttach 的 8s 超时,避免误报"选择器未响应"
+        this._clearPendingAttach();
         const ta = this.inputTextarea;
         if (!ta) return;
 

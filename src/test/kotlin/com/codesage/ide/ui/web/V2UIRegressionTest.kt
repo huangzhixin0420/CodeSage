@@ -243,20 +243,22 @@ class V2UIRegressionTest {
 
         // 1) attach_image case 必须调出真正的文件选择器(不再发空 file_references 占位)
         val attachImage = extractWhenCaseBody(jcefSrc, "attach_image")
+        // 注意:必须查引号包裹的 "file_references" — 新的 file_references_added
+        // 事件名只是含 "file_references" 子串,不应被误判为废弃事件。
         assertFalse(
-            attachImage.contains("file_references"),
-            "attach_image 不应再发废弃的 file_references(前端 main.js 不读); 实际: $attachImage"
+            attachImage.contains("\"file_references\""),
+            "attach_image 不应再发废弃的 \"file_references\"(前端 main.js 不读); 实际: $attachImage"
         )
         assertTrue(
             attachImage.contains("openFilePicker") || attachImage.contains("FileChooser"),
             "attach_image 应调出真实文件选择器(openFilePicker / FileChooser); 实际: $attachImage"
         )
 
-        // 2) attach_file 同上
+        // 2) attach_file 同上(同上,只查带引号的废弃事件字符串)
         val attachFile = extractWhenCaseBody(jcefSrc, "attach_file")
         assertFalse(
-            attachFile.contains("file_references"),
-            "attach_file 不应再发废弃的 file_references; 实际: $attachFile"
+            attachFile.contains("\"file_references\""),
+            "attach_file 不应再发废弃的 \"file_references\"; 实际: $attachFile"
         )
         assertTrue(
             attachFile.contains("openFilePicker") || attachFile.contains("FileChooser"),

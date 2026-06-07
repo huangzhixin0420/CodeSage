@@ -37,6 +37,7 @@ class ToastManager {
     }
 
     show(message, variant = "info", duration = 3000) {
+        this._ensureContainer();
         if (!this.container) return;
         const meta = VARIANT_META[variant] || VARIANT_META.info;
         const el = document.createElement("div");
