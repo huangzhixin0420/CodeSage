@@ -22,6 +22,7 @@ import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.project.guessProjectDir
+import com.intellij.ide.BrowserUtil
 import java.awt.BorderLayout
 import javax.swing.JPanel
 import javax.swing.Timer
@@ -572,6 +573,14 @@ class JCEFChatPanel(
                 }
 
                 "reload_browser" -> reloadBrowser()
+                "open_external_url" -> {
+                    // 外部链接:从对话内容里的 <a href="https://..."> / mailto / file 触发。
+                    // 不能让 JCEF 自己 navigate,否则会替换整个 webview 页面,聊天状态
+                    // 全部丢失且没有"返回"按钮(用户报告的 bug)。
+                    // 改走 BrowserUtil.browse 走系统默认浏览器。
+                    val url = json.jsonObject["url"]?.jsonPrimitive?.content ?: ""
+                    if (url.isNotBlank()) openExternalUrl(url)
+                }
                 "new_session" -> sessionActionHandler?.invoke("new_session", emptyMap())
                 "switch_session" -> {
                     val sid = json.jsonObject["sessionId"]?.jsonPrimitive?.content ?: ""
@@ -1042,6 +1051,39 @@ class JCEFChatPanel(
 
     private fun reloadBrowser() {
         browser?.cefBrowser?.reload()
+    }
+
+    /**
+     * 在系统默认浏览器中打开外部 URL。
+     *
+     * 为什么不做"在 JCEF 内开新标签":
+     *   1. 当前 JCEFChatPanel 是**单 webview 架构**,没有多 tab 支持
+     *   2. JCEF 自己 navigate 会替换整个页面,聊天状态全部丢失,且没有返回按钮
+     *   3. IDE 插件生态里 Cursor / Continue / GitHub Copilot Chat 都走系统浏览器
+     *
+     * 安全护栏:
+     *   - 只放行 http / https / mailto / file 四种 scheme
+     *   - 其余(javascript: / data: / vbscript: 等)静默忽略,不报错也不打开
+     *   - BrowserUtil.browse 本身会再调系统打开,最终是否打开由 OS 决定
+     */
+    private fun openExternalUrl(url: String) {
+        val scheme = try {
+            java.net.URI(url).scheme?.lowercase()
+        } catch (e: Throwable) {
+            null
+        }
+        val allowed = setOf("http", "https", "mailto", "file")
+        if (scheme !in allowed) {
+            logger.warn("[openExternalUrl] blocked non-allowed scheme: scheme=$scheme, url=$url")
+            return
+        }
+        try {
+            BrowserUtil.browse(url)
+            logger.info("[openExternalUrl] $scheme $url")
+        } catch (e: Throwable) {
+            logger.warn("[openExternalUrl] BrowserUtil.browse failed for $url: ${e.message}")
+            sendToJS(mapOf("type" to "toast", "level" to "error", "message" to "无法打开链接:${e.message ?: "未知错误"}"))
+        }
     }
 
     // ===== Fallback =====

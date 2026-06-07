@@ -318,6 +318,21 @@ if (document.readyState === "loading") {
     boot();
 }
 
+// ===================== 外部链接拦截 =====================
+//
+// 用户反馈: 在对话界面点 markdown 里的链接,会在 JCEF webview 内**替换**当前页,
+// 直接显示被点击的网页,无法返回对话 — 整个聊天状态丢失。
+//
+// 修法: 全局 click 捕获阶段拦截,凡是 href 是外部 URL (http/https/mailto/file)
+// 的 <a> 都 preventDefault 掉,改成走 bridge.send 让 Kotlin 侧用 BrowserUtil
+// 打开系统默认浏览器。In-page 锚点 (#fragment) 和 <button> 不动。
+//
+// 不做 JCEF 内嵌网页查看:1) 跟 JCEF 单页架构冲突,2) IDE 文档类链接习惯走外
+// 部浏览器(Cursor / Continue 等都是这样),3) 用户体验更稳。
+// 实际定义在 chat.js 底部(全局 IIFE)。chat.js 是 e2e 测试导入的入口,放
+// 那里能保证测试场景也走到这段逻辑;真实运行时 main.js 加载 chat.js
+// 也会被安装。只装一次没问题 — IIFE 立即执行、监听器去重在浏览器端。
+
 // ===================== 全局命名空间 =====================
 
 window.CodeSage = window.CodeSage || {};

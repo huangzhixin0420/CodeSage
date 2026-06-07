@@ -537,6 +537,90 @@ async function runE2E() {
       "用户主动点 X 应能关掉被 addArtifact 展开的面板",
     );
 
+    // ============== 场景 11: 外部链接拦截 — 点 <a> 不丢聊天页 ==============
+    // 回归 bug: 旧实现点对话内容里的 <a href="https://..."> 会让 JCEF webview 自己
+    // navigate,直接替换整个聊天页,无法返回 — 聊天状态全部丢失。
+    // v2.1: 全局 click 捕获阶段拦截,只放过 http/https/mailto/file 四种 scheme,
+    // 其余 (javascript: / data: / #fragment) 不动。拦截后走 bridge.send 让 Kotlin
+    // 用 BrowserUtil.browse 走系统默认浏览器。
+    console.log("\n[11] 外部链接拦截 — 点 <a> 不丢聊天页");
+    w.__e2e_sent = [];
+
+    // 模拟 AI 在回答里输出了一个 markdown 链接,被 marked 渲染为 <a>
+    const aiBody = w.document.querySelector(".messages-inner");
+    const linkHost = w.document.createElement("div");
+    linkHost.className = "text-stream-segment";
+    linkHost.innerHTML = `
+      <p>看这里 <a href="https://example.com/foo" class="link" data-cs-link="1">示例</a> 了解更多</p>
+      <p>邮箱 <a href="mailto:hi@example.com">hi@example.com</a></p>
+      <p>项目文件 <a href="file:///tmp/test.kt">/tmp/test.kt</a></p>
+      <p>页面内锚点 <a href="#messages-container" class="cs-skip-link">跳过</a> 不应该被拦截</p>
+      <p>危险协议 <a href="javascript:alert(1)">js</a> 不应该被拦截</p>
+    `;
+    aiBody.appendChild(linkHost);
+
+    // 点 https 链接 — 应被拦截,走 bridge.send
+    const httpsLink = linkHost.querySelector('a[href^="https://"]');
+    httpsLink.click();
+    const linkSent = w.__e2e_sent[w.__e2e_sent.length - 1];
+    assert(
+      linkSent && linkSent.type === "open_external_url",
+      `点 https 链接应发 open_external_url,实际 ${linkSent?.type}`,
+    );
+    assert(
+      linkSent && linkSent.url === "https://example.com/foo",
+      `应发原始 href,实际 ${linkSent?.url}`,
+    );
+
+    // 点 mailto — 同理
+    w.__e2e_sent = [];
+    linkHost.querySelector('a[href^="mailto:"]').click();
+    const mailSent = w.__e2e_sent[w.__e2e_sent.length - 1];
+    assert(
+      mailSent && mailSent.type === "open_external_url" && mailSent.url === "mailto:hi@example.com",
+      `点 mailto 应发 open_external_url,实际 ${JSON.stringify(mailSent)}`,
+    );
+
+    // 点 file:// — 同理
+    w.__e2e_sent = [];
+    linkHost.querySelector('a[href^="file://"]').click();
+    const fileSent = w.__e2e_sent[w.__e2e_sent.length - 1];
+    assert(
+      fileSent && fileSent.type === "open_external_url" && fileSent.url === "file:///tmp/test.kt",
+      `点 file:// 应发 open_external_url,实际 ${JSON.stringify(fileSent)}`,
+    );
+
+    // 点 #fragment — 不应被拦截(也不应发任何桥消息)
+    w.__e2e_sent = [];
+    linkHost.querySelector('a[href^="#"]').click();
+    assert(
+      w.__e2e_sent.length === 0,
+      `点 #fragment 不应发任何桥消息,实际 ${w.__e2e_sent.length} 条`,
+    );
+
+    // 点 javascript: — 危险协议,我们的拦截器只在白名单里(没 javascript:),
+    // 所以应当放过默认行为(浏览器会什么都不做,javascript: 在 jsdom 也无作用)。
+    // 关键: 不应被我们主动放行,也不应发桥消息。
+    w.__e2e_sent = [];
+    linkHost.querySelector('a[href^="javascript:"]').click();
+    assert(
+      w.__e2e_sent.length === 0,
+      `点 javascript: 协议不应被拦截发桥消息,实际 ${w.__e2e_sent.length} 条`,
+    );
+
+    // 嵌套 <a><span>x</span></a>: 点 span 应能冒泡到 a,也被拦截
+    w.__e2e_sent = [];
+    const nested = w.document.createElement("a");
+    nested.href = "https://nested.example.com";
+    nested.innerHTML = "<span>点这里</span>";
+    linkHost.appendChild(nested);
+    nested.querySelector("span").click();
+    const nestedSent = w.__e2e_sent[w.__e2e_sent.length - 1];
+    assert(
+      nestedSent && nestedSent.type === "open_external_url" && nestedSent.url === "https://nested.example.com",
+      `点 <a> 内部子元素也应被拦截,实际 ${JSON.stringify(nestedSent)}`,
+    );
+
     // ============== 总结 ==============
     console.log(`\n=== 测试结果 ===`);
     console.log(`通过: ${passed}`);

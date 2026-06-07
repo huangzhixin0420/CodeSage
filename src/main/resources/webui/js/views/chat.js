@@ -1279,3 +1279,55 @@ class ChatView {
 export const chat = new ChatView();
 window.CodeSage = window.CodeSage || {};
 window.CodeSage.chat = chat;
+
+// ===================== 外部链接拦截 =====================
+//
+// 用户反馈: 在对话界面点 markdown 里的链接,会在 JCEF webview 内**替换**当前页,
+// 直接显示被点击的网页,无法返回对话 — 整个聊天状态丢失。
+//
+// 修法: 全局 click 捕获阶段拦截,凡是 href 是外部 URL (http/https/mailto/file)
+// 的 <a> 都 preventDefault 掉,改成走 bridge.send 让 Kotlin 侧用 BrowserUtil
+// 打开系统默认浏览器。In-page 锚点 (#fragment) 和 <button> 不动。
+//
+// 不做 JCEF 内嵌网页查看:1) 跟 JCEF 单页架构冲突,2) IDE 文档类链接习惯走外
+// 部浏览器(Cursor / Continue 等都是这样),3) 用户体验更稳。
+//
+// 放在 chat.js 底部而非 main.js: e2e 测试只 import chat.js 不 import main.js,
+// 放这里能保证测试场景也走到。真实运行时 main.js 会 import chat.js,IIFE
+// 照样执行。重复注册用 guard 兜底。
+if (!window.__codesage_external_link_interceptor_installed__) {
+    window.__codesage_external_link_interceptor_installed__ = true;
+    // 这些是允许的"外部"scheme,会被拦截并通过 bridge 发给 Kotlin。
+    // 其它 (javascript: / data: / vbscript: 等) 直接忽略,让默认行为生效 ——
+    // 通常就是什么都不做,但起码不会被我们主动放行。
+    const EXTERNAL_SCHEMES = new Set(["http:", "https:", "mailto:", "file:"]);
+
+    document.addEventListener(
+        "click",
+        (e) => {
+            // closest('a') 处理 <a><span>x</span></a> 这种带子元素的情况
+            const a = e.target && e.target.closest && e.target.closest("a");
+            if (!a) return;
+            const href = a.getAttribute("href");
+            if (!href) return;
+
+            // 内部锚点 (#xxx) 放过,留给浏览器默认处理(滚动到对应位置)
+            if (href.startsWith("#")) return;
+
+            // 协议未知 / 解析抛:放行默认(不进白名单就不会被我们主动放行)
+            let scheme = "";
+            try {
+                scheme = new URL(href, window.location.href).protocol.toLowerCase();
+            } catch (_) {
+                return;
+            }
+            if (!EXTERNAL_SCHEMES.has(scheme)) return;
+
+            // 拦截 + 转交 Kotlin
+            e.preventDefault();
+            e.stopPropagation();
+            bridge.send({ type: "open_external_url", url: href });
+        },
+        true, // capture: 在 bubble 阶段的任何 onclick 之前先抓
+    );
+}
