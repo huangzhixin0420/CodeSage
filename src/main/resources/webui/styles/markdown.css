@@ -14,9 +14,12 @@
     margin: 0;
 }
 
-/* 相邻 markdown 块之间的默认间距:v2.0 由 12px 收到 6px,长回答更紧凑好读 */
+/* 相邻 markdown 块之间的默认间距:
+   v2.0 由 12px 收到 6px
+   v2.2 再收到 3px — 用户反馈 6px 长回答还是散,3px 接近 Markdown GitHub 的
+   "两个空行视觉≈一个空行" 紧凑感,扫读更顺 */
 :where(.assistant-content, .assistant-content .text-stream-segment) > * + * {
-    margin-top: 6px;
+    margin-top: 3px;
 }
 
 :where(.assistant-content, .assistant-content .text-stream-segment) > h1,
@@ -31,19 +34,19 @@
 
 :where(.assistant-content, .assistant-content .text-stream-segment) > h1 {
     font-size: var(--text-2xl);
-    margin-top: 14px;
+    margin-top: 8px;
 }
 :where(.assistant-content, .assistant-content .text-stream-segment) > h2 {
     font-size: var(--text-xl);
-    margin-top: 12px;
+    margin-top: 6px;
 }
 :where(.assistant-content, .assistant-content .text-stream-segment) > h3 {
     font-size: var(--text-lg);
-    margin-top: 10px;
+    margin-top: 5px;
 }
 :where(.assistant-content, .assistant-content .text-stream-segment) > h4 {
     font-size: var(--text-md);
-    margin-top: 8px;
+    margin-top: 4px;
 }
 
 :where(.assistant-content, .assistant-content .text-stream-segment) > p {

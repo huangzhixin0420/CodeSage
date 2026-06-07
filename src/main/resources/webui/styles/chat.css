@@ -242,8 +242,8 @@
 }
 
 .text-stream-segment + .text-stream-segment {
-    /* 同一 turn 内被工具调用 / plan 卡截断的两段文本,间距收到 6px,保持紧凑 */
-    margin-top: 6px;
+    /* 同一 turn 内被工具调用 / plan 卡截断的两段文本,间距收到 3px,跟 markdown.css 同步 */
+    margin-top: 3px;
 }
 
 .text-stream-segment:last-child {

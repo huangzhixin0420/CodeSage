@@ -745,6 +745,51 @@ async function runE2E() {
       `bridge 未 ready 时不应启动超时,实际 ${dumpPending()}`,
     );
 
+    // ============== 场景 13: AI 回答段落间距 — 紧凑好读 ==============
+    // 回归 bug: 用户报告"ai 回答的段落间隔很大,不利于阅读"。
+    // 历史:  12px(v1) → 6px(v2.0) → 3px(v2.2)
+    // v2.2: 3px 接近 GitHub Markdown 渲染的"两个空行≈一个空行"紧凑感。
+    //       标题上间距同步收到 8/6/5/4(对应 h1/h2/h3/h4)。
+    // 锁住这两个值,以后调样式不至于再让长回答"散"。
+    console.log("\n[13] AI 回答段落间距 — 紧凑 3px + 标题上间距 8/6/5/4");
+    const mdCss = readFileSync(WEBUI + "/styles/markdown.css", "utf-8");
+    const chatCss = readFileSync(WEBUI + "/styles/chat.css", "utf-8");
+
+    // 1) 默认块间距 = 3px
+    assert(
+      /:\s*where\([^)]*\)\s*>\s*\*\s*\+\s*\*\s*\{[^}]*margin-top:\s*3px/.test(mdCss),
+      "markdown.css 默认块间距应为 3px (之前 v2.0 是 6px,用户反馈还太大)",
+    );
+
+    // 2) h1/h2/h3/h4 上间距 = 8/6/5/4
+    const h1 = (mdCss.match(/>\s*h1\s*\{[^}]*margin-top:\s*(\d+)px/) || [])[1];
+    const h2 = (mdCss.match(/>\s*h2\s*\{[^}]*margin-top:\s*(\d+)px/) || [])[1];
+    const h3 = (mdCss.match(/>\s*h3\s*\{[^}]*margin-top:\s*(\d+)px/) || [])[1];
+    const h4 = (mdCss.match(/>\s*h4\s*\{[^}]*margin-top:\s*(\d+)px/) || [])[1];
+    assert(h1 === "8", `h1 上间距应为 8px,实际 ${h1}px`);
+    assert(h2 === "6", `h2 上间距应为 6px,实际 ${h2}px`);
+    assert(h3 === "5", `h3 上间距应为 5px,实际 ${h3}px`);
+    assert(h4 === "4", `h4 上间距应为 4px,实际 ${h4}px`);
+
+    // 3) 同一 turn 内被工具截断的流式段落间距 = 3px(跟 markdown.css 同步)
+    const segMatch = (chatCss.match(/\.text-stream-segment\s*\+\s*\.text-stream-segment\s*\{[^}]*margin-top:\s*(\d+)px/) || [])[1];
+    assert(segMatch === "3", `text-stream-segment 间距应为 3px,实际 ${segMatch}px`);
+
+    // 4) 实际渲染: 两个 <p> 之间的 getComputedStyle.marginTop 应该是 3px
+    const pContainer = w.document.createElement("div");
+    pContainer.className = "assistant-content";
+    pContainer.innerHTML = "<p>p1</p><p>p2</p><h2>title</h2><p>p3</p>";
+    w.document.body.appendChild(pContainer);
+    const p2 = pContainer.children[1];
+    const title = pContainer.children[2];
+    const p3 = pContainer.children[3];
+    // JSDOM 不解析 :where(...),但 chat.js 不会走这条; 真实浏览器 :where 不影响选择器匹配,
+    // 关键: * + * { margin-top } 应被应用。注意我们的 CSS 是用 :where(.assistant-content, ...) > * + *,
+    // JSDOM 不支持 :where(:is),所以跳过运行时检查,只用 CSS 源文本断言。
+    // 注释掉运行时检查避免在 JSDOM 假阴性:
+    //   assert(w.getComputedStyle(p2).marginTop === "3px", ...);
+    pContainer.remove();
+
     // ============== 总结 ==============
     console.log(`\n=== 测试结果 ===`);
     console.log(`通过: ${passed}`);
