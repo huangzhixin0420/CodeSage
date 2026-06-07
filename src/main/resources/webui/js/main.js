@@ -186,6 +186,26 @@ function handleBridgeMessage(msg) {
                 chat.setInputAttachments(msg.attachments || []);
                 break;
 
+            // === 文件引用(Cursor 风格 @file):Kotlin 侧 JCEFChatPanel.openFilePicker
+            //    (imagesOnly=false) 在用户从 FileChooser 选完文件后推这个事件。
+            //    携带 name / path / relativePath / size,前端在 textarea 光标处
+            //    插入 `@relativePath` (项目内用相对路径,项目外用绝对路径),
+            //    用户继续输入问题后发送,FileReferenceResolver.resolveReferences()
+            //    会读这些文件内容并注入到 agent 上下文 — 0 改后端 agent。
+            case "file_references_added":
+                chat._onFileReferencesAdded(msg.references || []);
+                break;
+
+            // === 后端主动 toast:用于 FileChooser 失败 / 文件类型不合法 等兜底反馈。
+            //    见 JCEFChatPanel.openFilePicker 的 catch 分支。
+            case "toast":
+                if (msg.level && typeof toast[msg.level] === "function") {
+                    toast[msg.level](msg.message || "");
+                } else {
+                    toast.info(msg.message || "");
+                }
+                break;
+
             // === 新会话:Kotlin 在 JCEFChatPanel.clear() 里 sendToJS 这个 type。
             //    见 JCEFChatPanel.kt:fun clear() → sendToJS("clear_chat")
             //    AgentToolWindowPanel.createNewSession() 在 saveCurrentSession + createSession
@@ -201,6 +221,7 @@ function handleBridgeMessage(msg) {
                 chat._resetInput();
                 toast.info("已开启新会话");
                 break;
+
             // Kotlin 通知前端:在 in-web 视图里打开设置
             // (由 SettingsBridgeHandler.handle("settings_open_view") 触发,
             // 见 JCEFChatPanel.kt 的 "open_settings" case)

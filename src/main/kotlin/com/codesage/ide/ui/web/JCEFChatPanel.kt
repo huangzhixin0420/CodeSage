@@ -21,6 +21,7 @@ import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.project.guessProjectDir
 import java.awt.BorderLayout
 import javax.swing.JPanel
 import javax.swing.Timer
@@ -348,17 +349,59 @@ class JCEFChatPanel(
                     // 用户取消 — 不发事件,前端预览区保留之前的内容
                     return@chooseFiles
                 }
-                val attachments = files.mapNotNull { vf -> buildAttachment(vf, imagesOnly) }
-                if (attachments.isEmpty()) {
-                    sendToJS(mapOf("type" to "input_attachments", "attachments" to emptyList<Map<String, Any?>>()))
-                    return@chooseFiles
+                if (imagesOnly) {
+                    // 图片:走旧路径 — chip 预览是真实 base64 数据,需要在 textarea 上方渲染。
+                    val attachments = files.mapNotNull { vf -> buildAttachment(vf, imagesOnly) }
+                    if (attachments.isEmpty()) {
+                        sendToJS(mapOf("type" to "input_attachments", "attachments" to emptyList<Map<String, Any?>>()))
+                        return@chooseFiles
+                    }
+                    sendToJS(mapOf("type" to "input_attachments", "attachments" to attachments))
+                } else {
+                    // 文件:v2.1 Cursor 风格 — 不再 chip 预览,改为把 @相对路径
+                    // 推到 textarea 光标处。用户继续输入问题,发送时
+                    // FileReferenceResolver.resolveReferences() 会自动读内容
+                    // 注入到上下文。失败兜底:任何文件都拿不到相对路径就给
+                    // 绝对路径,FileReferenceResolver 有 5 套 fallback 找文件。
+                    val references = files.mapNotNull { vf -> buildFileReference(vf) }
+                    if (references.isEmpty()) {
+                        logger.warn("[attach_file] selection produced no valid references")
+                        sendToJS(mapOf("type" to "toast", "level" to "warning", "message" to "所选文件无法引用"))
+                        return@chooseFiles
+                    }
+                    sendToJS(mapOf("type" to "file_references_added", "references" to references))
                 }
-                sendToJS(mapOf("type" to "input_attachments", "attachments" to attachments))
             }
         } catch (e: Throwable) {
             // 测试环境 / 非 IDE 环境可能没装 platform → 静默吞掉,不要炸
             logger.warn("[attach] FileChooser failed: ${e.message}")
+            // v2.1 兜底:FileChooser 失败时给前端一个明确反馈,免得用户以为"没反应"。
+            sendToJS(mapOf("type" to "toast", "level" to "error", "message" to "文件选择器打开失败:${e.message ?: "未知错误"}"))
         }
+    }
+
+    /**
+     * 把一个 VirtualFile 构造成 file_references_added 期望的引用字典。
+     * 优先用项目内相对路径(FileReferenceResolver 命中策略 2),拿不到就回退
+     * 到绝对路径(策略 1)或文件名(策略 3-5),保证 @ 引用一定能被解析。
+     */
+    private fun buildFileReference(vf: VirtualFile): Map<String, Any?>? {
+        val name = vf.name
+        val path = vf.path
+        val size = try { vf.length } catch (e: Throwable) { 0L }
+        val basePath = try { project?.guessProjectDir()?.path } catch (e: Throwable) { null }
+        val relativePath = if (basePath != null && path.startsWith(basePath)) {
+            path.substring(basePath.length).trimStart('/')
+        } else {
+            // 文件在项目外:用绝对路径,FileReferenceResolver 会用 findFileByPath 处理
+            path
+        }
+        return mapOf(
+            "name" to name,
+            "path" to path,
+            "relativePath" to relativePath,
+            "size" to size,
+        )
     }
 
     /**
@@ -477,6 +520,15 @@ class JCEFChatPanel(
                 // (与 main.js 现有 case 对齐)。
                 "attach_file" -> {
                     logger.info("[Bridge] attach_file requested")
+                    // v2.1:文件选择后改为发 file_references_added,
+                    // 由前端在 textarea 光标处插入 @相对路径 (Cursor 风格)。
+                    // 原来发 input_attachments + chip 预览,用户反馈"点击没反应" —
+                    // chip 在输入框上方,容易看不到;且 chip 只是占位预览,文件内容并
+                    // 不会自动进上下文(用户还得手动 @ 引用)。改为 @ 插入后:
+                    //   1. 反馈立刻可见(@ 在光标处闪烁)
+                    //   2. 复用 FileReferenceResolver.resolveReferences() 既有链路
+                    //      (正则匹配 @path → 读文件内容 → 注入上下文),0 改后端 agent
+                    // 图片按钮保持原 input_attachments 流程,因为图片 chip 是真实预览。
                     openFilePicker(imagesOnly = false)
                 }
                 "attach_image" -> {

@@ -187,6 +187,21 @@ async function runE2E() {
         case "plan_modified": chat._onPlanModified(turnId, msg); break;
         case "context_compressed": chat._onContextCompressed(turnId, msg); break;
         case "error": chat._onError(turnId, msg.message || ""); break;
+        case "sessions_updated": chat.setSessions(msg.sessions || []); break;
+        case "session_switched": chat.setCurrentSession(msg.sessionId, msg.sessionName); break;
+        case "clear_chat":
+          // 模拟 main.js 的 clear_chat 路由(包含输入区重置)
+          chat.clear();
+          chat._resetInput();
+          break;
+        case "file_references_added":
+          // 模拟 main.js 的 file_references_added 路由
+          chat._onFileReferencesAdded(msg.references || []);
+          break;
+        case "input_attachments":
+          // 模拟 main.js 的 input_attachments 路由(图片)
+          chat.setInputAttachments(msg.attachments || []);
+          break;
         default: console.warn(`[e2e] unhandled: ${type}`);
       }
     }
@@ -306,6 +321,179 @@ async function runE2E() {
     assert(lastSent && lastSent.type === "send_message", `bridge.send 应发 send_message, 实际 ${lastSent?.type}`);
     assert(lastSent && lastSent.message === "第二个问题", "消息字段应带 message");
     assert(lastSent && "images" in lastSent, "消息字段应带 images 数组");
+
+    // ============== 场景 7: 头部 + 按钮 → 新会话 ==============
+    // 回归 bug:旧版 main.js 没有 case "clear_chat",导致点 + 后主区仍显示老消息,
+    // 用户感知"点了没反应"。见 main.js clear_chat 分支。
+    console.log("\n[7] 头部 + 按钮(新会话)");
+    // 模拟 Kotlin 侧会把当前会话存档后,推送全量列表 + 切到新会话 + clear_chat
+    dispatchEvent({
+      type: "sessions_updated",
+      sessions: [
+        { id: "archived", name: "之前的对话", createdAt: 1, lastActivityAt: 2 },
+        { id: "new",      name: "",             createdAt: 3, lastActivityAt: 4 },
+      ],
+    });
+    dispatchEvent({ type: "session_switched", sessionId: "new" });
+    dispatchEvent({ type: "clear_chat" });
+    assert(
+      w.document.querySelectorAll(".message").length === 0,
+      "clear_chat 后主区应清空所有 message",
+    );
+    assert(
+      w.document.querySelectorAll(".inline-alert").length === 0,
+      "clear_chat 后 inline-alert 也应清空",
+    );
+    const welcome = w.document.getElementById("welcome-state");
+    assert(
+      welcome && welcome.style.display !== "none",
+      "clear_chat 后应显示 welcome 状态",
+    );
+    const ta2 = w.document.getElementById("input-textarea");
+    assert(ta2 && ta2.value === "", `输入框应被清空,实际 "${ta2?.value}"`);
+    const active = w.document.querySelector(".sidebar-item.active");
+    assert(
+      active && active.dataset.csSessionId === "new",
+      `sidebar active 应为新会话,实际 ${active?.dataset?.csSessionId}`,
+    );
+
+    // 关键回归:之前没有 _resetInput 时,ta2.value 还是 "第二个问题" 残留草稿,
+    // 切到新会话却看到旧输入 — 现在必须为空。
+
+    // ============== 场景 8: 回形针按钮 → @file 插入(Cursor 风格) ==============
+    // 回归 bug:旧版 attach_file 选完文件后只发 input_attachments,前端渲染一个
+    // chip 预览(在输入框上方),但文件内容不会自动进上下文 — 用户感知"点了没反应"。
+    // v2.1 改为 file_references_added:把 @相对路径 直接插到 textarea 光标处,
+    // 用户继续打字,发送时 FileReferenceResolver 自动读内容注入上下文。
+    console.log("\n[8] 回形针按钮 → @file 插入");
+    const taFile = w.document.getElementById("input-textarea");
+    taFile.value = "请帮我看看 ";
+    taFile.setSelectionRange(taFile.value.length, taFile.value.length);
+
+    dispatchEvent({
+      type: "file_references_added",
+      references: [
+        { name: "Foo.kt", path: "/abs/Foo.kt", relativePath: "src/main/kotlin/Foo.kt", size: 1024 },
+      ],
+    });
+    assert(
+      taFile.value === "请帮我看看 @src/main/kotlin/Foo.kt ",
+      `单个文件 @ 应插到光标后,实际 "${taFile.value}"`,
+    );
+    assert(
+      taFile.selectionStart === taFile.value.length && taFile.selectionEnd === taFile.value.length,
+      `光标应停在插入文本末尾,实际 ${taFile.selectionStart}/${taFile.selectionEnd}`,
+    );
+    assert(
+      w.document.activeElement === taFile,
+      "插入后 textarea 应自动获得焦点",
+    );
+
+    // 多文件:全部插入,中间空格
+    taFile.value = "";
+    taFile.setSelectionRange(0, 0);
+    dispatchEvent({
+      type: "file_references_added",
+      references: [
+        { name: "A.kt", relativePath: "src/A.kt" },
+        { name: "B.kt", relativePath: "src/B.kt" },
+        { name: "C.kt", relativePath: "src/C.kt" },
+      ],
+    });
+    assert(
+      taFile.value === "@src/A.kt @src/B.kt @src/C.kt ",
+      `多个文件应空格分隔,实际 "${taFile.value}"`,
+    );
+
+    // 关键回归:之前 v2.0 chip 路径下,选完文件后输入框里没东西 — 用户体感"无反馈"。
+    // 现在 @ 必须真的出现在 textarea 里,而不是只在预览区。
+    assert(
+      taFile.value.includes("@src/"),
+      "@ 引用应被插入到 textarea (不是 chip 预览区)",
+    );
+    const chipCount = w.document.querySelectorAll(".input-attachment").length;
+    assert(
+      chipCount === 0,
+      `文件 @ 流程不应渲染 chip 预览 (实际 ${chipCount}) — chip 仅为图片设计`,
+    );
+
+    // 兜底:在光标中间插入(不是末尾)
+    taFile.value = "前面 后面";
+    taFile.setSelectionRange(3, 3);
+    dispatchEvent({
+      type: "file_references_added",
+      references: [{ name: "X.ts", relativePath: "X.ts" }],
+    });
+    assert(
+      taFile.value === "前面 @X.ts 后面",
+      `应插入到 selectionStart 处,实际 "${taFile.value}"`,
+    );
+
+    // ============== 场景 9: 图片按钮 → 视觉强化 + 反馈 ==============
+    // 回归 bug:旧版 attach_image 选完图片后,前端只渲染一个 18x18 的小缩略图,
+    // 没有 toast / focus / 焦点变化,用户体感"点了没反应"。
+    // v2.1:加大缩略图到 28x28、accent 描边、toast 反馈、焦点回 textarea。
+    console.log("\n[9] 图片按钮 → 视觉强化 + 反馈");
+    dispatchEvent({
+      type: "input_attachments",
+      attachments: [
+        {
+          type: "image",
+          name: "screenshot.png",
+          data: "data:image/png;base64,iVBORw0KGgo=",
+          size: 1024 * 50, // 50KB
+        },
+      ],
+    });
+    const imgChip = w.document.querySelector(".input-attachment");
+    assert(imgChip !== null, "应渲染图片 chip");
+    const thumb = imgChip?.querySelector(".input-attachment-thumb");
+    assert(thumb !== null, "图片 chip 应有缩略图");
+    // v2.1:缩略图尺寸从 18 → 28(由 input.css .input-attachment-thumb 规则控制,
+    // JSDOM 不能完整解析 CSS 变量,所以这里不读 computedStyle,改查 CSS 源码验证)
+    const inputCss = readFileSync(WEBUI + "/styles/input.css", "utf-8");
+    assert(
+      /\.input-attachment-thumb\s*\{[^}]*width:\s*28px/.test(inputCss),
+      "input.css 应把 .input-attachment-thumb 缩略图 width 设为 28px",
+    );
+    const nameEl = imgChip?.querySelector(".input-attachment-name");
+    assert(
+      nameEl && nameEl.textContent.includes("screenshot.png"),
+      `chip 应显示文件名,实际 "${nameEl?.textContent}"`,
+    );
+    assert(
+      nameEl && nameEl.textContent.includes("KB"),
+      `chip 应显示文件大小,实际 "${nameEl?.textContent}"`,
+    );
+    assert(
+      w.document.activeElement === w.document.getElementById("input-textarea"),
+      "附加图片后 textarea 应自动获得焦点",
+    );
+
+    // 关键回归:之前 chip 太小 + 没 toast,用户体感"无反馈"。
+    // 现在 chip 至少 28x28 + 显示文件名/大小 + toast,反馈多重可见。
+
+    // 超大图(>8MB)给 too-large 提示,告诉用户可能发不出去
+    dispatchEvent({
+      type: "input_attachments",
+      attachments: [
+        {
+          type: "image",
+          name: "huge.png",
+          data: "data:image/png;base64,xx",
+          size: 9 * 1024 * 1024, // 9MB
+        },
+      ],
+    });
+    const hugeChip = w.document.querySelector(".input-attachment");
+    assert(
+      hugeChip?.classList.contains("too-large"),
+      "超大图(>8MB)chip 应标 too-large 类",
+    );
+    assert(
+      hugeChip?.textContent.includes("可能发不出"),
+      `超大图应提示"可能发不出",实际 "${hugeChip?.textContent}"`,
+    );
 
     // ============== 总结 ==============
     console.log(`\n=== 测试结果 ===`);

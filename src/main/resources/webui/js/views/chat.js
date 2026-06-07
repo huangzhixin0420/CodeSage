@@ -393,17 +393,106 @@ class ChatView {
     setInputAttachments(attachments) {
         this._inputAttachments = attachments || [];
         this._renderInputAttachments();
+        // v2.1 反馈:用户点图片按钮 → 选完图片后,之前的反馈只有 18x18 的小缩略图,
+        // 太隐蔽,用户体感"点了没反应"。这里:
+        //   1. 自动 focus textarea,光标停在末尾,方便用户继续打字
+        //   2. toast 提示"已添加图片 N 张",明确告诉用户图片已挂上
+        // 只在**新增**时弹 toast(非空且实际拿到图片),空数组(取消/超大图丢弃)不弹。
+        const images = this._inputAttachments.filter((a) => a && a.type === "image" && a.data);
+        if (images.length > 0) {
+            this._focusInputAtEnd();
+            const name = images[0].name || "图片";
+            const more = images.length > 1 ? ` 等 ${images.length} 张` : "";
+            _toast?.info?.(`已添加 ${name}${more},可继续输入问题`);
+        }
+    }
+
+    /** 把焦点放回 textarea,光标停在末尾(供附加文件/图片后使用)。 */
+    _focusInputAtEnd() {
+        const ta = this.inputTextarea;
+        if (!ta) return;
+        ta.focus();
+        const end = ta.value.length;
+        try {
+            ta.setSelectionRange(end, end);
+        } catch (e) {
+            /* 旧浏览器可能不支持,忽略 */
+        }
+    }
+
+    // ============ 文件引用(Cursor 风格 @file) ============
+    //
+    // Kotlin 在文件选择器选完文件后推 file_references_added,我们在 textarea
+    // 光标处插入 `@relativePath `,用户继续输入问题,发送时
+    // FileReferenceResolver.resolveReferences() 会读这些文件内容并注入上下文。
+    //
+    // 设计要点:
+    //   - 在光标处插入(不是全选覆盖),不打断用户已输入的内容
+    //   - 多个文件用空格分隔,统一加一个尾随空格,用户可直接继续打字
+    //   - 插入后聚焦 textarea 并把光标放到插入文本末尾
+    //   - 触发一次 autoResize,避免输入框高度不刷新
+    //   - toast 反馈:点击反馈立刻可见,免得"没反应"
+    _onFileReferencesAdded(refs) {
+        if (!refs || refs.length === 0) return;
+        const ta = this.inputTextarea;
+        if (!ta) return;
+
+        const mentions = refs
+            .map((r) => `@${r.relativePath || r.name || r.path || ""}`)
+            .filter((s) => s.length > 1) // 跳过空名
+            .join(" ");
+        if (!mentions) return;
+        const insertion = mentions + " ";
+
+        // 在 selectionStart / selectionEnd 处插入(光标或选区都支持)
+        const start = ta.selectionStart ?? ta.value.length;
+        const end = ta.selectionEnd ?? ta.value.length;
+        const before = ta.value.slice(0, start);
+        const after = ta.value.slice(end);
+        ta.value = before + insertion + after;
+
+        // 光标放到插入文本末尾
+        const cursor = start + insertion.length;
+        ta.setSelectionRange(cursor, cursor);
+        ta.focus();
+
+        // autoResize 同步,否则高度还停在插入前
+        ta.style.height = "auto";
+        ta.style.height = Math.min(ta.scrollHeight, 240) + "px";
+
+        // 反馈:首文件 + 数量提示
+        const first = refs[0];
+        const firstLabel = first?.relativePath || first?.name || "文件";
+        const more = refs.length > 1 ? ` 等 ${refs.length} 个文件` : "";
+        _toast?.info?.(`已添加 @${firstLabel}${more},可继续输入问题`);
     }
 
     _renderInputAttachments() {
         if (!this.inputAttachmentsEl) return;
+        // v2.1:同步在 chip 上加个 input-attachment-name 包装,让 CSS 负责截断 / 省略号。
+        // > 8MB 的图片标 too-large(后端 buildAttachment 会静默丢弃大图,
+        // 这里给个视觉提示告诉用户"这张图可能发不出去")。
+        const MAX_IMAGE_DATA_URL_SIZE = 8 * 1024 * 1024;
+        // 文件体积格式化:B / KB / MB,留 1 位小数。> 8MB 在调用方另外标 too-large。
+        const fmtSize = (bytes) => {
+            if (!bytes || bytes < 0) return "";
+            if (bytes < 1024) return bytes + "B";
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + "KB";
+            return (bytes / 1024 / 1024).toFixed(1) + "MB";
+        };
         this.inputAttachmentsEl.innerHTML = this._inputAttachments
             .map((a, i) => {
                 if (a.type === "image" && a.data) {
+                    const isTooLarge = (a.size || 0) > MAX_IMAGE_DATA_URL_SIZE;
+                    const sizeLabel = isTooLarge
+                        ? ` · 超大(可能发不出)`
+                        : a.size
+                          ? ` · ${fmtSize(a.size)}`
+                          : "";
                     return `
-                        <div class="input-attachment">
+                        <div class="input-attachment${isTooLarge ? " too-large" : ""}" title="${escapeHtml(a.name || "image")}${sizeLabel}">
                             <img class="input-attachment-thumb" src="${escapeHtml(a.data)}" alt="" />
-                            <span>${escapeHtml(a.name || "image")}</span>
+                            <span class="input-attachment-name">${escapeHtml(a.name || "image")}${sizeLabel}</span>
                             <button class="input-attachment-remove" data-cs-idx="${i}" aria-label="移除">
                                 <i class="fas fa-xmark"></i>
                             </button>
@@ -413,7 +502,7 @@ class ChatView {
                 return `
                     <div class="input-attachment">
                         <i class="fas fa-file" style="color:var(--fg-tertiary);"></i>
-                        <span>${escapeHtml(a.name || "file")}</span>
+                        <span class="input-attachment-name">${escapeHtml(a.name || "file")}</span>
                         <button class="input-attachment-remove" data-cs-idx="${i}" aria-label="移除">
                             <i class="fas fa-xmark"></i>
                         </button>
@@ -549,9 +638,9 @@ class ChatView {
         this.toolCalls.clear();
         this.plans.clear();
         this._isGenerating = false;
-    }
-
         // 兼容调用方不传参(旧 loadHistory 路径):默认保留草稿,
+        // 由 main.js 的 clear_chat 路由显式调 _resetInput() 完成"新会话 = 干净画布"。
+    }
 
     /** 新会话时重置输入区:清空文字 / 附件 / 高度,关掉状态行。 */
     _resetInput() {
@@ -564,6 +653,7 @@ class ChatView {
         this._setStatus("就绪", "idle");
         this._swapSendButton(false);
     }
+
     // ============ User Message ============
 
     addUserMessage(text, attachments = [], fileRefs = []) {
