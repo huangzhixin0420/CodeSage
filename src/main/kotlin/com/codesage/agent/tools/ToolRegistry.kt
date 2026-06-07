@@ -396,10 +396,11 @@ internal fun editFileTool() = Tool(
 
 internal fun deleteFileTool() = Tool(
     name = "delete_file",
-    description = "Delete a file or directory. Use with caution.",
+    description = "Delete a file. By default, refuses to delete directories to prevent accidental recursive removal — pass recursive=true to confirm deletion of a directory and all its contents. Use with caution.",
     parameters = ToolParameters(
         properties = mapOf(
-            "path" to ToolProperty("string", "File or directory path to delete")
+            "path" to ToolProperty("string", "File path (directories require recursive=true)"),
+            "recursive" to ToolProperty("boolean", "Required true to delete a directory and all its contents")
         ),
         required = listOf("path")
     )
@@ -419,7 +420,7 @@ internal fun copyFileTool() = Tool(
 
 internal fun moveFileTool() = Tool(
     name = "move_file",
-    description = "Move/rename a file from source to destination.",
+    description = "Move/rename a file from source to destination. If source and destination are on different filesystems, automatically falls back to copy+delete and reports method=copy_and_delete. Partial failures (copy succeeded but source delete failed) are reported as errors.",
     parameters = ToolParameters(
         properties = mapOf(
             "source" to ToolProperty("string", "Source file path"),

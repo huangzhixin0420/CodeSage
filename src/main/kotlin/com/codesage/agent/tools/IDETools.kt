@@ -983,12 +983,22 @@ class IDETools(private val project: Project?) {
     fun deleteFile(args: JsonObject): ToolResult {
         val path = args["path"]?.jsonPrimitive?.content
             ?: return ToolResult.Error("Missing 'path' parameter")
+        // C4: 默认拒绝删除目录——LLM 传错一个路径就递归清盘风险太高。
+        // 必须显式 recursive=true 才放行。
+        val recursive = args["recursive"]?.jsonPrimitive?.booleanOrNull ?: false
         val resolvedPath = resolvePath(path)
 
         return try {
             val file = File(resolvedPath)
             if (!file.exists()) {
                 return ToolResult.Error("File not found: $path")
+            }
+
+            if (file.isDirectory && !recursive) {
+                return ToolResult.Error(
+                    "Refusing to delete directory: $path. " +
+                        "Pass recursive=true to confirm deletion of directory and all contents."
+                )
             }
 
             val virtualFile = LocalFileSystem.getInstance().findFileByPath(resolvedPath)
@@ -1019,7 +1029,8 @@ class IDETools(private val project: Project?) {
                 JsonObject(
                     mapOf(
                         "path" to JsonPrimitive(path),
-                        "deleted" to JsonPrimitive(true)
+                        "deleted" to JsonPrimitive(true),
+                        "recursive" to JsonPrimitive(recursive)
                     )
                 )
             )
@@ -1086,7 +1097,24 @@ class IDETools(private val project: Project?) {
 
             val dstFile = File(dstPath)
             dstFile.parentFile?.mkdirs()
-            srcFile.renameTo(dstFile)
+
+            // C3: renameTo 在跨文件系统时返回 false 而不抛异常（典型场景：
+            // /tmp → 项目目录）。原代码不检查返回值直接 success，LLM 以为
+            // 移动完成。降级到 copy + delete，并报告降级方式。
+            val renameSucceeded = srcFile.renameTo(dstFile)
+            val method: String
+            if (renameSucceeded) {
+                method = "rename"
+            } else {
+                srcFile.copyTo(dstFile, overwrite = true)
+                if (!srcFile.delete()) {
+                    return ToolResult.Error(
+                        "Cross-device move partially failed: copied to $destination " +
+                            "but failed to delete source $source. Source still exists."
+                    )
+                }
+                method = "copy_and_delete"
+            }
 
             LocalFileSystem.getInstance().refreshAndFindFileByPath(dstPath)
 
@@ -1095,7 +1123,8 @@ class IDETools(private val project: Project?) {
                     mapOf(
                         "source" to JsonPrimitive(source),
                         "destination" to JsonPrimitive(destination),
-                        "moved" to JsonPrimitive(true)
+                        "moved" to JsonPrimitive(true),
+                        "method" to JsonPrimitive(method)
                     )
                 )
             )
