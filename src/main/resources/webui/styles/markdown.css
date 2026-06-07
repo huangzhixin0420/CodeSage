@@ -2,59 +2,78 @@
  * Markdown content v2.0
  * ======================
  * 适配 assistant-content 区域内的 markdown 渲染
+ *
+ * 关键 (v2.0 改进):
+ *   - 段落默认 6px(浏览器 <p> 默认 16px 太松,长回答易散)
+ *   - 同时覆盖 .assistant-content 和 .text-stream-segment 内部的 markdown
+ *     (流式文本渲染是往 span 里塞 HTML,无法被 .assistant-content > * 命中)
+ *   - 标题/分隔/hr/blockquote 用更大的间距维持层级
  */
 
-.assistant-content > * {
+:where(.assistant-content, .assistant-content .text-stream-segment) > * {
     margin: 0;
 }
 
-.assistant-content > * + * {
-    margin-top: var(--space-3);
+/* 相邻 markdown 块之间的默认间距:v2.0 由 12px 收到 6px,长回答更紧凑好读 */
+:where(.assistant-content, .assistant-content .text-stream-segment) > * + * {
+    margin-top: 6px;
 }
 
-.assistant-content > h1,
-.assistant-content > h2,
-.assistant-content > h3,
-.assistant-content > h4 {
+:where(.assistant-content, .assistant-content .text-stream-segment) > h1,
+:where(.assistant-content, .assistant-content .text-stream-segment) > h2,
+:where(.assistant-content, .assistant-content .text-stream-segment) > h3,
+:where(.assistant-content, .assistant-content .text-stream-segment) > h4 {
     font-weight: var(--weight-semibold);
     color: var(--fg-primary);
     letter-spacing: -0.2px;
     line-height: var(--leading-snug);
 }
 
-.assistant-content > h1 { font-size: var(--text-2xl); margin-top: var(--space-6); }
-.assistant-content > h2 { font-size: var(--text-xl); margin-top: var(--space-5); }
-.assistant-content > h3 { font-size: var(--text-lg); margin-top: var(--space-4); }
-.assistant-content > h4 { font-size: var(--text-md); margin-top: var(--space-4); }
+:where(.assistant-content, .assistant-content .text-stream-segment) > h1 {
+    font-size: var(--text-2xl);
+    margin-top: 14px;
+}
+:where(.assistant-content, .assistant-content .text-stream-segment) > h2 {
+    font-size: var(--text-xl);
+    margin-top: 12px;
+}
+:where(.assistant-content, .assistant-content .text-stream-segment) > h3 {
+    font-size: var(--text-lg);
+    margin-top: 10px;
+}
+:where(.assistant-content, .assistant-content .text-stream-segment) > h4 {
+    font-size: var(--text-md);
+    margin-top: 8px;
+}
 
-.assistant-content > p {
+:where(.assistant-content, .assistant-content .text-stream-segment) > p {
     line-height: var(--leading-relaxed);
     color: var(--fg-primary);
 }
 
-.assistant-content > ul,
-.assistant-content > ol {
-    padding-left: 24px;
+:where(.assistant-content, .assistant-content .text-stream-segment) > ul,
+:where(.assistant-content, .assistant-content .text-stream-segment) > ol {
+    padding-left: 22px;
     line-height: var(--leading-relaxed);
 }
 
-.assistant-content > ul li,
-.assistant-content > ol li {
-    margin: 2px 0;
+:where(.assistant-content, .assistant-content .text-stream-segment) ul li,
+:where(.assistant-content, .assistant-content .text-stream-segment) ol li {
+    margin: 1px 0;
 }
 
-.assistant-content > ul li::marker {
+:where(.assistant-content, .assistant-content .text-stream-segment) ul li::marker {
     color: var(--fg-tertiary);
 }
 
-.assistant-content > ol li::marker {
+:where(.assistant-content, .assistant-content .text-stream-segment) ol li::marker {
     color: var(--fg-tertiary);
     font-variant-numeric: tabular-nums;
     font-weight: var(--weight-medium);
 }
 
-.assistant-content > blockquote {
-    margin: var(--space-3) 0;
+:where(.assistant-content, .assistant-content .text-stream-segment) > blockquote {
+    margin: 8px 0;
     padding: var(--space-2) var(--space-3);
     border-left: 3px solid var(--border-strong);
     background: var(--surface-sunken);
@@ -63,11 +82,11 @@
     font-style: italic;
 }
 
-.assistant-content > blockquote > p {
+:where(.assistant-content, .assistant-content .text-stream-segment) > blockquote > p {
     margin: 0;
 }
 
-.assistant-content > table {
+:where(.assistant-content, .assistant-content .text-stream-segment) > table {
     width: 100%;
     border-collapse: collapse;
     font-size: var(--text-sm);
@@ -76,30 +95,30 @@
     overflow: hidden;
 }
 
-.assistant-content > table th,
-.assistant-content > table td {
+:where(.assistant-content, .assistant-content .text-stream-segment) > table th,
+:where(.assistant-content, .assistant-content .text-stream-segment) > table td {
     padding: 6px var(--space-3);
     border: 1px solid var(--border-default);
     text-align: left;
 }
 
-.assistant-content > table th {
+:where(.assistant-content, .assistant-content .text-stream-segment) > table th {
     background: var(--surface-sunken);
     font-weight: var(--weight-semibold);
     color: var(--fg-primary);
 }
 
-.assistant-content > table tr:nth-child(even) {
+:where(.assistant-content, .assistant-content .text-stream-segment) > table tr:nth-child(even) {
     background: var(--surface-raised);
 }
 
-.assistant-content > hr {
+:where(.assistant-content, .assistant-content .text-stream-segment) > hr {
     border: none;
     border-top: 1px solid var(--border-default);
-    margin: var(--space-4) 0;
+    margin: 10px 0;
 }
 
-.assistant-content > a {
+:where(.assistant-content, .assistant-content .text-stream-segment) > a {
     color: var(--fg-link);
     text-decoration: underline;
     text-underline-offset: 2px;
@@ -108,23 +127,31 @@
     transition: all var(--duration-fast) var(--ease-out);
 }
 
-.assistant-content > a:hover {
+:where(.assistant-content, .assistant-content .text-stream-segment) > a:hover {
     text-decoration-color: var(--fg-link);
 }
 
-.assistant-content > img {
+:where(.assistant-content, .assistant-content .text-stream-segment) > img {
     max-width: 100%;
     border-radius: var(--radius-md);
     border: 1px solid var(--border-default);
 }
 
+/* === 代码块:在文本流里需要稍大间距,作为视觉断点 === */
+:where(.assistant-content, .assistant-content .text-stream-segment) > pre {
+    margin-top: 8px;
+}
+:where(.assistant-content, .assistant-content .text-stream-segment) > pre + * {
+    margin-top: 8px;
+}
+
 /* === 列表内嵌套 === */
-.assistant-content li > p {
+:where(.assistant-content, .assistant-content .text-stream-segment) li > p {
     margin: 0;
 }
 
 /* === kbd === */
-.assistant-content kbd {
+:where(.assistant-content, .assistant-content .text-stream-segment) kbd {
     display: inline-flex;
     align-items: center;
     padding: 1px 5px;

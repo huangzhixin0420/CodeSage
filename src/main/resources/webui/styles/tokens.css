@@ -188,14 +188,18 @@
 }
 
 [data-theme="dark"] {
-    /* === Dark Surface === */
-    --surface-base: #0b0d0e;        /* 近黑,与 IDE 暗色融合 */
-    --surface-raised: #15171a;      /* 卡片 */
-    --surface-elevated: #1c1f23;    /* 浮层 */
-    --surface-sunken: #0a0b0c;      /* 输入框/code */
+    /* === Dark Surface (高级黑灰) ===
+       旧版偏纯黑 (#0b0d0e),贴 IDE 暗色但无层次。
+       v2.1 调为"高级黑灰偏灰":base 拉亮到 #1a1c1f,整体中性偏冷,
+       三层 surface 阶梯清晰 (base 19 → raised 35 → elevated 43),
+       避免和 IDE 背景"完全沉入",也避免纯黑带来的廉价感。 */
+    --surface-base: #1a1c1f;        /* 主背景:深灰,中性偏冷,有质感 */
+    --surface-raised: #232629;      /* 卡片:比 base 亮 6% */
+    --surface-elevated: #2b2e32;    /* 浮层:再亮 5%,有空气感 */
+    --surface-sunken: #15171a;      /* 输入框/code:下沉,比 base 暗 */
     --surface-hover: rgba(255, 255, 255, 0.05);
     --surface-active: rgba(255, 255, 255, 0.08);
-    --surface-overlay: rgba(0, 0, 0, 0.7);
+    --surface-overlay: rgba(8, 10, 13, 0.7);
 
     /* === Dark Foreground === */
     --fg-primary: #f1f5f9;
@@ -206,9 +210,9 @@
     --fg-link: #2dd4bf;
 
     /* === Dark Border === */
-    --border-subtle: #1e2024;
-    --border-default: #2a2d31;
-    --border-strong: #3a3d42;
+    --border-subtle: #28292c;
+    --border-default: #35373b;
+    --border-strong: #45484d;
 
     /* === Accent (暗色模式:提亮一档) === */
     --accent: #34d399;
@@ -252,7 +256,7 @@
     --diff-remove-line: rgba(239, 68, 68, 0.2);
 
     /* === Dark User Bubble === */
-    --user-bubble-bg: #1c1f23;
+    --user-bubble-bg: #2b2e32;
     --user-bubble-fg: #f1f5f9;
 
     --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.3);
