@@ -260,7 +260,7 @@ internal fun searchCodeTool() = Tool(
 
 internal fun runCommandTool() = Tool(
     name = "run_command",
-    description = "在指定工作目录下执行系统命令（如 shell 命令）。返回 stdout、stderr 和退出码。",
+    description = "在指定工作目录下执行系统命令（如 shell 命令）。返回 stdout、stderr 和退出码。单流输出超过 max_output_chars（默认 1M 字符）会被截断并标 stdout_truncated/stderr_truncated；流读取异常会标 stdout_read_error/stderr_read_error，与非零 exit_code 区分开。",
     parameters = ToolParameters(
         properties = mapOf(
             "command" to ToolProperty(

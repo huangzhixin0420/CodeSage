@@ -53,6 +53,10 @@ class IDETools(private val project: Project?) {
         const val LARGE_FILE_THRESHOLD = 100_000 // 100KB 视为大文件
         const val CHUNK_LINES = 1000
         const val MAX_CONTENT_LENGTH = 10_000
+        // M2: 单条命令单流输出上限（字符数）。超过则截断并标 truncated。
+        // 设大点是为了应对 `cat README` / `git log` 之类的常见场景；
+        // 真的超大（`find /`）让 LLM 用 `| head` 自行控制。
+        const val MAX_COMMAND_OUTPUT_CHARS = 1_000_000
     }
 
     internal fun resolvePath(path: String): String {
@@ -190,6 +194,35 @@ class IDETools(private val project: Project?) {
         var end = maxChars
         if (content[end - 1].isHighSurrogate()) end--
         return content.substring(0, end) to true
+    }
+
+    private data class BoundedRead(val content: String, val truncated: Boolean)
+
+    /**
+     * 有界读取 Reader（M2）。
+     *
+     * 读到 maxChars 字符就停；剩余流被排干（避免进程因 pipe 满而阻塞）。
+     * 输出再过 safeTruncate 保证不在 surrogate pair 中间断开。
+     */
+    private fun readBounded(reader: java.io.Reader, maxChars: Int): BoundedRead {
+        val sb = StringBuilder(maxChars + 1024)
+        val buf = CharArray(8192)
+        var hitCap = false
+        while (true) {
+            val n = reader.read(buf)
+            if (n == -1) break
+            sb.append(buf, 0, n)
+            if (sb.length > maxChars) {
+                hitCap = true
+                break
+            }
+        }
+        // 排干剩余输出让进程 pipe 不阻塞
+        if (hitCap) {
+            while (reader.read(buf) != -1) { /* drain */ }
+        }
+        val (final, wasSurrogate) = safeTruncate(sb.toString(), maxChars)
+        return BoundedRead(final, wasSurrogate || hitCap)
     }
 
     /**
@@ -499,15 +532,20 @@ class IDETools(private val project: Project?) {
 
             val process = processBuilder.start()
 
-            // 异步读取 stdout/stderr，避免阻塞导致超时失效
-            val stdoutFuture = java.util.concurrent.CompletableFuture<String>()
-            val stderrFuture = java.util.concurrent.CompletableFuture<String>()
+            // M2: 用有界读取替代 readText()，单流最多 MAX_COMMAND_OUTPUT_CHARS
+            // 字符。L4: 读失败时用 null 区分（而不是让 get() 抛 ExecutionException
+            // 被外层 catch 吞成"命令失败"）。
+            val stdoutFuture = java.util.concurrent.CompletableFuture<BoundedRead?>()
+            val stderrFuture = java.util.concurrent.CompletableFuture<BoundedRead?>()
 
             val stdoutThread = Thread {
                 try {
-                    stdoutFuture.complete(process.inputStream.bufferedReader().readText())
+                    stdoutFuture.complete(
+                        readBounded(process.inputStream.bufferedReader(), MAX_COMMAND_OUTPUT_CHARS)
+                    )
                 } catch (e: Exception) {
-                    stdoutFuture.completeExceptionally(e)
+                    logger.warn("Failed to read command stdout: ${e.message}")
+                    stdoutFuture.complete(null)
                 }
             }
             stdoutThread.isDaemon = true
@@ -515,9 +553,12 @@ class IDETools(private val project: Project?) {
 
             val stderrThread = Thread {
                 try {
-                    stderrFuture.complete(process.errorStream.bufferedReader().readText())
+                    stderrFuture.complete(
+                        readBounded(process.errorStream.bufferedReader(), MAX_COMMAND_OUTPUT_CHARS)
+                    )
                 } catch (e: Exception) {
-                    stderrFuture.completeExceptionally(e)
+                    logger.warn("Failed to read command stderr: ${e.message}")
+                    stderrFuture.complete(null)
                 }
             }
             stderrThread.isDaemon = true
@@ -533,15 +574,27 @@ class IDETools(private val project: Project?) {
             }
 
             val exitCode = process.exitValue()
-            val stdout = stdoutFuture.get()
-            val stderr = stderrFuture.get()
+            // L4: 区分命令完成 vs 流读取失败。null 表示读取异常，content 字段填
+            // 错误占位串，避免 LLM 看到空字符串误以为进程没产生输出。
+            val stdoutRead = stdoutFuture.get()
+            val stderrRead = stderrFuture.get()
+            val stdoutReadError = if (stdoutRead == null) "<stdout read failed>" else null
+            val stderrReadError = if (stderrRead == null) "<stderr read failed>" else null
+
             ToolResult.Success(
                 JsonObject(
-                    mapOf(
-                        "stdout" to JsonPrimitive(stdout),
-                        "stderr" to JsonPrimitive(stderr),
-                        "exit_code" to JsonPrimitive(exitCode)
-                    )
+                    buildMap {
+                        put("stdout", JsonPrimitive(stdoutRead?.content ?: stdoutReadError ?: ""))
+                        put("stderr", JsonPrimitive(stderrRead?.content ?: stderrReadError ?: ""))
+                        put("exit_code", JsonPrimitive(exitCode))
+                        // M2: 透出截断标记 + 上限
+                        if (stdoutRead?.truncated == true) put("stdout_truncated", JsonPrimitive(true))
+                        if (stderrRead?.truncated == true) put("stderr_truncated", JsonPrimitive(true))
+                        put("max_output_chars", JsonPrimitive(MAX_COMMAND_OUTPUT_CHARS))
+                        // L4: 读异常明确告知
+                        if (stdoutReadError != null) put("stdout_read_error", JsonPrimitive(stdoutReadError))
+                        if (stderrReadError != null) put("stderr_read_error", JsonPrimitive(stderrReadError))
+                    }
                 )
             )
         } catch (e: Exception) {
