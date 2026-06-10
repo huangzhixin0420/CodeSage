@@ -255,16 +255,42 @@ object DagUtils {
             return DagValidationResult(false, "Circular dependency detected: ${cycle.joinToString(" -> ")}")
         }
 
-        return DagValidationResult(true)
+        // ───── 非阻塞性警告收集 ─────
+        val warnings = mutableListOf<String>()
+
+        // (a) 孤立步骤：没有依赖且不被任何步骤依赖
+        val referenced = steps.flatMap { it.dependencies + it.parallelWith }.toSet()
+        steps.filter { it.id !in referenced && it.dependencies.isEmpty() }
+            .forEach { warnings += "Step '${it.id}' is isolated (no dependencies, not referenced by any other step)" }
+
+        // (b) 并行组大小提示：>4 个步骤并行可能引起调度抖动
+        steps.filter { it.parallelWith.isNotEmpty() }
+            .groupBy { it.parallelWith.toSet() }
+            .filter { it.value.size + 1 > 4 }
+            .forEach { (group, members) ->
+                warnings += "Parallel group ${group + members.map { it.id }} has ${group.size + members.size} steps; consider splitting"
+            }
+
+        // (c) 估计耗时过长：> 30s 的步骤建议拆解
+        steps.filter { it.estimatedDurationMs > 30_000 }
+            .forEach { warnings += "Step '${it.id}' has long estimated duration (${it.estimatedDurationMs}ms); consider splitting" }
+
+        return DagValidationResult(isValid = true, warnings = warnings)
     }
 }
 
 /**
  * DAG 验证结果
+ *
+ * @property isValid 整体是否通过验证
+ * @property errorMessage 当 isValid=false 时的人类可读错误描述
+ * @property warnings 非阻塞的告警列表（例如孤立的并行组、超时估计过长等），
+ *                   缺省为空列表以保持向后兼容
  */
 data class DagValidationResult(
     val isValid: Boolean,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val warnings: List<String> = emptyList()
 )
 
 /**

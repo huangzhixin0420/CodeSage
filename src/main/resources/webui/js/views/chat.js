@@ -1161,23 +1161,73 @@ class ChatView {
   _onToolConfirmationNeeded(turnId, data) {
     const turn = this.turns.get(turnId);
     if (!turn) return;
+
+    // 后端可能用旧 type 推 (tool_confirmation_needed) 也可能用新 type (tool_confirmation_request)。
+    // 字段命名保持一致(requestId/toolName/operation/reason/riskLevel)。
+    const requestId = data.requestId || data.toolCallId || data.toolId;
+    if (!requestId) {
+      console.warn("[chat] tool confirmation missing requestId", data);
+      return;
+    }
     const reason = data.reason || "需要确认";
     const toolName = data.toolName || data.toolId;
-    const note = document.createElement("div");
-    note.className = "inline-alert warning";
-    note.setAttribute("role", "alert");
-    note.innerHTML = `
+    const operation = data.operation || toolName;
+    const riskLevel = data.riskLevel || "CAUTION";
+
+    // 同一 requestId 重复推送时,不要堆叠多个弹窗 — 直接禁用旧按钮组
+    const existing = turn.content.querySelector(
+      `[data-cs-confirm-id="${requestId}"]`,
+    );
+    if (existing) {
+      existing.querySelectorAll("button").forEach((b) => (b.disabled = true));
+      return;
+    }
+
+    const card = document.createElement("div");
+    card.className = "inline-alert warning";
+    card.setAttribute("role", "alert");
+    card.setAttribute("data-cs-confirm-id", requestId);
+    card.innerHTML = `
             <div class="inline-alert-icon"><i class="fas fa-exclamation-triangle"></i></div>
             <div class="inline-alert-body">
                 <div class="inline-alert-title">需要确认:${escapeHtml(toolName)}</div>
                 <div class="inline-alert-message">${escapeHtml(reason)}</div>
+                <div class="inline-alert-meta">操作: ${escapeHtml(operation)} · 风险: ${escapeHtml(riskLevel)}</div>
+                <div class="inline-alert-actions">
+                    <button type="button" class="cs-btn cs-btn-ghost" data-cs-perm="DENY">拒绝</button>
+                    <button type="button" class="cs-btn cs-btn-ghost" data-cs-perm="ALLOW_ONCE">仅本次允许</button>
+                    <button type="button" class="cs-btn cs-btn-primary" data-cs-perm="ALLOW_SESSION">本次会话允许</button>
+                </div>
             </div>
         `;
+
+    const respond = (permission) => {
+      if (typeof window.sendMessageToJava !== "function") {
+        console.warn("[chat] bridge not ready, cannot respond");
+        return;
+      }
+      window.sendMessageToJava(
+        JSON.stringify({
+          type: "tool_confirmation_response",
+          requestId,
+          permission,
+        }),
+      );
+      // 视觉反馈: 标记已决, 禁用按钮
+      card.classList.add("resolved");
+      card.setAttribute("data-cs-resolved", permission);
+      card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    };
+
+    card.querySelectorAll("button[data-cs-perm]").forEach((btn) => {
+      btn.addEventListener("click", () => respond(btn.dataset.csPerm));
+    });
+
     const cursor = turn.content.querySelector('[data-cs-role="cursor"]');
     if (cursor) {
-      turn.content.insertBefore(note, cursor);
+      turn.content.insertBefore(card, cursor);
     } else {
-      turn.content.appendChild(note);
+      turn.content.appendChild(card);
     }
   }
 

@@ -266,36 +266,71 @@ class IDETools(
         val file = File(resolvedPath)
 
         return try {
-            if (!file.exists()) {
-                file.parentFile?.mkdirs()
-                file.createNewFile()
-            }
+            // 必须在 write action(含 EDT 上的 WriteIntentReadAction)中:
+            //   - 创建新文件 → refreshAndFindFileByPath 会触发 VFS RefreshQueue
+            //   - 读已有内容 → 需要 VFS 一致快照
+            // writeVirtualFile 内部已包 WriteCommandAction,但外层这些 VFS/IO
+            // 不在其范围内,EDT 调用会撞 ThreadingAssertions (T9.1 修复)。
+            runWriteIntent {
+                if (!file.exists()) {
+                    file.parentFile?.mkdirs()
+                    file.createNewFile()
+                }
 
-            val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByPath(resolvedPath)
-                ?: return ToolResult.Error("Failed to locate created file: $path")
+                val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByPath(resolvedPath)
+                    ?: return@runWriteIntent ToolResult.Error("Failed to locate created file: $path")
 
-            if (append) {
-                val existing = ApplicationManager.getApplication().runReadAction(Computable {
-                    String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
-                })
-                val newContent = existing + content
-                writeVirtualFile(virtualFile, newContent)
-            } else {
-                writeVirtualFile(virtualFile, content)
-            }
+                if (append) {
+                    val existing = String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
+                    writeVirtualFile(virtualFile, existing + content)
+                } else {
+                    writeVirtualFile(virtualFile, content)
+                }
 
-            ToolResult.Success(
-                JsonObject(
-                    mapOf(
-                        "path" to JsonPrimitive(path),
-                        "bytes_written" to JsonPrimitive(content.toByteArray(StandardCharsets.UTF_8).size)
+                ToolResult.Success(
+                    JsonObject(
+                        mapOf(
+                            "path" to JsonPrimitive(path),
+                            "bytes_written" to JsonPrimitive(content.toByteArray(StandardCharsets.UTF_8).size)
+                        )
                     )
                 )
-            )
+            }
         } catch (e: Exception) {
             logger.error("Failed to write file: $path", e)
             ToolResult.Error("Failed to write file: ${e.message}")
         }
+    }
+
+    /**
+     * 在 write action 中执行 body。统一处理:
+     *   - EDT: WriteIntentReadAction.run (走 VFS 写入/刷新/读 snapshot 时需要)
+     *   - 后台线程: invokeAndWait + WriteIntentReadAction.run (后台协程回 EDT 等结果)
+     *
+     * 适用于所有同时涉及 VFS 写、文件创建和读 snapshot 的工具路径。
+     * (T9.1 修复:writeFile 在 EDT 上调用 refreshAndFindFileByPath 触发断言)
+     */
+    private fun <T> runWriteIntent(body: () -> T): T {
+        val app = ApplicationManager.getApplication()
+        val task = Computable<T> { body() }
+        if (app.isDispatchThread) {
+            // EDT: 平台要求 VFS 写/读 snapshot 在 WriteIntentReadAction 内。
+            return WriteIntentReadAction.compute(task)
+        }
+        // 后台协程: 切回 EDT + ModalityState.defaultModalityState,等任务完成。
+        // WriteCommandAction 不允许跨 EDT 线程启动,invokeAndWait 是统一做法。
+        var result: T? = null
+        var error: Throwable? = null
+        app.invokeAndWait({
+            try {
+                result = WriteIntentReadAction.compute(task)
+            } catch (t: Throwable) {
+                error = t
+            }
+        }, ModalityState.defaultModalityState())
+        error?.let { throw it }
+        @Suppress("UNCHECKED_CAST")
+        return result as T
     }
 
     private fun writeVirtualFile(virtualFile: VirtualFile, content: String) {

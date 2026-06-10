@@ -358,7 +358,7 @@ object MarkdownRenderer {
 
     fun blockToHtml(block: Block): String {
         return when (block) {
-            is Block.Paragraph -> "<p>${segmentsToHtml(block.segments)}</p>"
+            is Block.Paragraph -> "<p style=\"margin:${ChatTheme.MARKDOWN_PARAGRAPH_GAP} 0;line-height:1.55;\">${segmentsToHtml(block.segments)}</p>"
             is Block.Heading -> renderHeadingHtml(block)
             is Block.CodeBlock -> "" // 由 CodeBlockComponent 单独渲染
             is Block.Table -> renderTableHtml(block)
@@ -380,8 +380,8 @@ object MarkdownRenderer {
             5 -> "13px"
             else -> "13px"
         }
-        val marginTop = if (heading.level <= 2) "14px" else "10px"
-        val marginBottom = if (heading.level <= 2) "8px" else "4px"
+        val marginTop = if (heading.level <= 2) ChatTheme.MARKDOWN_HEADING_H1_H2_MARGIN_TOP else ChatTheme.MARKDOWN_HEADING_H3_PLUS_MARGIN_TOP
+        val marginBottom = if (heading.level <= 2) ChatTheme.MARKDOWN_HEADING_H1_H2_MARGIN_BOTTOM else ChatTheme.MARKDOWN_HEADING_H3_PLUS_MARGIN_BOTTOM
         return "<$tag style='font-size:$fontSize;font-weight:600;margin:$marginTop 0 $marginBottom 0;'>${
             segmentsToHtml(
                 heading.segments
@@ -393,45 +393,45 @@ object MarkdownRenderer {
         val headerBg = if (JBColor.isBright()) "#F0F0F0" else "#2A2A2A"
         val borderColor = if (JBColor.isBright()) "#D8D8D8" else "#3D3D3D"
         val headerHtml = table.headers.joinToString("") { th ->
-            "<th bgcolor='$headerBg' style='border:1px solid $borderColor;padding:6px 10px;'>${escapeHtml(th)}</th>"
+            "<th bgcolor='$headerBg' style='border:1px solid $borderColor;padding:${ChatTheme.MARKDOWN_TABLE_CELL_PADDING};'>${escapeHtml(th)}</th>"
         }
         val rowsHtml = table.rows.joinToString("") { row ->
             val cells = row.joinToString("") { cell ->
-                "<td style='border:1px solid $borderColor;padding:6px 10px;'>${escapeHtml(cell)}</td>"
+                "<td style='border:1px solid $borderColor;padding:${ChatTheme.MARKDOWN_TABLE_CELL_PADDING};'>${escapeHtml(cell)}</td>"
             }
             "<tr>$cells</tr>"
         }
-        return "<table cellpadding='0' cellspacing='0' style='border-collapse:collapse;margin:8px 0;font-size:13px;'>" +
+        return "<table cellpadding='0' cellspacing='0' style='border-collapse:collapse;margin:${ChatTheme.MARKDOWN_TABLE_GAP} 0;font-size:13px;'>" +
                 "<thead><tr>$headerHtml</tr></thead>" +
                 "<tbody>$rowsHtml</tbody></table>"
     }
 
     private fun renderQuoteHtml(quote: Block.Quote): String {
         val content = quote.lines.joinToString("<br/>") { escapeHtml(it) }
-        return "<blockquote style='margin:8px 0;padding:8px 12px;border-left:3px solid ${if (JBColor.isBright()) "#CCCCCC" else "#555555"};color:${if (JBColor.isBright()) "#666666" else "#AAAAAA"};'>$content</blockquote>"
+        return "<blockquote style='margin:${ChatTheme.MARKDOWN_QUOTE_GAP} 0;padding:${ChatTheme.MARKDOWN_QUOTE_PADDING};border-left:3px solid ${if (JBColor.isBright()) "#CCCCCC" else "#555555"};color:${if (JBColor.isBright()) "#666666" else "#AAAAAA"};'>$content</blockquote>"
     }
 
     private fun renderTaskListHtml(taskList: Block.TaskList): String {
         val items = taskList.items.joinToString("") { item ->
             val checkbox = if (item.checked) "☑" else "☐"
             val style = if (item.checked) "color:#999999;text-decoration:line-through;" else ""
-            "<li style='margin:3px 0;'>$checkbox ${escapeHtml(item.text)}</li>"
+            "<li style='margin:${ChatTheme.MARKDOWN_LIST_ITEM_GAP} 0;'>$checkbox ${escapeHtml(item.text)}</li>"
         }
-        return "<ul style='margin:6px 0;padding-left:0;list-style:none;'>$items</ul>"
+        return "<ul style='margin:${ChatTheme.MARKDOWN_LIST_GAP} 0;padding-left:0;list-style:none;'>$items</ul>"
     }
 
     private fun renderUnorderedListHtml(list: Block.UnorderedList): String {
         val items = list.items.joinToString("") { item ->
-            "<li style='margin:3px 0;'>${escapeHtml(item)}</li>"
+            "<li style='margin:${ChatTheme.MARKDOWN_LIST_ITEM_GAP} 0;'>${escapeHtml(item)}</li>"
         }
-        return "<ul style='margin:6px 0;padding-left:20px;'>$items</ul>"
+        return "<ul style='margin:${ChatTheme.MARKDOWN_LIST_GAP} 0;padding-left:20px;'>$items</ul>"
     }
 
     private fun renderOrderedListHtml(list: Block.OrderedList): String {
         val items = list.items.joinToString("") { item ->
-            "<li style='margin:3px 0;'>${escapeHtml(item)}</li>"
+            "<li style='margin:${ChatTheme.MARKDOWN_LIST_ITEM_GAP} 0;'>${escapeHtml(item)}</li>"
         }
-        return "<ol style='margin:6px 0;padding-left:20px;'>$items</ol>"
+        return "<ol style='margin:${ChatTheme.MARKDOWN_LIST_GAP} 0;padding-left:20px;'>$items</ol>"
     }
 
     fun segmentsToHtml(segments: List<Segment>): String {

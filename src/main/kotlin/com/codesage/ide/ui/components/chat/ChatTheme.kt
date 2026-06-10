@@ -50,4 +50,21 @@ object ChatTheme {
     val thinkingBorder = JBColor(Color(0xE0_E0_E0), Color(0x3D_3D_3D))
     val thinkingText = JBColor(Color(0x66_66_66), Color(0xAA_AA_AA))
     val thinkingSuccess = JBColor(Color(0x2E_7D_32), Color(0x66_BB_6A))
+
+    // ===== Markdown 块级间距 =====
+    // 渲染层 (MarkdownRenderer 输出的内联 HTML) 不依赖外部 CSS,
+    // 把节奏常量集中在这里,跟 WebUI 的 .assistant-content > * + * 保持一致感。
+    // 段落默认 6px(浏览器 <p> UA 16px 太松,长回答易散)。
+    const val MARKDOWN_PARAGRAPH_GAP = "6px"
+    const val MARKDOWN_LIST_GAP = "4px"
+    const val MARKDOWN_LIST_ITEM_GAP = "2px"
+    const val MARKDOWN_QUOTE_GAP = "6px"
+    const val MARKDOWN_QUOTE_PADDING = "8px 12px"
+    const val MARKDOWN_TABLE_GAP = "6px"
+    const val MARKDOWN_TABLE_CELL_PADDING = "6px 10px"
+    // 标题: H1/H2 顶部空间大些做层级,H3+ 紧凑
+    const val MARKDOWN_HEADING_H1_H2_MARGIN_TOP = "10px"
+    const val MARKDOWN_HEADING_H1_H2_MARGIN_BOTTOM = "6px"
+    const val MARKDOWN_HEADING_H3_PLUS_MARGIN_TOP = "8px"
+    const val MARKDOWN_HEADING_H3_PLUS_MARGIN_BOTTOM = "4px"
 }

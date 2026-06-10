@@ -30,7 +30,7 @@ class ToolGuardrails(
         "read_file", "read_multiple_files", "list_directory",
         "file_exists", "get_file_info", "get_project_structure",
         // 搜索 / 分析
-        "search_code", "grep_code", "find_files", "find_files_recursive",
+        "search_code", "grep_code", "find_file",
         "symbol_search", "semantic_search",
         // Git（只读）
         "git_status", "git_diff", "git_log", "git_branch", "git_show",

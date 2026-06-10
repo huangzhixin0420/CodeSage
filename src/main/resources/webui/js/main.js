@@ -119,6 +119,7 @@ function handleBridgeMessage(msg) {
         chat._onToolCallComplete(turnId, msg.toolId, msg.success, msg.result);
         break;
       case "tool_confirmation_needed":
+      case "tool_confirmation_request":
         chat._onToolConfirmationNeeded(turnId, msg);
         break;
       case "tool_call_error":

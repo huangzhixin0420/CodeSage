@@ -239,6 +239,9 @@
 .text-stream-segment {
     white-space: pre-wrap;
     word-break: break-word;
+    display: inline-block;
+    vertical-align: top;
+    width: 100%;
 }
 
 .text-stream-segment + .text-stream-segment {
@@ -251,6 +254,11 @@
 }
 
 /* ===================== Thinking Card ===================== */
+
+.assistant-content > .thinking-card,
+.assistant-content > .model-reasoning {
+    margin: 4px 0;
+}
 
 .thinking-card {
     background: var(--surface-raised);
@@ -307,8 +315,12 @@
     animation: pulse 1.4s ease-in-out infinite;
 }
 
-.thinking-card.running .thinking-dot:nth-child(2) { animation-delay: 0.2s; }
-.thinking-card.running .thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+.thinking-card.running .thinking-dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+.thinking-card.running .thinking-dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
 
 .thinking-card.completed .thinking-icon {
     color: var(--success);
@@ -388,6 +400,10 @@
 
 /* ===================== Tool Call Card ===================== */
 
+.assistant-content > .tool-card {
+    margin: 4px 0;
+}
+
 .tool-card {
     background: var(--surface-raised);
     border: 1px solid var(--border-default);
@@ -444,12 +460,24 @@
     transition: background var(--duration-base) var(--ease-out);
 }
 
-.tool-status-icon.queued { background: var(--fg-muted); }
-.tool-status-icon.running { background: var(--warning); }
-.tool-status-icon.completed { background: var(--success); }
-.tool-status-icon.failed { background: var(--error); }
-.tool-status-icon.stopped { background: var(--fg-tertiary); }
-.tool-status-icon.confirm { background: var(--warning); }
+.tool-status-icon.queued {
+    background: var(--fg-muted);
+}
+.tool-status-icon.running {
+    background: var(--warning);
+}
+.tool-status-icon.completed {
+    background: var(--success);
+}
+.tool-status-icon.failed {
+    background: var(--error);
+}
+.tool-status-icon.stopped {
+    background: var(--fg-tertiary);
+}
+.tool-status-icon.confirm {
+    background: var(--warning);
+}
 
 .tool-name {
     font-size: var(--text-sm);
@@ -567,10 +595,19 @@
     min-width: 0;
 }
 
-.tool-arg-value.string { color: var(--success-fg); }
-.tool-arg-value.number { color: var(--info-fg); }
-.tool-arg-value.boolean { color: var(--warning-fg); }
-.tool-arg-value.null { color: var(--fg-tertiary); font-style: italic; }
+.tool-arg-value.string {
+    color: var(--success-fg);
+}
+.tool-arg-value.number {
+    color: var(--info-fg);
+}
+.tool-arg-value.boolean {
+    color: var(--warning-fg);
+}
+.tool-arg-value.null {
+    color: var(--fg-tertiary);
+    font-style: italic;
+}
 
 .tool-arg-value pre {
     margin: 0;
@@ -1051,7 +1088,9 @@
 }
 
 @keyframes blink {
-    50% { opacity: 0; }
+    50% {
+        opacity: 0;
+    }
 }
 
 .stream-cursor.hidden {
@@ -1289,6 +1328,39 @@
 .inline-alert-message {
     color: inherit;
     opacity: 0.95;
+}
+
+.inline-alert-meta {
+    margin-top: 2px;
+    font-size: var(--text-xs);
+    opacity: 0.8;
+}
+
+.inline-alert-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.inline-alert-actions .cs-btn {
+    /* 与设计系统其余 cs-btn 保持一致 (input.css 已有),
+       在 .inline-alert 容器内允许颜色随主题色翻转 */
+    padding: 4px 10px;
+    font-size: var(--text-xs);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+}
+
+.inline-alert-actions .cs-btn:disabled {
+    cursor: default;
+    opacity: 0.55;
+}
+
+.inline-alert.resolved {
+    opacity: 0.7;
 }
 
 /* ===================== Context Compression Note ===================== */

@@ -4,6 +4,9 @@ import com.codesage.agent.core.AgentStreamEvent
 import com.codesage.agent.core.ChatMode
 import com.codesage.shared.serialization.SafeJsonEncoder
 import com.codesage.shared.utils.Logger
+import com.codesage.plugin.CodeSageProjectService
+import com.codesage.tools.guardrails.SensitiveActionPolicy
+import com.codesage.tools.guardrails.ToolGuardrails
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.ui.jcef.JBCefApp
@@ -156,6 +159,14 @@ class JCEFChatPanel(
                 addHandler { message ->
                     handleJSMessage(message)
                     JBCefJSQuery.Response("ok")
+                }
+            }
+
+            // 2026-06: 把 ChatConfirmationCallback 的 pushToFrontend 接到本浏览器。
+            // project 为 null(无 project context)时不绑定, callback 会降级为 DENY。
+            project?.let { proj ->
+                CodeSageProjectService.getInstance(proj).bindConfirmationBridge { requestId, toolName, operation, reason, riskLevel ->
+                    pushToolConfirmationRequest(requestId, toolName, operation, reason, riskLevel)
                 }
             }
 
@@ -520,6 +531,23 @@ class JCEFChatPanel(
                     val artifactId = json.jsonObject["artifactId"]?.jsonPrimitive?.content ?: ""
                     val content = json.jsonObject["content"]?.jsonPrimitive?.content ?: ""
                     applyArtifactToEditor(artifactId, content)
+                }
+
+                "tool_confirmation_response" -> {
+                    val requestId = json.jsonObject["requestId"]?.jsonPrimitive?.content ?: return
+                    val perm = json.jsonObject["permission"]?.jsonPrimitive?.content ?: "DENY"
+                    val resolved = when (perm) {
+                        "ALLOW_ONCE" -> ToolGuardrails.Permission.ALLOW_ONCE
+                        "ALLOW_SESSION" -> ToolGuardrails.Permission.ALLOW_SESSION
+                        "ALLOW_PERMANENTLY" -> ToolGuardrails.Permission.ALLOW_PERMANENTLY
+                        else -> ToolGuardrails.Permission.DENY
+                    }
+                    val svc = project?.let { CodeSageProjectService.getInstance(it) }
+                    if (svc == null) {
+                        logger.warn("[Bridge] tool_confirmation_response without project, dropping")
+                    } else {
+                        svc.resolveConfirmation(requestId, resolved)
+                    }
                 }
 
                 "create_file_from_artifact" -> {
@@ -903,6 +931,30 @@ class JCEFChatPanel(
      * 发送消息到前端
      * 用 EventRouter.toJsonString 把 Map 序列化为 JSON 字符串
      */
+    /**
+     * 推送 tool confirmation 请求给前端。
+     * 由 ChatConfirmationCallback 注入, 这里只是 sendToJS 的薄包装,
+     * 避免 callback 直接持有 browser 引用。
+     */
+    fun pushToolConfirmationRequest(
+        requestId: String,
+        toolName: String,
+        operation: String,
+        reason: String,
+        riskLevel: String
+    ) {
+        sendToJS(
+            mapOf(
+                "type" to "tool_confirmation_request",
+                "requestId" to requestId,
+                "toolName" to toolName,
+                "operation" to operation,
+                "reason" to reason,
+                "riskLevel" to riskLevel
+            )
+        )
+    }
+
     fun sendToJS(message: Map<String, Any?>) {
         try {
             // C7 修复：不再用字符串拼接嵌入 JSON，改用 SafeJsonEncoder 做 JS 安全的字符串字面量。
