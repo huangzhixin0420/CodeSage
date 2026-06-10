@@ -1,14 +1,20 @@
 /**
- * cs-thinking v2.0 — 思考卡片
+ * cs-thinking v2.6 — 思考卡片
  * ============================
  *
- * 设计核心 (对比 v1 修复):
- *   - 默认折叠为单行 chip:"已思考 3.4s · 1247 tokens"
- *   - 推理中(running)默认展开,带 3 点呼吸 + 实时计时
+ * 设计核心 (v2.6 修订):
+ *   - **整个生命周期折叠为单行 chip**:"思考中 · X.Xs" / "已思考 X.Xs · N tokens"
+ *   - 推理中(running):3 个呼吸点 + 实时计时,但 body 折叠
  *   - 完成后立刻折叠 (0ms,无 1.5s 延迟)
  *   - 折叠态:左边一条 accent 边作为视觉提示
- *   - 展开后:浅色背景 + monospace 文本,可滚动
+ *   - 点击 chip 展开看完整思考内容,再点击折叠
  *   - 隐藏:有 showThinking 全局开关
+ *
+ * 变更原因 (v2.5 → v2.6):
+ *   用户反馈 thinking 在 running 阶段也展开正文,长 thinking
+ *   (几百~几千字) 撑满主聊天面板,把后续回答挤到屏幕外。改:
+ *   running 阶段也折叠成 chip,跟完成态保持一致的视觉密度,
+ *   与 Cursor / Continue / Cody 等 IDE AI 助手风格统一。
  */
 
 import { escapeHtml } from "../utils.js";
@@ -20,7 +26,7 @@ export class Thinking {
     /**
      * @param {object} opts
      * @param {string} [opts.id]
-     * @param {boolean} [opts.collapsed] - 初始折叠 (默认 false,展开)
+     * @param {boolean} [opts.collapsed] - 已忽略 (v2.6+ 始终折叠,通过 toggle 展开)
      */
     constructor(opts = {}) {
         this.id =
@@ -53,8 +59,9 @@ export class Thinking {
             this.tokenCount > 0
                 ? `<span class="thinking-meta">${this.tokenCount} tokens</span>`
                 : "";
-        const openClass = this.state === "running" ? " open" : "";
-        const chevronClass = this.state === "running" ? " open" : "";
+        // v2.6: running 也折叠 — body 始终不带 .open,只通过点 chip 展开
+        const openClass = "";
+        const chevronClass = "";
 
         this.el.classList.toggle("running", isRunning);
         this.el.classList.toggle("completed", !isRunning);
