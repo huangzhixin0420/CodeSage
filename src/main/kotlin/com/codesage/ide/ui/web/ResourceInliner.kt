@@ -120,10 +120,10 @@ object ResourceInliner {
             "text/javascript"
         ),
 
-        // Marked.js
+        // Markdown-it
         ResourceMapping(
-            "https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js",
-            "webui/lib/marked.min.js",
+            "https://cdnjs.cloudflare.com/ajax/libs/markdown-it/14.1.0/markdown-it.min.js",
+            "webui/lib/markdown-it.min.js",
             "text/javascript"
         ),
 

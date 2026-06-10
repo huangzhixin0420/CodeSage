@@ -7,7 +7,7 @@ All libraries are downloaded from [cdnjs](https://cdnjs.com/).
 |---------|---------|---------|-------------|
 | TailwindCSS (generated) | 3.x | MIT | https://github.com/tailwindlabs/tailwindcss/blob/master/LICENSE |
 | Highlight.js | 11.9.0 | BSD-3-Clause | https://github.com/highlightjs/highlight.js/blob/main/LICENSE |
-| Marked.js | 9.1.6 | MIT | https://github.com/markedjs/marked/blob/master/LICENSE.md |
+| Markdown-it | 14.1.0 | MIT | https://github.com/markdown-it/markdown-it/blob/master/LICENSE |
 | Font Awesome | 6.5.1 | CC BY 4.0 / SIL OFL 1.1 / MIT | https://fontawesome.com/license/free |
 
 ## Font Awesome License Details

@@ -23,17 +23,17 @@ class JCEFOfflineTest {
     }
 
     @Test
-    fun `ResourceInliner should replace markedjs CDN with data URI`() {
+    fun `ResourceInliner should replace markdown-it CDN with data URI`() {
         val html =
-            """<html><head><script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script></head></html>"""
+            """<html><head><script src="https://cdnjs.cloudflare.com/ajax/libs/markdown-it/14.1.0/markdown-it.min.js"></script></head></html>"""
         val result = ResourceInliner.inlineResources(html)
         assertTrue(
             result.contains("data:text/javascript;base64,"),
-            "marked.js should be replaced with a base64 data URI"
+            "markdown-it.js should be replaced with a base64 data URI"
         )
         assertFalse(
-            result.contains("https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"),
-            "Original marked.js CDN URL should be removed"
+            result.contains("https://cdnjs.cloudflare.com/ajax/libs/markdown-it/14.1.0/markdown-it.min.js"),
+            "Original markdown-it CDN URL should be removed"
         )
     }
 
