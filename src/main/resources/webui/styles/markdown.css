@@ -64,7 +64,11 @@
 
 .assistant-content > p,
 .assistant-content .text-stream-segment > p {
-    line-height: var(--leading-relaxed);
+    /* v2.4: 从 leading-relaxed (1.65) 收到 leading-snug (1.45)。
+     * 单段看上去 14px * 1.45 = 20.3px,跟 settings/input/headings 这些
+     * 区域保持一致;多个段落叠起来不再"松散"留白,接近 GitHub Markdown
+     * 的阅读密度。 */
+    line-height: var(--leading-snug);
     color: var(--fg-primary);
 }
 

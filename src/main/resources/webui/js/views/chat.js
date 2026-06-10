@@ -48,6 +48,7 @@ import { toast } from "../components/cs-toast.js";
 import { bridge } from "../bridge.js";
 import { state } from "../state.js";
 import { renderMarkdown, preloadMarkdown } from "../markdown.js";
+import { enhanceCodeBlocks } from "../markdown.js";
 import {
   escapeHtml,
   scrollToBottom,
@@ -875,6 +876,9 @@ class ChatView {
     // 移除光标
     const cursor = turn.el?.querySelector('[data-cs-role="cursor"]');
     cursor?.remove();
+    // v2.1: 流式收尾 — 给所有 stable 块 + tail 挂上 code-block 包装
+    // (复制按钮 / 语言徽标),endAITurn 是一次性 normalize 的好时机。
+    if (turn.content) enhanceCodeBlocks(turn.content);
     // 显示 turn actions
     const actions = turn.el?.querySelector('[data-cs-role="actions"]');
     if (actions) actions.style.opacity = "";
@@ -940,11 +944,21 @@ class ChatView {
     const turn = this.turns.get(turnId);
     if (!turn) return;
     const seg = this._ensureStreamSegment(turn);
-    // append-only: 拼接 + 渲染 markdown (轻量)
-    seg.dataset.rawText = (seg.dataset.rawText || "") + delta;
-    // 渲染:用 marked 渲染 markdown 到 seg.innerHTML
-    const text = seg.dataset.rawText;
-    seg.innerHTML = renderMarkdown(text);
+    // v2.1: append-only 渲染 — 不再每帧 innerHTML= 整段重渲染。
+    // 思路:
+    //   1. 把 rawText 按"空行"切块(== markdown 段落分隔)
+    //   2. 已稳定的块:seg._csBlocks[i] 已存在且文本一致 → 复用 DOM,不重建
+    //   3. 新出现的块:append 渲染结果
+    //   4. 未完成的尾段(delta 还没把空行推过来):重新渲染
+    // 效果:
+    //   - O(当前段长度) 而不是 O(整段) — 流式长文不再 O(n^2)
+    //   - 已稳定的段落 DOM 不重建 → 代码块复制按钮 / hljs 高亮 / 滚动
+    //     位置都不会被 innerHTML 覆盖打飞
+    //   - 跨 delta 的 markdown 状态(粗体闪烁)只发生在"尾段",不再
+    //     影响整段历史
+    const rawText = (seg.dataset.rawText || "") + delta;
+    seg.dataset.rawText = rawText;
+    this._renderStreamIncremental(seg, rawText);
     // 高亮代码块
     if (window.hljs) {
       seg.querySelectorAll("pre code").forEach((b) => {
@@ -958,6 +972,53 @@ class ChatView {
     }
     // 不强制滚动,让 _maybeScrollToBottom 自己判断
     // 但仍要尊重"用户上滚"判断
+  }
+
+  /**
+   * 把 rawText 增量渲染到 seg:
+   *   - 复用 seg._csBlocks 里"已稳定且文本未变"的块
+   *   - 新增的稳定块 append
+   *   - 尾段(可能未闭合)重新渲染
+   *
+   * 稳定块的判定:rawText 按 \n\n+ 切块,凡是末尾非空且已经收到收尾空行
+   * 的块视为"已稳定"。下一帧如果该块文本没变,就复用 DOM。
+   */
+  _renderStreamIncremental(seg, rawText) {
+    const endsWithBreak = /(?:^|\n)\n\s*$/.test(rawText);
+    const parts = rawText.split(/\n\n+/);
+    // split 在末尾空行上会产生 "" 元素,过滤掉(它不是真正的段)
+    let blocks = parts.filter((s) => s.length > 0);
+    let tail = "";
+    if (!endsWithBreak) {
+      tail = blocks.pop() || "";
+    }
+
+    if (!seg._csBlocks) seg._csBlocks = [];
+
+    for (let i = 0; i < blocks.length; i++) {
+      const text = blocks[i];
+      const prev = seg._csBlocks[i];
+      if (prev && prev.text === text) continue;
+      const html = renderMarkdown(text);
+      const wrapper = document.createElement("div");
+      wrapper.className = "cs-stream-block";
+      wrapper.dataset.csBlockText = text;
+      wrapper.innerHTML = html;
+      seg.appendChild(wrapper);
+      seg._csBlocks[i] = { text, el: wrapper };
+    }
+    while (seg._csBlocks.length > blocks.length) {
+      const dead = seg._csBlocks.pop();
+      dead?.el?.remove();
+    }
+
+    if (!seg._csTailEl) {
+      seg._csTailEl = document.createElement("div");
+      seg._csTailEl.className = "cs-stream-block cs-stream-tail";
+      seg.appendChild(seg._csTailEl);
+    }
+    seg._csTailEl.dataset.csBlockText = tail;
+    seg._csTailEl.innerHTML = tail ? renderMarkdown(tail) : "";
   }
 
   _onThinkingStart(turnId) {
