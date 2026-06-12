@@ -27,27 +27,27 @@
 
 :root {
     /* === Surface System (三层背景) === */
-    --surface-base: #fafaf9;        /* 页面主背景 */
-    --surface-raised: #ffffff;      /* 卡片/对话气泡 */
-    --surface-elevated: #ffffff;    /* 浮层/下拉 */
-    --surface-sunken: #f4f4f5;      /* 输入框/code 区 */
+    --surface-base: #fafaf9; /* 页面主背景 */
+    --surface-raised: #ffffff; /* 卡片/对话气泡 */
+    --surface-elevated: #ffffff; /* 浮层/下拉 */
+    --surface-sunken: #f4f4f5; /* 输入框/code 区 */
     --surface-hover: rgba(0, 0, 0, 0.04);
     --surface-active: rgba(0, 0, 0, 0.06);
     --surface-overlay: rgba(15, 23, 23, 0.32);
 
     /* === Foreground (文本) === */
-    --fg-primary: #0f172a;          /* 标题、对话正文 */
-    --fg-secondary: #475569;        /* 次要文本 */
-    --fg-tertiary: #94a3b8;         /* 辅助/占位 */
-    --fg-muted: #cbd5e1;            /* 极弱文本/禁用 */
-    --fg-inverse: #ffffff;          /* 暗底白字 */
-    --fg-link: #0d9488;             /* 链接色 (teal-600) */
+    --fg-primary: #0f172a; /* 标题、对话正文 */
+    --fg-secondary: #475569; /* 次要文本 */
+    --fg-tertiary: #94a3b8; /* 辅助/占位 */
+    --fg-muted: #cbd5e1; /* 极弱文本/禁用 */
+    --fg-inverse: #ffffff; /* 暗底白字 */
+    --fg-link: #0d9488; /* 链接色 (teal-600) */
 
     /* === Border === */
-    --border-subtle: #f1f5f9;       /* 极淡,装饰用 */
-    --border-default: #e2e8f0;      /* 常规 hairline */
-    --border-strong: #cbd5e1;       /* 强调边框 */
-    --border-focus: #10b981;        /* 聚焦环 */
+    --border-subtle: #f1f5f9; /* 极淡,装饰用 */
+    --border-default: #e2e8f0; /* 常规 hairline */
+    --border-strong: #cbd5e1; /* 强调边框 */
+    --border-focus: #10b981; /* 聚焦环 */
 
     /* === Accent (品牌色:Sage Emerald) ===
        选 sage 呼应品牌,且与 IDE 主流冷色调(蓝/紫)有差异便于识别。
@@ -78,22 +78,22 @@
     --info-fg: #1d4ed8;
 
     /* === Code Block === */
-    --code-bg: #0f172a;             /* slate-900 */
-    --code-fg: #e2e8f0;             /* slate-200 */
+    --code-bg: #0f172a; /* slate-900 */
+    --code-fg: #e2e8f0; /* slate-200 */
     --code-comment: #64748b;
     --code-line-number: #475569;
     --code-selection: rgba(16, 185, 129, 0.2);
 
     /* === Diff === */
-    --diff-add-bg: #ecfdf5;         /* emerald-50 */
-    --diff-add-fg: #065f46;         /* emerald-800 */
+    --diff-add-bg: #ecfdf5; /* emerald-50 */
+    --diff-add-fg: #065f46; /* emerald-800 */
     --diff-add-line: rgba(16, 185, 129, 0.16);
-    --diff-remove-bg: #fef2f2;      /* red-50 */
-    --diff-remove-fg: #991b1b;      /* red-800 */
+    --diff-remove-bg: #fef2f2; /* red-50 */
+    --diff-remove-fg: #991b1b; /* red-800 */
     --diff-remove-line: rgba(239, 68, 68, 0.16);
 
     /* === User Bubble === */
-    --user-bubble-bg: #0f172a;      /* slate-900,与主背景对比明显 */
+    --user-bubble-bg: #0f172a; /* slate-900,与主背景对比明显 */
     --user-bubble-fg: #f8fafc;
     --user-bubble-radius: 18px;
 
@@ -123,7 +123,8 @@
     /* === Shadow (克制使用) ===
        不用大投影,边框为主,shadow 仅在浮层用。 */
     --shadow-xs: 0 1px 1px rgba(15, 23, 42, 0.04);
-    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 1px rgba(15, 23, 42, 0.04);
+    --shadow-sm:
+        0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 1px rgba(15, 23, 42, 0.04);
     --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
     --shadow-lg: 0 12px 28px rgba(15, 23, 42, 0.12);
     --shadow-xl: 0 20px 48px rgba(15, 23, 42, 0.18);
@@ -131,16 +132,18 @@
     --shadow-inner: inset 0 1px 2px rgba(15, 23, 42, 0.04);
 
     /* === Typography === */
-    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
-        "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Roboto, Helvetica,
-        Arial, sans-serif;
-    --font-mono: "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco,
-        Consolas, "Liberation Mono", monospace;
+    --font-sans:
+        "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Microsoft YaHei", "Helvetica Neue", Roboto, Helvetica, Arial,
+        sans-serif;
+    --font-mono:
+        "JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco, Consolas,
+        "Liberation Mono", monospace;
 
     --text-2xs: 10px;
     --text-xs: 11px;
     --text-sm: 12px;
-    --text-base: 13px;       /* IDE 紧凑:比网页小一档 */
+    --text-base: 13px; /* IDE 紧凑:比网页小一档 */
     --text-md: 14px;
     --text-lg: 16px;
     --text-xl: 18px;
@@ -165,7 +168,7 @@
     --artifacts-width: 360px;
     --input-min-height: 56px;
     --input-max-height: 240px;
-    --content-max-width: 760px;     /* 消息内容最大宽度,可读性 */
+    --content-max-width: 760px; /* 消息内容最大宽度,可读性 */
     --content-padding-x: 32px;
 
     /* === Motion === */
@@ -188,18 +191,16 @@
 }
 
 [data-theme="dark"] {
-    /* === Dark Surface (高级黑灰) ===
-       旧版偏纯黑 (#0b0d0e),贴 IDE 暗色但无层次。
-       v2.1 调为"高级黑灰偏灰":base 拉亮到 #1a1c1f,整体中性偏冷,
-       三层 surface 阶梯清晰 (base 19 → raised 35 → elevated 43),
-       避免和 IDE 背景"完全沉入",也避免纯黑带来的廉价感。 */
-    --surface-base: #1a1c1f;        /* 主背景:深灰,中性偏冷,有质感 */
-    --surface-raised: #232629;      /* 卡片:比 base 亮 6% */
-    --surface-elevated: #2b2e32;    /* 浮层:再亮 5%,有空气感 */
-    --surface-sunken: #15171a;      /* 输入框/code:下沉,比 base 暗 */
-    --surface-hover: rgba(255, 255, 255, 0.05);
-    --surface-active: rgba(255, 255, 255, 0.08);
-    --surface-overlay: rgba(8, 10, 13, 0.7);
+    /* === Dark Surface v2.2 ===
+       进一步压暗主背景，提升 surface 层级对比 (base → raised → elevated 差值 ~10%)。
+       让对话区更"沉"入 IDE，卡片/浮层有更清晰的层次。 */
+    --surface-base: #0f1012; /* 主背景:更黑的基底 */
+    --surface-raised: #1a1c1f; /* 卡片:比 base 亮约 10% */
+    --surface-elevated: #232629; /* 浮层:再亮约 5% */
+    --surface-sunken: #0a0b0c; /* 输入框/code:下沉 */
+    --surface-hover: rgba(255, 255, 255, 0.06);
+    --surface-active: rgba(255, 255, 255, 0.1);
+    --surface-overlay: rgba(8, 10, 13, 0.72);
 
     /* === Dark Foreground === */
     --fg-primary: #f1f5f9;

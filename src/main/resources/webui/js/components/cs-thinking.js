@@ -126,7 +126,10 @@ export class Thinking {
         this.state = "completed";
         this.elapsedMs = elapsedMs ?? Date.now() - this.startTime;
         this._render();
-        this._bodyEl.textContent = this.content;
+        // _render() 已重建 innerHTML 并把 this.content 写进新创建的 _contentEl。
+        // 旧实现 this._bodyEl.textContent = this.content 会清掉 _contentEl 节点,
+        // 导致展开后看不到 thinking 正文 — 体感是"卡片是空的/像被合并了"。
+        this.setContent(this.content);
         // 立即折叠
         this._bodyEl.classList.remove("open");
         this.el

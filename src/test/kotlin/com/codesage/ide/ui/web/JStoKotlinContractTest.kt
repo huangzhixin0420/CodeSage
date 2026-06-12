@@ -244,6 +244,7 @@ class JStoKotlinContractTest {
         // 字段级断言(真实读取源代码,不再硬编码两组列表)
         val jcefSrc = readResource("kotlin/com/codesage/ide/ui/web/JCEFChatPanel.kt")
         val chatJsSrc = readResource("webui/js/views/chat.js")
+        val artifactJsSrc = readResource("webui/js/components/cs-artifact.js")
 
         // 1) send_message — 后端 handleSendMessage 必须读 message 字段(不是 content)
         //    否则文本总是空字符串,UI 表现 "消息发出去没反应"。
@@ -277,9 +278,10 @@ class JStoKotlinContractTest {
             "JCEFChatPanel.apply_artifact 必须读 artifactId 和 content 字段"
         )
         val applyArtifactJs = extractBridgeSendBlock(chatJsSrc, "apply_artifact")
+            .ifEmpty { extractBridgeSendBlock(artifactJsSrc, "apply_artifact") }
         assertTrue(
             applyArtifactJs.contains("artifactId") && applyArtifactJs.contains("content"),
-            "chat.js 里 apply_artifact 消息体应包含 artifactId 和 content; 实际: $applyArtifactJs"
+            "chat.js/cs-artifact.js 里 apply_artifact 消息体应包含 artifactId 和 content; 实际: $applyArtifactJs"
         )
 
         // 4) apply_to_editor(旧)→ apply_artifact(新):Kotlin 不能还在处理旧 type

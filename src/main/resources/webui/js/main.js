@@ -179,7 +179,29 @@ function handleBridgeMessage(msg) {
         chat.loadHistory(msg.messages || []);
         break;
       case "artifact_add":
-        chat.addArtifact(msg.id, msg.title, msg.language, msg.content);
+        chat.addArtifact(
+          msg.artifactId || msg.id,
+          msg.title,
+          msg.language,
+          msg.content,
+          {
+            version: msg.version,
+            originalContent: msg.originalContent,
+            kind: msg.kind,
+            status: msg.status,
+            timestamp: msg.timestamp,
+          },
+        );
+        break;
+      case "artifact_update":
+        chat.updateArtifact(msg.artifactId || msg.id, {
+          content: msg.content,
+          version: msg.version,
+          originalContent: msg.originalContent,
+          kind: msg.kind,
+          status: msg.status,
+          timestamp: msg.timestamp,
+        });
         break;
       case "user_message_ack":
         chat.addUserMessage(
@@ -200,6 +222,14 @@ function handleBridgeMessage(msg) {
       //    会读这些文件内容并注入到 agent 上下文 — 0 改后端 agent。
       case "file_references_added":
         chat._onFileReferencesAdded(msg.references || []);
+        break;
+      case "file_search_results":
+        // 供 MentionAutocomplete 消费
+        window.__cs_file_search_results = (msg.results || []).map((r) => ({
+          path: r.relativePath || r.path || r.name,
+          label: r.name || r.relativePath || r.path,
+          hint: r.hint || "文件",
+        }));
         break;
 
       // === 后端主动 toast:用于 FileChooser 失败 / 文件类型不合法 等兜底反馈。

@@ -40,8 +40,15 @@
  */
 
 import { Thinking } from "../components/cs-thinking.js";
+import { StructuredThinking } from "../components/cs-thinking-v2.js";
 import { ToolCall } from "../components/cs-tool-call.js";
 import { Plan } from "../components/cs-plan.js";
+import { PlanV2 } from "../components/cs-plan-v2.js";
+import { AgentDashboard } from "../components/cs-agent-dashboard.js";
+import { MentionAutocomplete } from "../components/cs-mention.js";
+import { CsArtifact } from "../components/cs-artifact.js";
+import { RunLogBuilder } from "../run-log.js";
+import { MessageVirtualizer } from "../message-virtualizer.js";
 import { Sidebar } from "../components/cs-sidebar.js";
 import { InlineAlert } from "../components/cs-inline-alert.js";
 import { toast } from "../components/cs-toast.js";
@@ -73,7 +80,9 @@ class ChatView {
   constructor() {
     this.turns = new Map(); // turnId -> Turn
     this.toolCalls = new Map(); // toolId -> ToolCall
-    this.plans = new Map(); // planId -> Plan
+    this.plans = new Map(); // planId -> Plan | PlanV2
+    this.artifacts = new Map(); // artifactId -> CsArtifact
+    this.runLogBuilder = new RunLogBuilder(); // RunLog 数据层
     this._isGenerating = false;
     this._currentStreamSegment = null; // 当前 turn 内最后一段 text stream
     this._sidebar = null;
@@ -87,6 +96,10 @@ class ChatView {
     try {
       this.messagesContainer = document.getElementById("messages-container");
       this.messagesInner = document.getElementById("messages-inner");
+      this._messageVirtualizer = new MessageVirtualizer(this.messagesInner, {
+        limit: 50,
+        batch: 50,
+      });
       this.welcomeState = document.getElementById("welcome-state");
       this.inputTextarea = document.getElementById("input-textarea");
       this.sendBtn = document.getElementById("send-btn");
@@ -104,6 +117,7 @@ class ChatView {
       this._initKeyboard();
       this._initModelSelector();
       this._initModeTabs();
+      this._initAgentDashboard();
 
       // 渲染欢迎区
       this._renderWelcomeActions();
@@ -178,6 +192,12 @@ class ChatView {
     document
       .getElementById("artifacts-close-btn")
       ?.addEventListener("click", () => this.toggleArtifacts());
+  }
+
+  _initAgentDashboard() {
+    if (!this.statusLine) return;
+    this._agentDashboard = new AgentDashboard({ container: this.statusLine });
+    this.statusLine.appendChild(this._agentDashboard.el);
   }
 
   toggleTheme() {
@@ -390,6 +410,28 @@ class ChatView {
     document.getElementById("mention-btn")?.addEventListener("click", () => {
       ta.value = ta.value + (ta.value && !ta.value.endsWith(" ") ? " @" : "@");
       ta.focus();
+      // 触发 input 让 MentionAutocomplete 弹出
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // @/# 自动补全
+    this._mentionAutocomplete = new MentionAutocomplete({
+      textarea: ta,
+      onSearch: async (query) => {
+        // 优先走后端 file_search；bridge 未就绪时返回空，让 fallback 候选生效。
+        // 后端可推送 file_search_results 事件，main.js 可将其写入 window.__cs_file_search_results。
+        if (!bridge.bridgeReady) return [];
+        bridge.send({ type: "file_search", query });
+        if (window.__cs_file_search_results) {
+          const results = window.__cs_file_search_results;
+          window.__cs_file_search_results = null;
+          return results;
+        }
+        return [];
+      },
+      onSelect: (item) => {
+        console.log("[chat] mention selected:", item);
+      },
     });
   }
 
@@ -708,6 +750,10 @@ class ChatView {
     this.turns.clear();
     this.toolCalls.clear();
     this.plans.clear();
+    for (const art of this.artifacts.values()) art.destroy();
+    this.artifacts.clear();
+    this._messageVirtualizer?.clear();
+    this.runLogBuilder = new RunLogBuilder();
     this._isGenerating = false;
     // 兼容调用方不传参(旧 loadHistory 路径):默认保留草稿,
     // 由 main.js 的 clear_chat 路由显式调 _resetInput() 完成"新会话 = 干净画布"。
@@ -761,6 +807,7 @@ class ChatView {
             </div>
         `;
     this.messagesInner.appendChild(div);
+    this._messageVirtualizer?.add(div);
     this._maybeScrollToBottom(true);
   }
 
@@ -772,6 +819,10 @@ class ChatView {
     // 旧实现自己用 genId("turn") 生成 id,导致 this.turns Map 里的 key
     // 跟后端实际下发的 turnId 对不上,所有事件被丢弃 → 用户看不到回答。
     const resolvedTurnId = turnId || genId("turn");
+    this.runLogBuilder.processEvent({
+      type: "start_turn",
+      turnId: resolvedTurnId,
+    });
     this.hideWelcome();
     this._isGenerating = true;
     this._scrollLocked = false;
@@ -831,6 +882,7 @@ class ChatView {
             </div>
         `;
     this.messagesInner.appendChild(el);
+    this._messageVirtualizer?.add(el);
     turn.el = el;
     turn.body = el.querySelector(".assistant-body");
     turn.content = el.querySelector('[data-cs-role="content"]');
@@ -860,17 +912,24 @@ class ChatView {
     });
 
     this.turns.set(resolvedTurnId, turn);
+    this._agentDashboard?.setRunLog(
+      this.runLogBuilder.getRunLog(resolvedTurnId),
+    );
+    this._agentDashboard?.start();
     this._setStatus("思考中…", "thinking");
     this._swapSendButton(true);
     this._maybeScrollToBottom(true);
   }
 
   _endAITurn(turnId) {
+    this.runLogBuilder.processEvent({ type: "end_turn", turnId });
     const turn = this.turns.get(turnId);
     if (!turn) return;
     clearInterval(turn.timerInterval);
     this._isGenerating = false;
     this._currentStreamSegment = null;
+    this._agentDashboard?.stop();
+    this._agentDashboard?._render();
     this._setStatus("就绪", "idle");
     this._swapSendButton(false);
     // 移除光标
@@ -941,6 +1000,7 @@ class ChatView {
   // ============ 事件处理 ============
 
   _onTextDelta(turnId, delta) {
+    this.runLogBuilder.processEvent({ type: "text_delta", turnId, delta });
     const turn = this.turns.get(turnId);
     if (!turn) return;
     const seg = this._ensureStreamSegment(turn);
@@ -1024,8 +1084,13 @@ class ChatView {
   _onThinkingStart(turnId) {
     const turn = this.turns.get(turnId);
     if (!turn) return;
+    this.runLogBuilder.processEvent({
+      type: "thinking_start",
+      turnId,
+      thinkingId: "thinking-" + turnId,
+    });
     if (!turn.thinking) {
-      turn.thinking = new Thinking({ collapsed: false });
+      turn.thinking = new StructuredThinking({});
       // 插入到 content 内、cursor 之前
       const cursor = turn.content.querySelector('[data-cs-role="cursor"]');
       if (cursor) {
@@ -1041,12 +1106,24 @@ class ChatView {
   _onThinkingUpdate(turnId, message) {
     const turn = this.turns.get(turnId);
     if (!turn?.thinking) return;
+    this.runLogBuilder.processEvent({
+      type: "thinking_update",
+      turnId,
+      thinkingId: "thinking-" + turnId,
+      message,
+    });
     turn.thinking.appendContent(message);
   }
 
   _onThinkingComplete(turnId, elapsedMs) {
     const turn = this.turns.get(turnId);
     if (!turn?.thinking) return;
+    this.runLogBuilder.processEvent({
+      type: "thinking_complete",
+      turnId,
+      thinkingId: "thinking-" + turnId,
+      elapsedMs,
+    });
     turn.thinking.complete(elapsedMs);
     // 思考完成后,创建新的 stream segment(在 thinking 之后)
     turn.currentStreamSegment = null;
@@ -1056,8 +1133,13 @@ class ChatView {
   _onModelReasoningStart(turnId) {
     const turn = this.turns.get(turnId);
     if (!turn) return;
+    this.runLogBuilder.processEvent({
+      type: "thinking_start",
+      turnId,
+      thinkingId: "reasoning-" + turnId,
+    });
     if (!turn.modelReasoning) {
-      turn.modelReasoning = new Thinking({ collapsed: false });
+      turn.modelReasoning = new StructuredThinking({});
       turn.modelReasoning.el.classList.add("model-reasoning");
       // 插入到 content 内、cursor 之前
       const cursor = turn.content.querySelector('[data-cs-role="cursor"]');
@@ -1074,12 +1156,24 @@ class ChatView {
   _onModelReasoningDelta(turnId, delta) {
     const turn = this.turns.get(turnId);
     if (!turn?.modelReasoning) return;
+    this.runLogBuilder.processEvent({
+      type: "thinking_update",
+      turnId,
+      thinkingId: "reasoning-" + turnId,
+      message: delta,
+    });
     turn.modelReasoning.appendContent(delta);
   }
 
   _onModelReasoningComplete(turnId, elapsedMs) {
     const turn = this.turns.get(turnId);
     if (!turn?.modelReasoning) return;
+    this.runLogBuilder.processEvent({
+      type: "thinking_complete",
+      turnId,
+      thinkingId: "reasoning-" + turnId,
+      elapsedMs,
+    });
     turn.modelReasoning.complete(elapsedMs);
     // 推理完成后,创建新的 stream segment(在 modelReasoning 之后)
     turn.currentStreamSegment = null;
@@ -1087,6 +1181,15 @@ class ChatView {
   }
 
   _onToolCallStart(turnId, toolId, toolName, summary, args, icon) {
+    this.runLogBuilder.processEvent({
+      type: "tool_call_start",
+      turnId,
+      toolId,
+      toolName,
+      summary,
+      arguments: args,
+      icon,
+    });
     const turn = this.turns.get(turnId);
     if (!turn) return;
     // delegate_task 由 subagent 卡片展示
@@ -1129,6 +1232,13 @@ class ChatView {
   }
 
   _onToolCallComplete(turnId, toolId, success, result) {
+    this.runLogBuilder.processEvent({
+      type: "tool_call_complete",
+      turnId,
+      toolId,
+      success,
+      result,
+    });
     const tc = this.toolCalls.get(toolId);
     if (!tc) return;
     if (tc.hidden) {
@@ -1145,6 +1255,12 @@ class ChatView {
   }
 
   _onToolCallError(turnId, toolId, error) {
+    this.runLogBuilder.processEvent({
+      type: "tool_call_error",
+      turnId,
+      toolId,
+      error,
+    });
     const tc = this.toolCalls.get(toolId);
     if (!tc) return;
     if (tc.hidden) {
@@ -1160,9 +1276,16 @@ class ChatView {
   }
 
   _onPlanGenerated(turnId, data) {
+    this.runLogBuilder.processEvent({
+      type: "plan_generated",
+      turnId,
+      planId: data.planId,
+      description: data.description,
+      steps: data.steps,
+    });
     const turn = this.turns.get(turnId);
     if (!turn) return;
-    const plan = new Plan({
+    const plan = new PlanV2({
       planId: data.planId,
       description: data.description,
       steps: data.steps,
@@ -1170,8 +1293,8 @@ class ChatView {
         bridge.send({ type: "plan_approve", planId: p.planId, turnId }),
       onReject: (p) =>
         bridge.send({ type: "plan_reject", planId: p.planId, turnId }),
-      onModify: (p) =>
-        bridge.send({ type: "plan_modify", planId: p.planId, turnId }),
+      onModify: (p, steps) =>
+        bridge.send({ type: "plan_modify", planId: p.planId, turnId, steps }),
     });
     // 插入到 content 内、cursor 之前
     const cursor = turn.content.querySelector('[data-cs-role="cursor"]');
@@ -1187,21 +1310,31 @@ class ChatView {
   }
 
   _onPlanApproved(turnId, data) {
+    this.runLogBuilder.processEvent({
+      type: "plan_approved",
+      turnId,
+      planId: data.planId,
+    });
     this.plans.get(data.planId)?.setOverallStatus("approved");
   }
   _onPlanRejected(turnId, data) {
+    this.runLogBuilder.processEvent({
+      type: "plan_rejected",
+      turnId,
+      planId: data.planId,
+    });
     this.plans.get(data.planId)?.setOverallStatus("rejected");
   }
   _onPlanModified(turnId, data) {
+    this.runLogBuilder.processEvent({
+      type: "plan_modified",
+      turnId,
+      planId: data.planId,
+      steps: data.steps,
+    });
     const p = this.plans.get(data.planId);
-    if (p) {
-      p.steps = (data.steps || []).map((s) => ({
-        id: s.id,
-        description: s.description || s.text || "",
-        status: "pending",
-        dependsOn: s.dependsOn || [],
-      }));
-      p._render();
+    if (p && p.updateSteps) {
+      p.updateSteps(data.steps);
     }
   }
 
@@ -1233,7 +1366,7 @@ class ChatView {
     const reason = data.reason || "需要确认";
     const toolName = data.toolName || data.toolId;
     const operation = data.operation || toolName;
-    const riskLevel = data.riskLevel || "CAUTION";
+    const riskLevel = (data.riskLevel || "CAUTION").toUpperCase();
 
     // 同一 requestId 重复推送时,不要堆叠多个弹窗 — 直接禁用旧按钮组
     const existing = turn.content.querySelector(
@@ -1244,20 +1377,46 @@ class ChatView {
       return;
     }
 
+    // 2026-06:根据 riskLevel 切换弹框视觉强度
+    //   DANGEROUS → 深红 + 骷髅图标 + 4 按钮 (含"永久允许")
+    //   CAUTION   → 黄色警告 + 三角图标 + 3 按钮
+    //   SAFE/其它 → 蓝色提示
+    const isDangerous = riskLevel === "DANGEROUS";
+    const isCaution = riskLevel === "CAUTION";
+    const cardVariant = isDangerous
+      ? "dangerous"
+      : isCaution
+        ? "warning"
+        : "info";
+    const cardIcon = isDangerous
+      ? "fa-skull-crossbones"
+      : isCaution
+        ? "fa-exclamation-triangle"
+        : "fa-info-circle";
+    const cardTitle = isDangerous
+      ? `危险操作需要确认: ${escapeHtml(toolName)}`
+      : `需要确认: ${escapeHtml(toolName)}`;
+    // DANGEROUS 弹框额外多一个"永久允许"按钮,其余只展示三个
+    const permanentButton = isDangerous
+      ? `<button type="button" class="cs-btn cs-btn-ghost" data-cs-perm="ALLOW_PERMANENTLY" title="写入全局允许列表,以后该类工具不再询问">永久允许</button>`
+      : "";
+
     const card = document.createElement("div");
-    card.className = "inline-alert warning";
+    card.className = `inline-alert ${cardVariant}`;
     card.setAttribute("role", "alert");
     card.setAttribute("data-cs-confirm-id", requestId);
+    card.setAttribute("data-cs-risk", riskLevel);
     card.innerHTML = `
-            <div class="inline-alert-icon"><i class="fas fa-exclamation-triangle"></i></div>
+            <div class="inline-alert-icon"><i class="fas ${cardIcon}"></i></div>
             <div class="inline-alert-body">
-                <div class="inline-alert-title">需要确认:${escapeHtml(toolName)}</div>
+                <div class="inline-alert-title">${cardTitle}</div>
                 <div class="inline-alert-message">${escapeHtml(reason)}</div>
                 <div class="inline-alert-meta">操作: ${escapeHtml(operation)} · 风险: ${escapeHtml(riskLevel)}</div>
                 <div class="inline-alert-actions">
                     <button type="button" class="cs-btn cs-btn-ghost" data-cs-perm="DENY">拒绝</button>
                     <button type="button" class="cs-btn cs-btn-ghost" data-cs-perm="ALLOW_ONCE">仅本次允许</button>
                     <button type="button" class="cs-btn cs-btn-primary" data-cs-perm="ALLOW_SESSION">本次会话允许</button>
+                    ${permanentButton}
                 </div>
             </div>
         `;
@@ -1293,6 +1452,7 @@ class ChatView {
   }
 
   _onError(turnId, message) {
+    this.runLogBuilder.processEvent({ type: "error", turnId, message });
     this._isGenerating = false;
     this._currentStreamSegment = null;
     const turn = this.turns.get(turnId);
@@ -1337,51 +1497,68 @@ class ChatView {
 
   // ============ Artifacts ============
 
-  addArtifact(id, title, language, content) {
+  addArtifact(id, title, language, content, options = {}) {
     const list = document.getElementById("artifacts-list");
     if (!list) return;
     // 自动展开
     this.appContainer.classList.remove("artifacts-collapsed");
-    const panel = document.createElement("div");
-    panel.className = "cs-artifact-panel";
-    panel.id = "artifact-" + id;
-    panel.dataset.artifactId = String(id);
-    panel.innerHTML = `
-            <div class="cs-artifact-header">
-                <span class="cs-artifact-title">
-                    <i class="fas fa-file-code" style="color:var(--accent);"></i>
-                    ${escapeHtml(title)}
-                </span>
-                <span class="cs-artifact-actions">
-                    <button class="icon-btn" data-art-action="copy" title="复制" aria-label="复制">
-                        <i class="fas fa-copy"></i>
-                    </button>
-                    <button class="icon-btn" data-art-action="apply" title="应用到编辑器" aria-label="应用">
-                        <i class="fas fa-file-import"></i>
-                    </button>
-                </span>
-            </div>
-            <pre style="margin:0;max-height:300px;overflow:auto;background:var(--code-bg);color:var(--code-fg);padding:var(--space-3);font-size:var(--text-xs);"><code class="language-${escapeHtml(language)}">${escapeHtml(content)}</code></pre>
-        `;
-    list.appendChild(panel);
-    if (window.hljs) {
-      panel
-        .querySelectorAll("pre code")
-        .forEach((b) => window.hljs.highlightElement(b));
-    }
-    panel.querySelectorAll("[data-art-action]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const a = btn.dataset.artAction;
-        if (a === "copy") {
-          navigator.clipboard?.writeText(content);
-          _toast.success("已复制");
-        } else if (a === "apply") {
-          const artifactId =
-            btn.closest(".cs-artifact-panel")?.dataset?.artifactId || "";
-          bridge.send({ type: "apply_artifact", artifactId, content });
-        }
+
+    let art = this.artifacts.get(id);
+    if (art) {
+      art.addVersion(content, {
+        versionNumber: options.version,
+        status: options.status,
+        timestamp: options.timestamp,
       });
+      if (options.originalContent != null)
+        art.setOriginalContent(options.originalContent);
+      if (options.kind) art.setKind(options.kind);
+      return;
+    }
+
+    art = new CsArtifact({
+      id,
+      title,
+      language,
+      content,
+      originalContent: options.originalContent,
+      kind: options.kind,
+      onAction: (action) => {
+        if (action.type === "apply_artifact") {
+          bridge.send({
+            type: "apply_artifact",
+            artifactId: action.artifactId,
+            content: action.content,
+            version: action.version,
+          });
+        } else if (action.type === "reject_artifact") {
+          bridge.send({
+            type: "reject_artifact",
+            artifactId: action.artifactId,
+            content: action.content,
+            version: action.version,
+          });
+        }
+      },
     });
+    art.mount(list);
+    this.artifacts.set(id, art);
+  }
+
+  updateArtifact(id, patch) {
+    const art = this.artifacts.get(id);
+    if (!art) return;
+    if (patch.content != null) {
+      art.addVersion(patch.content, {
+        versionNumber: patch.version,
+        status: patch.status,
+        timestamp: patch.timestamp,
+      });
+    }
+    if (patch.status != null) art.setStatus(patch.status);
+    if (patch.originalContent != null)
+      art.setOriginalContent(patch.originalContent);
+    if (patch.kind) art.setKind(patch.kind);
   }
 
   // ============ History / Sessions ============
@@ -1396,6 +1573,9 @@ class ChatView {
           this._startAITurn();
           const turn = Array.from(this.turns.values()).pop();
           this._onThinkingStart(turn.id);
+          // 历史回放没有 thinking_update 流, _onThinkingComplete 之前
+          // content 还是空,展开后看不到正文。直接用历史正文 setContent。
+          turn.thinking.setContent(m.thinking);
           this._onThinkingComplete(turn.id, m.thinkingDurationMs || 0);
         }
         if (m.content) {
@@ -1427,6 +1607,7 @@ class ChatView {
         }
       }
     }
+    this._messageVirtualizer?.finishBatch();
     if (this.messagesInner.children.length === 0) {
       this.showWelcome();
     }

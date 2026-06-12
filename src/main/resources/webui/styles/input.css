@@ -306,10 +306,18 @@
     margin: 0 auto;
 }
 
-.status-line.thinking { color: var(--accent); }
-.status-line.executing { color: var(--warning); }
-.status-line.streaming { color: var(--accent); }
-.status-line.error { color: var(--error); }
+.status-line.thinking {
+    color: var(--accent);
+}
+.status-line.executing {
+    color: var(--warning);
+}
+.status-line.streaming {
+    color: var(--accent);
+}
+.status-line.error {
+    color: var(--error);
+}
 
 .status-pulse {
     width: 6px;
@@ -317,4 +325,69 @@
     border-radius: 50%;
     background: currentColor;
     animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* ===================== Mention Autocomplete ===================== */
+
+.mention-popup {
+    background: var(--surface-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: 4px;
+    min-width: 220px;
+    max-width: 320px;
+    max-height: 240px;
+    overflow-y: auto;
+    font-size: var(--text-sm);
+    color: var(--fg-primary);
+    animation: mentionPopupIn 120ms var(--ease-out);
+}
+
+@keyframes mentionPopupIn {
+    from {
+        opacity: 0;
+        transform: translateY(-100%) translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(-100%) translateY(0);
+    }
+}
+
+.mention-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 6px var(--space-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background var(--duration-fast) var(--ease-out);
+}
+
+.mention-item:hover,
+.mention-item.selected {
+    background: var(--accent-soft);
+}
+
+.mention-item i {
+    font-size: 11px;
+    color: var(--accent);
+    width: 16px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.mention-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mention-hint {
+    font-size: 10px;
+    color: var(--fg-tertiary);
+    flex-shrink: 0;
 }
