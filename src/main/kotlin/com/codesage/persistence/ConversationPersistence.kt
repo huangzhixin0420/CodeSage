@@ -11,6 +11,8 @@ import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * 对话持久化管理器
@@ -33,11 +35,12 @@ class ConversationPersistence(
     // 跟踪已被删除的会话ID，防止异步写入已删除的会话
     private val deletedSessionIds = ConcurrentHashMap.newKeySet<String>()
 
-    // T0.3 修复：跟踪未完成的异步写入，以便 shutdown() 等待
-    private val pendingWrites = java.util.concurrent.atomic.AtomicInteger(0)
+    // 跟踪所有 in-flight 写入任务，供 awaitInFlightWrites() / shutdown() 等待
+    private val inFlightWrites = ConcurrentHashMap.newKeySet<Future<*>>()
 
-    // 跟踪所有 in-flight 写入任务以便 shutdown() 等待
-    private val inFlightTasks = java.util.concurrent.ConcurrentHashMap<Runnable, java.util.concurrent.Future<*>>()
+    // 用于检测持久化器是否已关闭，避免向已关闭的线程池提交任务
+    private val isShutdown: Boolean
+        get() = ioExecutor.isShutdown
 
     init {
         storageDir.mkdirs()
@@ -50,16 +53,25 @@ class ConversationPersistence(
      * T0.3 修复（对应 CodeReview #3/#4/#5）：
      * 1. 原子写入：renameTo 返回 false 时保留 tempFile 并记录错误（不静默丢失）
      * 2. 使用 Future 跟踪 in-flight 任务，shutdown() 可以等待其完成
-     * 3. 即使 pendingWrites 计数不为零，shutdown() 也会以超时机制等待
+     * 3. 向已关闭的线程池提交任务时，捕获 RejectedExecutionException，
+     *    避免异常扩散到调用方（如 AgentCore）导致“Failed to save session ... asynchronously”报错。
      */
     fun saveSession(session: AgentSession, messages: List<Message>) {
-        // T0.3 修复：save 不能取消 delete 的标记。一旦会话被 delete，
+        // save 不能取消 delete 的标记。一旦会话被 delete，
         // 所有后续的 save 都应被拒绝，避免“删除后复活”这类数据泄漏。
         // 语义与 Option B 一致：delete 是永久操作。
         if (session.id in deletedSessionIds) {
             logger.debug("Skipping save for deleted session: ${session.id}")
             return
         }
+
+        // 如果执行器已关闭，优雅跳过，避免 RejectedExecutionException 扩散到调用方。
+        // 注意：isShutdown 与 submit 之间仍有竞态，外层 try/catch 做兜底。
+        if (isShutdown) {
+            logger.debug("Skipping save for session ${session.id}: persistence executor is shut down")
+            return
+        }
+
         val persisted = buildPersisted(session, messages)
         sessionCache[session.id] = persisted
 
@@ -76,19 +88,14 @@ class ConversationPersistence(
                 logger.error("Failed to save session: ${session.id}", e)
             }
         }
-        val future = ioExecutor.submit(task)
-        inFlightTasks[task] = future
-        // 任务完成后从跟踪中移除（保持 map 不增长）
-        future?.let { f ->
-            // 借助 afterExecute callback 不易设置，这里用一个轻量级的 “完成后清理” 包装
-            val cleanup = Runnable {
-                try {
-                    f.get()
-                } catch (_: Exception) {
-                }
-                inFlightTasks.remove(task)
-            }
-            ioExecutor.execute(cleanup)
+
+        try {
+            val future = ioExecutor.submit(task)
+            inFlightWrites.add(future)
+        } catch (e: RejectedExecutionException) {
+            // shutdown 期间的竞态：isShutdown 检查之后、submit 之前线程池被关闭。
+            // 这里静默处理：缓存已更新，磁盘写入被放弃；调用方不会收到异常。
+            logger.debug("Persistence executor rejected save for session ${session.id}: ${e.message}")
         }
     }
 
@@ -302,17 +309,22 @@ class ConversationPersistence(
      * @return 调用时的 in-flight 写入数 (供日志)
      */
     fun awaitInFlightWrites(timeoutMs: Long = 5000L): Int {
-        val initial = inFlightTasks.size
+        val initial = inFlightWrites.count { !it.isDone }
         if (initial == 0) return 0
+
         val deadline = System.currentTimeMillis() + timeoutMs
         try {
-            while (inFlightTasks.isNotEmpty() && System.currentTimeMillis() < deadline) {
+            while (inFlightWrites.any { !it.isDone } && System.currentTimeMillis() < deadline) {
                 Thread.sleep(50)
             }
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
         }
-        val remaining = inFlightTasks.size
+
+        // 清理已完成的任务，避免集合随时间无限增长
+        inFlightWrites.removeIf { it.isDone }
+
+        val remaining = inFlightWrites.count { !it.isDone }
         if (remaining > 0) {
             logger.warn(
                 "awaitInFlightWrites: timed out after ${timeoutMs}ms, " +
@@ -331,6 +343,7 @@ class ConversationPersistence(
      * 1. 调用 shutdown() 后不接收新任务
      * 2. awaitTermination(5s) 等待现有 in-flight 任务完成
      * 3. 超时后 shutdownNow() 强制中断
+     * 4. 最后清空 in-flight 跟踪集合，避免已取消/未执行的任务造成内存泄漏
      */
     fun shutdown() {
         ioExecutor.shutdown()
@@ -342,6 +355,9 @@ class ConversationPersistence(
         } catch (e: InterruptedException) {
             ioExecutor.shutdownNow()
             Thread.currentThread().interrupt()
+        } finally {
+            // 已取消或尚未执行的任务不会再运行，清空跟踪防止内存泄漏与 awaitInFlightWrites 永远等待
+            inFlightWrites.clear()
         }
     }
 

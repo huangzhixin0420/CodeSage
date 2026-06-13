@@ -10,6 +10,7 @@ import java.io.File
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * T0.3 修复验证测试：ConversationPersistence 资源/数据问题
@@ -127,7 +128,7 @@ class ConversationPersistenceResourceTest {
 
         val ready = CountDownLatch(1)
         val stop = CountDownLatch(1)
-        val errors = java.util.concurrent.atomic.AtomicInteger(0)
+        val errors = AtomicInteger(0)
 
         val saver = Thread {
             ready.await()
@@ -170,5 +171,47 @@ class ConversationPersistenceResourceTest {
         val cp = newPersistence()
         cp.shutdown()
         cp.shutdown()  // 不应抛异常
+    }
+
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    fun `save during shutdown does not throw RejectedExecutionException`() {
+        val cp = newPersistence()
+        val session = newSession("shutdown-race")
+        val messages = listOf(Message(role = Role.USER, content = "x"))
+
+        val saveErrors = AtomicInteger(0)
+        val saver = Thread {
+            repeat(200) {
+                try {
+                    cp.saveSession(session, messages)
+                } catch (e: Exception) {
+                    saveErrors.incrementAndGet()
+                }
+            }
+        }
+        saver.start()
+
+        // 给 saver 一点时间启动，然后并发 shutdown
+        Thread.sleep(5)
+        cp.shutdown()
+
+        saver.join()
+        assertEquals(0, saveErrors.get(), "saveSession should not throw during shutdown")
+    }
+
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.SECONDS)
+    fun `save after shutdown is silently ignored`() {
+        val cp = newPersistence()
+        val session = newSession("after-shutdown")
+        val messages = listOf(Message(role = Role.USER, content = "x"))
+
+        cp.shutdown()
+
+        // 关闭后再调用 saveSession 不应抛异常
+        assertDoesNotThrow {
+            cp.saveSession(session, messages)
+        }
     }
 }
