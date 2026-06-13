@@ -1,7 +1,9 @@
 package com.codesage.analysis
 
 import com.codesage.shared.utils.Logger
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Computable
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.search.FilenameIndex
 import com.intellij.psi.search.GlobalSearchScope
@@ -61,6 +63,19 @@ class SymbolIndex(private val project: Project) {
         return fileAnalyzer?.invoke(file) ?: analyzer.analyzeFileDeep(file)
     }
 
+    /**
+     * 兼容测试环境的 read action 包装。
+     * 当 ApplicationManager.getApplication() 为 null（无平台环境）或已处于 read action 中时直接执行块。
+     */
+    private fun <T> runInReadAction(block: () -> T): T {
+        val app = ApplicationManager.getApplication()
+        return if (app != null && !app.isReadAccessAllowed) {
+            app.runReadAction(Computable { block() })
+        } else {
+            block()
+        }
+    }
+
     // 测试用文件提供器，若不为 null 则替代 FilenameIndex 扫描
     internal var testFileProvider: (() -> Set<VirtualFile>)? = null
 
@@ -101,20 +116,29 @@ class SymbolIndex(private val project: Project) {
         val startTime = System.currentTimeMillis()
 
         try {
-            val currentFiles = testFileProvider?.invoke() ?: run {
-                val scope = GlobalSearchScope.projectScope(project)
-                mutableSetOf<VirtualFile>().apply {
-                    listOf("kt", "java", "scala", "py", "js", "ts", "go", "rs", "cpp", "c", "h").forEach { ext ->
-                        try {
-                            FilenameIndex.getAllFilesByExt(project, ext, scope).forEach { add(it) }
-                        } catch (e: Exception) {
-                            logger.debug("Failed to get files for extension $ext", e)
-                        }
-                    }
-                }
-            }
+            val currentFiles = testFileProvider?.invoke() ?: runInReadAction { collectProjectFiles() }
 
             val currentFilePaths = currentFiles.map { it.path }.toSet()
+
+            // 在 read action 中分析需要更新的文件，避免在写锁内持有 PSI read lock
+            val fileUpdates = mutableListOf<Pair<VirtualFile, List<PSIAnalyzer.SymbolInfo>>>()
+            var skipped = 0L
+            currentFiles.forEach { file ->
+                val currentStamp = file.modificationStamp
+                val existingStamp = indexedFileHashes[file.path]
+
+                if (existingStamp != null && existingStamp == currentStamp) {
+                    skipped++
+                    return@forEach
+                }
+
+                try {
+                    val symbols = runInReadAction { analyzeFile(file) }
+                    fileUpdates.add(file to symbols)
+                } catch (e: Exception) {
+                    logger.debug("Failed to index file: ${file.path}", e)
+                }
+            }
 
             indexLock.writeLock().withLock {
                 // 清理已删除文件
@@ -124,27 +148,12 @@ class SymbolIndex(private val project: Project) {
                     indexedFileHashes.remove(path)
                 }
 
-                var skipped = 0L
                 var analyzed = 0L
-
-                currentFiles.forEach { file ->
-                    val currentStamp = file.modificationStamp
-                    val existingStamp = indexedFileHashes[file.path]
-
-                    if (existingStamp != null && existingStamp == currentStamp) {
-                        skipped++
-                        return@forEach
-                    }
-
-                    try {
-                        val symbols = analyzeFile(file)
-                        removeFileSymbols(file.path)
-                        addFileSymbols(file.path, symbols)
-                        indexedFileHashes[file.path] = currentStamp
-                        analyzed++
-                    } catch (e: Exception) {
-                        logger.debug("Failed to index file: ${file.path}", e)
-                    }
+                fileUpdates.forEach { (file, symbols) ->
+                    removeFileSymbols(file.path)
+                    addFileSymbols(file.path, symbols)
+                    indexedFileHashes[file.path] = file.modificationStamp
+                    analyzed++
                 }
 
                 buildSkipCount.addAndGet(skipped)
@@ -160,6 +169,19 @@ class SymbolIndex(private val project: Project) {
             logger.info("Symbol index built: ${stats.uniqueNames} names, ${stats.indexedFiles} files in ${duration}ms")
         } catch (e: Exception) {
             logger.error("Failed to build symbol index", e)
+        }
+    }
+
+    private fun collectProjectFiles(): Set<VirtualFile> {
+        val scope = GlobalSearchScope.projectScope(project)
+        return mutableSetOf<VirtualFile>().apply {
+            listOf("kt", "java", "scala", "py", "js", "ts", "go", "rs", "cpp", "c", "h").forEach { ext ->
+                try {
+                    FilenameIndex.getAllFilesByExt(project, ext, scope).forEach { add(it) }
+                } catch (e: Exception) {
+                    logger.debug("Failed to get files for extension $ext", e)
+                }
+            }
         }
     }
 
@@ -291,9 +313,9 @@ class SymbolIndex(private val project: Project) {
      */
     fun updateFile(file: VirtualFile) {
         try {
+            val symbols = runInReadAction { analyzeFile(file) }
             indexLock.writeLock().withLock {
                 removeFileSymbols(file.path)
-                val symbols = analyzeFile(file)
                 addFileSymbols(file.path, symbols)
                 indexedFileHashes[file.path] = file.modificationStamp
                 version.incrementAndGet()
