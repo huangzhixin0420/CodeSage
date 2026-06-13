@@ -241,8 +241,20 @@ class SymbolIndex(private val project: Project) {
 
     /**
      * 获取索引统计
+     *
+     * 与其他读路径(searchSymbol/findByName 等)不同, getStats 之前从未调
+     * ensureIndexed() — 用户在项目刚打开、未跑过任何搜索时就调
+     * get_project_stats 会拿到全 0。修:
+     *   1. 先 ensureIndexed()(如未起过则 fire-and-forget 触发后台构建)
+     *   2. 若 indexingInProgress = true, 限时阻塞等待已完成 — 让 LLM 拿到的
+     *      stats 反映真实索引, 而不是 0
+     *   3. 等待上限 0 表示不等待(给单元测试和"对实时性敏感"的调用方用)
      */
-    fun getStats(): IndexStats {
+    fun getStats(waitMs: Long = DEFAULT_STATS_WAIT_MS): IndexStats {
+        ensureIndexed()
+        if (waitMs > 0) {
+            awaitIndexingDone(waitMs)
+        }
         return indexLock.readLock().withLock {
             val total = nameIndex.values.sumOf { it.size }
             val skips = buildSkipCount.get()
@@ -256,8 +268,21 @@ class SymbolIndex(private val project: Project) {
                 methodCount = typeIndex[PSIAnalyzer.SymbolType.METHOD]?.size ?: 0,
                 fieldCount = typeIndex[PSIAnalyzer.SymbolType.FIELD]?.size ?: 0,
                 cacheHitRate = if (totalBuildOps > 0) skips.toDouble() / totalBuildOps else 0.0,
-                indexVersion = version.get()
+                indexVersion = version.get(),
             )
+        }
+    }
+
+    /** 默认 getStats 阻塞上限,避免 LLM 工具调用卡死 IDE 太久。 */
+    private fun awaitIndexingDone(deadlineMs: Long) {
+        val deadline = System.currentTimeMillis() + deadlineMs
+        while (indexingInProgress.get() && System.currentTimeMillis() < deadline) {
+            try {
+                Thread.sleep(20)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
+            }
         }
     }
 
@@ -329,4 +354,12 @@ class SymbolIndex(private val project: Project) {
         val cacheHitRate: Double = 0.0,
         val indexVersion: Long = 0
     )
+
+    companion object {
+        /**
+         * getStats 默认阻塞上限 (3s)。大项目首扫可能更慢, 3s 拿到部分数据也好
+         * 过让 LLM 看到全 0; 真要等就用更长的 waitMs 显式调。
+         */
+        const val DEFAULT_STATS_WAIT_MS: Long = 3_000
+    }
 }

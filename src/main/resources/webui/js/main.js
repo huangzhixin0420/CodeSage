@@ -172,6 +172,11 @@ function handleBridgeMessage(msg) {
       case "theme":
         chat.setTheme(msg.theme);
         break;
+      case "laf":
+        document.body.setAttribute("data-laaf", msg.laf || "Default");
+        document.body.classList.toggle("is-islands", !!msg.isIslands);
+        chat.setTheme(msg.isDark ? "dark" : "light");
+        break;
       case "show_thinking":
         // 后端主动同步时忽略(本地状态为准)
         break;

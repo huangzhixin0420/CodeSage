@@ -55,6 +55,7 @@ export class MentionAutocomplete {
     this.textarea = opts.textarea;
     this.onSearch = opts.onSearch || null; // async (query) => [{ path, label, hint }]
     this.onSelect = opts.onSelect || null; // (item) => void
+    this.insertAsChip = opts.insertAsChip || false; // true = 不修改 textarea,交给 onSelect 渲染 chip
     this._popup = null;
     this._items = [];
     this._selectedIndex = 0;
@@ -226,6 +227,16 @@ export class MentionAutocomplete {
   _selectItem(index) {
     const item = this._items[index];
     if (!item || !this._triggerInfo) return;
+
+    if (this.insertAsChip) {
+      // chip 模式:不修改 textarea,由外部渲染 chip
+      if (this.onSelect) this.onSelect(item);
+      this._close();
+      // 触发 input 事件让外部更新
+      const win = this.textarea?.ownerDocument?.defaultView || window;
+      this.textarea.dispatchEvent(new win.Event("input", { bubbles: true }));
+      return;
+    }
 
     const { start, end } = this._triggerInfo;
     const value = this.textarea.value;

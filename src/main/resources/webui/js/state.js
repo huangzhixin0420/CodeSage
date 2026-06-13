@@ -15,6 +15,7 @@ const DEFAULTS = {
   mode: "agent", // agent | ask | manual
   currentModel: "",
   availableModels: [], // [{ provider, models: [...] }]
+  userName: "",
   showThinking: true,
   theme: "auto", // light | dark | auto
   currentTurnId: null,
@@ -68,6 +69,7 @@ export class AppState extends EventBus {
       for (const k of [
         "mode",
         "currentModel",
+        "userName",
         "showThinking",
         "theme",
         "draft",
@@ -87,6 +89,7 @@ export class AppState extends EventBus {
       for (const k of [
         "mode",
         "currentModel",
+        "userName",
         "showThinking",
         "theme",
         "draft",

@@ -112,18 +112,22 @@ export class PlanV2 {
             </div>
             ${this.description ? `<div class="plan-description">${escapeHtml(this.description)}</div>` : ""}
             <div class="plan-steps${isOpen ? " open" : ""}" data-cs-role="steps">
-                ${stepsHtml}
+                <ul class="plan-steps-inner">
+                    ${stepsHtml}
+                </ul>
             </div>
             <div class="plan-actions${isOpen && this.overall === "pending" && !this.editing ? " open" : ""}" data-cs-role="actions">
-                <button class="plan-action-btn primary" data-cs-action="approve">
-                    <i class="fas fa-check"></i> 批准
-                </button>
-                <button class="plan-action-btn" data-cs-action="modify">
-                    <i class="fas fa-pen"></i> 修改
-                </button>
-                <button class="plan-action-btn danger" data-cs-action="reject">
-                    <i class="fas fa-xmark"></i> 拒绝
-                </button>
+                <div class="plan-actions-inner">
+                    <button class="plan-action-btn primary" data-cs-action="approve">
+                        <i class="fas fa-check"></i> 批准
+                    </button>
+                    <button class="plan-action-btn" data-cs-action="modify">
+                        <i class="fas fa-pen"></i> 修改
+                    </button>
+                    <button class="plan-action-btn danger" data-cs-action="reject">
+                        <i class="fas fa-xmark"></i> 拒绝
+                    </button>
+                </div>
             </div>
             ${
               this.editing

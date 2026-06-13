@@ -141,14 +141,15 @@ open class ModelGateway(
                             emit(StreamChunk(id = responseId, delta = message.content))
                         }
                         // 工具调用（以增量形式发出，确保下游统一处理）
-                        message.toolCalls?.forEach { toolCall ->
+                        // 2026-06 修复：为每个 tool_call 分配递增的 index，避免 map key 冲突导致只保留最后一个。
+                        message.toolCalls?.forEachIndexed { idx, toolCall ->
                             emit(
                                 StreamChunk(
                                     id = responseId,
                                     delta = "",
                                     toolCallDeltas = listOf(
                                         StreamToolCallDelta(
-                                            index = 0,
+                                            index = idx,
                                             id = toolCall.id,
                                             name = toolCall.name,
                                             arguments = toolCall.arguments
@@ -182,9 +183,9 @@ open class ModelGateway(
         if (vendorRequest.length > 8 * 1024) {
             logger.warn(
                 "[Gateway.chatStream] Suspiciously large request " +
-                    "size=${vendorRequest.length}B, " +
-                    "firstMessageRoles=${request.messages.take(3).map { it.role }}; " +
-                    "this may indicate session contamination from parent agent"
+                        "size=${vendorRequest.length}B, " +
+                        "firstMessageRoles=${request.messages.take(3).map { it.role }}; " +
+                        "this may indicate session contamination from parent agent"
             )
         }
 
@@ -200,6 +201,12 @@ open class ModelGateway(
         var lastFinishReason: String? = null
 
         try {
+            // 重置 adapter 跨 turn 流式状态(<think> 状态机 + 累积 buffer)
+            // — 同 adapter 实例被多 turn 复用, 上一轮若未正常结束(inThinkBlock
+            // 残留 true) 会让下一轮正文被当 thinking。
+            if (adapter is com.codesage.model.adapter.OpenAICompatibleAdapter) {
+                adapter.resetStreamState()
+            }
             // 绑定 Call 句柄，让 cancelCurrentRequest() 能跨线程中断阻塞 IO
             val call = httpClient.newCall(req)
             currentCall.set(call)

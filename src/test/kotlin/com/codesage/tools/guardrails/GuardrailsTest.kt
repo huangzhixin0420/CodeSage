@@ -145,7 +145,9 @@ class GuardrailsTest {
     }
 
     @Test
-    fun `dangerous command should be denied without confirmation`() = runBlocking {
+    fun `dangerous command is allowed when user grants ALLOW_PERMANENTLY in confirmation dialog`() = runBlocking {
+        // 2026-06 P1:危险命令不再 silent deny,改为 REQUIRES_CONFIRMATION 走弹框。
+        // 用户在弹框里点"永久允许"后,后续调用应直接放行。
         val callback = object : ToolGuardrails.ConfirmationCallback {
             override suspend fun requestConfirmation(
                 toolName: String,
@@ -158,6 +160,25 @@ class GuardrailsTest {
         val guardrails = ToolGuardrails(confirmationCallback = callback)
         val result = guardrails.preCheck("run_command", mapOf("command" to "rm -rf /"), "call_6")
 
+        assertTrue(
+            result is ToolGuardrails.PreCheckResult.Allowed,
+            "用户选择永久允许后,危险命令应被放行,实际: $result"
+        )
+    }
+
+    @Test
+    fun `dangerous command is denied in headless mode (no callback)`() = runBlocking {
+        // 2026-06 P1:Headless 模式(confirmationCallback = null)下危险命令默认拒绝,
+        // 但走的是 CONFIRMATION_DENIED 路径(reason 中含"User declined"),而不是
+        // 旧版的 POLICY_VIOLATION 静默拒绝。
+        val guardrails = ToolGuardrails()  // no callback
+        val result = guardrails.preCheck("run_command", mapOf("command" to "rm -rf /"), "call_7")
+
         assertTrue(result is ToolGuardrails.PreCheckResult.Denied)
+        assertTrue(
+            (result as ToolGuardrails.PreCheckResult.Denied).reason.contains("declined", ignoreCase = true) ||
+                result.reason.contains("拒绝", ignoreCase = true),
+            "Headless 模式默认拒绝应标记为 declined,实际: ${result.reason}"
+        )
     }
 }

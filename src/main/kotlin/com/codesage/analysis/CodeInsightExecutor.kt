@@ -33,6 +33,13 @@ class CodeInsightExecutor(
     private val semanticSearch: SemanticSearch? =
         semanticSearchOverride ?: project?.let { SemanticSearch(it, symbolIndex ?: SymbolIndex(it)) }
 
+    init {
+        // 项目打开 / 工具实例化时 fire-and-forget 预热符号索引, 让 LLM
+        // 第一次调 get_project_stats / search_symbol 等时能拿到非 0 数据
+        // (SymbolIndex.getStats() 自身也有 3s 阻塞等兜底)。
+        symbolIndex?.buildIndex()
+    }
+
     //region analyze_symbol
 
     /**

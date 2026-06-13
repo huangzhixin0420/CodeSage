@@ -7,8 +7,8 @@ import com.codesage.shared.utils.Logger
  * 防止工具输出过长消耗过多token
  */
 class OutputTruncator(
-    private val defaultMaxLength: Int = 8000,
-    private val defaultMaxLines: Int = 200
+    val defaultMaxLength: Int = DEFAULT_MAX_LENGTH,
+    val defaultMaxLines: Int = DEFAULT_MAX_LINES
 ) {
     private val logger = Logger.getLogger<OutputTruncator>()
 
@@ -351,5 +351,10 @@ class OutputTruncator(
     private fun appendTruncationNotice(content: String, originalLines: Int, keptLines: Int): String {
         if (originalLines <= keptLines) return content
         return "$content\n\n[Output truncated...] (truncated from $originalLines lines)"
+    }
+
+    companion object {
+        const val DEFAULT_MAX_LENGTH = 8000
+        const val DEFAULT_MAX_LINES = 200
     }
 }

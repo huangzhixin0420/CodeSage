@@ -60,17 +60,32 @@ object SensitiveActionPolicy {
     )
 
     // 危险命令模式
-    private val DANGEROUS_COMMANDS = listOf(
+    //
+    // 拆分两类,避免"裸单词"子串匹配误报:
+    // - DANGEROUS_COMMAND_PHRASES:带显著前导符的短语("rm -rf"、"dd if="、fork 炸弹、Win del/rd 全选项),
+    //   用纯子串匹配即可(这些短语不可能合法出现在普通命令里)。
+    // - DANGEROUS_COMMAND_WORDS:单词型工具名(mkfs / fdisk / format),用 regex \b{word}\b
+    //   整词匹配,避免 `git log --format=%h`、`fdisk-ish` 这类合法用法被误判。
+    //
+    // 根因:2026-06 用户在 MiniMax-M3 对话中触发 --pretty=format:"%h %s %ad" 被旧版"format"子串误判。
+    private val DANGEROUS_COMMAND_PHRASES = listOf(
         "rm -rf",
         "rm -r /",
         "rm -rf /",
         "dd if=",
         ":(){ :|:& };:",
-        "mkfs",
-        "fdisk",
-        "format",
         "del /f /s /q",
         "rd /s /q"
+    )
+
+    private val DANGEROUS_COMMAND_WORDS = listOf(
+        Regex("""\bmkfs(?:[.\-][a-z0-9]+)?\b"""),  // mkfs, mkfs.ext4, mkfs-fat
+        Regex("""\bfdisk\b""")
+        // 注:format 命令已移除。理由:
+        //   1) "format" 作为合法参数值高频出现 (--format=、--pretty=format:、strftime format 等),
+        //      即便用  整词匹配也会被 --pretty=format:%h 这种命令误报;
+        //   2) Windows "format C:" 在 IDE agent 上下文几乎不会触发;
+        //   3) 真要格式化磁盘,让用户在终端手工执行,不需要 AI 工具代为跑。
     )
 
     // 写入保护的文件模式（通常不应被AI修改）
@@ -224,27 +239,34 @@ object SensitiveActionPolicy {
 
     /**
      * 评估执行命令操作
-     * 使用token化和模式匹配，比简单字符串contains更安全
+     *
+     * 设计原则（2026-06 P1 调整）:不再使用黑盒黑名单静默拒绝。
+     * - 危险命令(rm -rf /、dd、mkfs、fdisk、fork 炸弹等)统一走 [REQUIRES_CONFIRMATION] +
+     *   [RiskLevel.DANGEROUS],由用户在弹框里自主选择是否执行。
+     * - 这样既保留高风险命令的用户感知(明显的 DANGEROUS 标签 + 完整命令展示),
+     *   又避免黑名单误报(如 --pretty=format:%h)导致用户完全无法绕过。
+     * - 真正的"安全拦截"只用于明确的非用户意图场景:路径穿越、写入保护文件、删除项目关键配置,
+     *   这些在 [evaluateDelete] / [evaluateWrite] / [evaluateMove] 里以 [BLOCKED] 处理。
      */
     fun evaluateCommand(command: String): PolicyDecision {
         val lowerCommand = command.lowercase()
         val tokens = tokenizeCommand(lowerCommand)
 
-        // 检查危险命令模式（token级别匹配，更难绕过）——绝对禁止
+        // 危险命令模式 —— 一律弹框确认,不再静默拒绝
         if (matchesDangerousPattern(tokens, lowerCommand)) {
             return PolicyDecision(
-                verdict = PolicyDecision.Verdict.BLOCKED,
+                verdict = PolicyDecision.Verdict.REQUIRES_CONFIRMATION,
                 riskLevel = RiskLevel.DANGEROUS,
-                reason = "Dangerous command detected: ${command.take(50)}"
+                reason = "危险命令,需要确认: ${command.take(80)}"
             )
         }
 
-        // 检查网络相关命令（可能有安全风险，需要确认）
+        // 网络相关命令(可能有安全风险,需要确认)
         if (tokens.any { it == "curl" || it == "wget" || it == "nc" || it == "netcat" }) {
             return PolicyDecision(
                 verdict = PolicyDecision.Verdict.REQUIRES_CONFIRMATION,
                 riskLevel = RiskLevel.CAUTION,
-                reason = "Network command requires caution: ${command.take(50)}"
+                reason = "Network command requires caution: ${command.take(80)}"
             )
         }
 
@@ -279,13 +301,13 @@ object SensitiveActionPolicy {
             }
         }
 
-        // 2. 检查已知的危险模式（原始字符串级别的精确匹配）
-        if (DANGEROUS_COMMANDS.any { rawCommand.contains(it.lowercase()) }) {
+        // 2. 检查已知的危险短语(带前导符的,如 "rm -rf"、"dd if="、fork 炸弹、Win del/rd 全选项)
+        if (DANGEROUS_COMMAND_PHRASES.any { rawCommand.contains(it.lowercase()) }) {
             return true
         }
 
-        // 3. 检查fork炸弹等畸形模式
-        if (rawCommand.contains(":(){ :|:& };:")) {
+        // 3. 检查单词型危险命令(mkfs / fdisk)—— 整词匹配
+        if (DANGEROUS_COMMAND_WORDS.any { it.containsMatchIn(rawCommand) }) {
             return true
         }
 

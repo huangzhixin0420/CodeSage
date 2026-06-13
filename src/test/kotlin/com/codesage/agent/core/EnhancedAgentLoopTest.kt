@@ -2,11 +2,19 @@ package com.codesage.agent.core
 
 import com.codesage.agent.context.ContextManager
 import com.codesage.agent.tools.ToolExecutor
+import com.codesage.agent.tools.ToolResult
+import com.codesage.agent.tools.ToolHandler
 import com.codesage.agent.tools.ToolRegistry
 import com.codesage.model.adapter.ModelAdapter
 import com.codesage.model.dto.*
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.intOrNull
 import com.codesage.model.gateway.ModelGateway
 import kotlinx.coroutines.*
+import kotlin.system.measureTimeMillis
 import kotlinx.coroutines.flow.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
@@ -636,6 +644,124 @@ class EnhancedAgentLoopTest {
         )
         // 关键：assistant 的文本 content 保留不变（用户能看到的部分不被破坏）
         assertEquals("I will read two files.", assistant.content)
+    }
+
+    /**
+     * 验证同一轮返回的多个 tool_call 被并行执行,且结果按原始顺序 emit。
+     */
+    @Test
+    fun `multiple tool calls in single turn execute in parallel and preserve order`() = runBlocking {
+        val delayPerToolMs = 100L
+        val toolCount = 4
+
+        // 注册一个会 delay 的测试工具,用于验证并行度
+        val registry = ToolRegistry().apply {
+            register(object : ToolHandler {
+                override val tool: Tool = Tool(
+                    name = "parallel_test_tool",
+                    description = "Test tool for parallel execution",
+                    parameters = ToolParameters(
+                        properties = mapOf(
+                            "index" to ToolProperty(type = "integer", description = "tool index")
+                        ),
+                        required = listOf("index")
+                    )
+                )
+
+                override suspend fun execute(args: JsonObject): ToolResult {
+                    val index = args["index"]?.jsonPrimitive?.intOrNull ?: -1
+                    delay(delayPerToolMs)
+                    return ToolResult.Success(
+                        buildJsonObject {
+                            put("success", JsonPrimitive(true))
+                            put("index", JsonPrimitive(index))
+                        }
+                    )
+                }
+            })
+        }
+
+        val gateway = object : ModelGateway() {
+            private var callCount = 0
+            override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
+            override suspend fun chat(request: ChatRequest): Result<ChatResponse> {
+                callCount++
+                return if (callCount == 1) {
+                    Result.success(
+                        ChatResponse(
+                            id = "test_tools",
+                            model = request.model,
+                            choices = listOf(
+                                Choice(
+                                    index = 0,
+                                    message = Message(
+                                        role = Role.ASSISTANT,
+                                        content = "",
+                                        toolCalls = (0 until toolCount).map { i ->
+                                            ToolCall(
+                                                id = "tool_$i",
+                                                name = "parallel_test_tool",
+                                                arguments = "{\"index\": $i}"
+                                            )
+                                        }
+                                    ),
+                                    finishReason = "tool_calls"
+                                )
+                            ),
+                            usage = null
+                        )
+                    )
+                } else {
+                    Result.success(
+                        ChatResponse(
+                            id = "test_final",
+                            model = request.model,
+                            choices = listOf(
+                                Choice(
+                                    index = 0,
+                                    message = Message.assistantMessage("Done"),
+                                    finishReason = "stop"
+                                )
+                            ),
+                            usage = null
+                        )
+                    )
+                }
+            }
+        }
+
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = registry,
+            toolExecutor = ToolExecutor(null, toolRegistry = registry),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+
+        val contextManager = ContextManager()
+        val session = AgentSession(id = "test_parallel")
+
+        val durationMs = measureTimeMillis {
+            loop.run(
+                userMessage = "Run parallel tools",
+                session = session,
+                contextManager = contextManager,
+                currentModel = "test-model",
+                systemPrompt = "You are a test assistant"
+            ).toList()
+        }
+
+        // 串行执行需要约 toolCount * delayPerToolMs = 400ms;并行应明显低于此
+        assertTrue(
+            durationMs < delayPerToolMs * toolCount * 0.6,
+            "Expected parallel execution (< ${delayPerToolMs * toolCount * 0.6}ms), got ${durationMs}ms"
+        )
+
+        // 验证工具结果按原始顺序整合到上下文
+        val toolMessages = contextManager.getContext().filter { it.role == Role.TOOL }
+        assertEquals(toolCount, toolMessages.size, "Should have $toolCount tool results in context")
+        toolMessages.forEachIndexed { i, msg ->
+            assertEquals("tool_$i", msg.toolCallId, "Tool result order should match original toolCalls")
+        }
     }
 
     // ===== helpers for new tests =====

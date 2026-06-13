@@ -46,6 +46,7 @@ import { Plan } from "../components/cs-plan.js";
 import { PlanV2 } from "../components/cs-plan-v2.js";
 import { AgentDashboard } from "../components/cs-agent-dashboard.js";
 import { MentionAutocomplete } from "../components/cs-mention.js";
+import { ContextChips } from "../components/cs-context-chips.js";
 import { CsArtifact } from "../components/cs-artifact.js";
 import { RunLogBuilder } from "../run-log.js";
 import { MessageVirtualizer } from "../message-virtualizer.js";
@@ -56,6 +57,7 @@ import { bridge } from "../bridge.js";
 import { state } from "../state.js";
 import { renderMarkdown, preloadMarkdown } from "../markdown.js";
 import { enhanceCodeBlocks } from "../markdown.js";
+import { icon } from "../icons.js";
 import {
   escapeHtml,
   scrollToBottom,
@@ -64,6 +66,21 @@ import {
   genId,
   formatDuration,
 } from "../utils.js";
+
+/** 从用户名取首字母;无则默认 U */
+function getUserInitial(name = "") {
+  return (name.trim()[0] || "U").toUpperCase();
+}
+
+/** 将字符串映射为稳定的 HSL 背景色 */
+function stringToHslColor(str, s = 65, l = 48) {
+  let hash = 0;
+  for (let i = 0; i < (str || "").length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const h = Math.abs(hash % 360);
+  return `hsl(${h} ${s}% ${l}%)`;
+}
 
 // ===== 简易 toast 兜底(若 cs-toast 没暴露) =====
 const _toast = window.CodeSage?.toast ||
@@ -84,10 +101,12 @@ class ChatView {
     this.artifacts = new Map(); // artifactId -> CsArtifact
     this.runLogBuilder = new RunLogBuilder(); // RunLog 数据层
     this._isGenerating = false;
-    this._currentStreamSegment = null; // 当前 turn 内最后一段 text stream
+    this._currentStreamSegment = null;
+    this._messageVirtualizer?.unpin(turn.el); // 当前 turn 内最后一段 text stream
     this._sidebar = null;
     this._scrollLocked = false; // 用户手动上滚后锁定自动滚
     this._inputAttachments = [];
+    this._contextChips = null;
     this._chatMode = null; // null = 后端建议
     this._commandPalette = null;
   }
@@ -106,6 +125,8 @@ class ChatView {
       this.statusLine = document.getElementById("status-line");
       this.statusText = document.getElementById("status-text");
       this.inputAttachmentsEl = document.getElementById("input-attachments");
+      this.contextChipsEl = document.getElementById("context-chips");
+      this.inputContainer = document.getElementById("input-container");
       this.hintModel = document.getElementById("hint-model");
       this.sessionTitleEl = document.getElementById("session-title");
       this.appContainer = document.getElementById("app-container");
@@ -204,6 +225,7 @@ class ChatView {
     const cur = document.documentElement.getAttribute("data-theme");
     const next = cur === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", next);
+    document.body?.setAttribute("data-theme", next);
     const hljsLight = document.getElementById("hljs-theme-light");
     const hljsDark = document.getElementById("hljs-theme-dark");
     if (hljsLight) hljsLight.disabled = next === "dark";
@@ -215,6 +237,7 @@ class ChatView {
 
   setTheme(theme) {
     document.documentElement.setAttribute("data-theme", theme);
+    document.body?.setAttribute("data-theme", theme);
     const hljsLight = document.getElementById("hljs-theme-light");
     const hljsDark = document.getElementById("hljs-theme-dark");
     if (hljsLight) hljsLight.disabled = theme === "dark";
@@ -382,10 +405,23 @@ class ChatView {
     };
     ta.addEventListener("input", autoResize);
 
+    // 上下文 chip 区
+    this._contextChips = new ContextChips({
+      container: this.contextChipsEl,
+      onChange: (summary) => {
+        // token 超限视觉反馈由 ContextChips 自己处理
+        if (summary.overLimit) {
+          _toast?.warning?.("上下文 token 已超出限制,部分引用可能不会被发送");
+        }
+      },
+    });
+
     // 提交
     const submit = () => {
       const v = ta.value;
-      if (!v.trim() && this._inputAttachments.length === 0) return;
+      const hasChips =
+        this._contextChips && this._contextChips.getItems().length > 0;
+      if (!v.trim() && this._inputAttachments.length === 0 && !hasChips) return;
       if (this._isGenerating) {
         this._interrupt();
         return;
@@ -414,12 +450,12 @@ class ChatView {
       ta.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    // @/# 自动补全
+    // @/# 自动补全 — v2.2 改为 chip 模式
     this._mentionAutocomplete = new MentionAutocomplete({
       textarea: ta,
+      insertAsChip: true,
       onSearch: async (query) => {
-        // 优先走后端 file_search；bridge 未就绪时返回空，让 fallback 候选生效。
-        // 后端可推送 file_search_results 事件，main.js 可将其写入 window.__cs_file_search_results。
+        // 优先走后端 file_search;bridge 未就绪时返回空,让 fallback 候选生效。
         if (!bridge.bridgeReady) return [];
         bridge.send({ type: "file_search", query });
         if (window.__cs_file_search_results) {
@@ -430,8 +466,138 @@ class ChatView {
         return [];
       },
       onSelect: (item) => {
-        console.log("[chat] mention selected:", item);
+        if (!this._contextChips) return;
+        if (item.type === "file") {
+          this._contextChips.add({
+            type: "file",
+            value: item.value,
+            label: item.label || item.value,
+            icon: "fa-file-code",
+          });
+        } else if (item.type === "context") {
+          this._contextChips.add({
+            type: "context",
+            value: item.value,
+            label: item.label,
+            icon: "fa-i-cursor",
+          });
+        }
       },
+    });
+
+    // 拖拽 / 粘贴增强
+    this._initDragAndPaste();
+  }
+
+  /**
+   * 拖拽 / 粘贴增强
+   *   - 拖拽文件进入高亮为 drop zone
+   *   - 图片粘贴后显示大图预览
+   *   - 拖拽文本(IDE 选区)自动插入 #selection chip
+   */
+  _initDragAndPaste() {
+    const container = this.inputContainer;
+    const ta = this.inputTextarea;
+    if (!container || !ta) return;
+
+    const setDrop = (active) => {
+      container.classList.toggle("drop-active", active);
+    };
+
+    container.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDrop(true);
+    });
+    container.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // 有文件才显示 drop zone
+      if (e.dataTransfer?.types?.includes("Files")) {
+        setDrop(true);
+      }
+    });
+    container.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!container.contains(e.relatedTarget)) setDrop(false);
+    });
+    container.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDrop(false);
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        for (const file of files) {
+          if (file.type.startsWith("image/")) {
+            const data = await this._readFileAsDataURL(file);
+            this._inputAttachments.push({
+              type: "image",
+              name: file.name,
+              data,
+              size: data.length,
+            });
+          } else {
+            this._contextChips?.add({
+              type: "file",
+              value: file.name,
+              label: file.name,
+              icon: "fa-file",
+              size: file.size,
+            });
+          }
+        }
+        this._renderInputAttachments();
+        _toast?.info?.("已附加拖拽内容");
+        return;
+      }
+      const text = e.dataTransfer?.getData("text/plain");
+      if (text) {
+        this._contextChips?.add({
+          type: "context",
+          value: "selection",
+          label: "#selection",
+          icon: "fa-i-cursor",
+        });
+        _toast?.info?.("已添加当前选区 #selection");
+      }
+    });
+
+    ta.addEventListener("paste", (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      let hasImage = false;
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (!file) continue;
+          hasImage = true;
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const data = ev.target.result;
+            this._inputAttachments.push({
+              type: "image",
+              name: file.name || "pasted-image.png",
+              data,
+              size: data.length,
+            });
+            this._renderInputAttachments();
+          };
+          reader.readAsDataURL(file);
+        }
+      }
+      if (hasImage) {
+        _toast?.info?.("已粘贴图片,点击可预览大图");
+      }
+    });
+  }
+
+  _readFileAsDataURL(file) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.readAsDataURL(file);
     });
   }
 
@@ -480,17 +646,25 @@ class ChatView {
 
   _send(text) {
     const v = text.trim();
+    // 将上下文 chip 解析为文本引用和 fileRefs
+    const chipPayload = this._contextChips?.toPayload() || {
+      text: "",
+      fileRefs: [],
+    };
+    const messageText = chipPayload.text ? `${chipPayload.text}\n${v}` : v;
     this.inputTextarea.value = "";
     this.inputTextarea.style.height = "auto";
     // attachments 通过 bridge 传给后端,不在前端渲染
     bridge.send({
       type: "send_message",
-      message: v,
+      message: messageText,
       images: this._inputAttachments.map((a) => a.data),
+      fileRefs: chipPayload.fileRefs,
       userLanguage: "zh-CN",
     });
     this._inputAttachments = [];
     this._renderInputAttachments();
+    this._contextChips?.clear();
   }
 
   _interrupt() {
@@ -533,45 +707,25 @@ class ChatView {
 
   // ============ 文件引用(Cursor 风格 @file) ============
   //
-  // Kotlin 在文件选择器选完文件后推 file_references_added,我们在 textarea
-  // 光标处插入 `@relativePath `,用户继续输入问题,发送时
-  // FileReferenceResolver.resolveReferences() 会读这些文件内容并注入上下文。
-  //
-  // 设计要点:
-  //   - 在光标处插入(不是全选覆盖),不打断用户已输入的内容
-  //   - 多个文件用空格分隔,统一加一个尾随空格,用户可直接继续打字
-  //   - 插入后聚焦 textarea 并把光标放到插入文本末尾
-  //   - 触发一次 autoResize,避免输入框高度不刷新
-  //   - toast 反馈:点击反馈立刻可见,免得"没反应"
+  // Kotlin 在文件选择器选完文件后推 file_references_added。
+  // v2.2:改为渲染成上下文 chip,而不是直接塞进 textarea,避免干扰用户输入
+  // 并支持 token 预算可视化。发送时 chip 会解析为 @path 文本。
   _onFileReferencesAdded(refs) {
     if (!refs || refs.length === 0) return;
     // 清掉 _requestAttach 的 8s 超时,避免误报"选择器未响应"
     this._clearPendingAttach();
-    const ta = this.inputTextarea;
-    if (!ta) return;
 
-    const mentions = refs
-      .map((r) => `@${r.relativePath || r.name || r.path || ""}`)
-      .filter((s) => s.length > 1) // 跳过空名
-      .join(" ");
-    if (!mentions) return;
-    const insertion = mentions + " ";
-
-    // 在 selectionStart / selectionEnd 处插入(光标或选区都支持)
-    const start = ta.selectionStart ?? ta.value.length;
-    const end = ta.selectionEnd ?? ta.value.length;
-    const before = ta.value.slice(0, start);
-    const after = ta.value.slice(end);
-    ta.value = before + insertion + after;
-
-    // 光标放到插入文本末尾
-    const cursor = start + insertion.length;
-    ta.setSelectionRange(cursor, cursor);
-    ta.focus();
-
-    // autoResize 同步,否则高度还停在插入前
-    ta.style.height = "auto";
-    ta.style.height = Math.min(ta.scrollHeight, 240) + "px";
+    for (const r of refs) {
+      const path = r.relativePath || r.name || r.path || "";
+      if (!path) continue;
+      this._contextChips?.add({
+        type: "file",
+        value: path,
+        label: r.name || path,
+        icon: "fa-file-code",
+        size: r.size || 0,
+      });
+    }
 
     // 反馈:首文件 + 数量提示
     const first = refs[0];
@@ -603,8 +757,8 @@ class ChatView {
               ? ` · ${fmtSize(a.size)}`
               : "";
           return `
-                        <div class="input-attachment${isTooLarge ? " too-large" : ""}" title="${escapeHtml(a.name || "image")}${sizeLabel}">
-                            <img class="input-attachment-thumb" src="${escapeHtml(a.data)}" alt="" />
+                        <div class="input-attachment image-attachment${isTooLarge ? " too-large" : ""}" title="${escapeHtml(a.name || "image")}${sizeLabel}" data-cs-idx="${i}">
+                            <img class="input-attachment-preview" src="${escapeHtml(a.data)}" alt="" data-cs-action="preview" />
                             <span class="input-attachment-name">${escapeHtml(a.name || "image")}${sizeLabel}</span>
                             <button class="input-attachment-remove" data-cs-idx="${i}" aria-label="移除">
                                 <i class="fas fa-xmark"></i>
@@ -630,6 +784,16 @@ class ChatView {
           const idx = parseInt(btn.dataset.csIdx, 10);
           this._inputAttachments.splice(idx, 1);
           this._renderInputAttachments();
+        });
+      });
+
+    // 图片点击切换大图预览
+    this.inputAttachmentsEl
+      .querySelectorAll('.input-attachment-preview[data-cs-action="preview"]')
+      .forEach((img) => {
+        img.addEventListener("click", () => {
+          const attachment = img.closest(".input-attachment");
+          attachment?.classList.toggle("expanded");
         });
       });
   }
@@ -753,6 +917,7 @@ class ChatView {
     for (const art of this.artifacts.values()) art.destroy();
     this.artifacts.clear();
     this._messageVirtualizer?.clear();
+    this._contextChips?.clear();
     this.runLogBuilder = new RunLogBuilder();
     this._isGenerating = false;
     // 兼容调用方不传参(旧 loadHistory 路径):默认保留草稿,
@@ -767,16 +932,26 @@ class ChatView {
     }
     this._inputAttachments = [];
     this._renderInputAttachments();
+    this._contextChips?.clear();
     this._setStatus("就绪", "idle");
     this._swapSendButton(false);
   }
 
   // ============ User Message ============
 
+  _computeStaggerDelay() {
+    const count = this.messagesInner?.querySelectorAll(".message").length || 0;
+    return `${Math.min(count * 30, 200)}ms`;
+  }
+
   addUserMessage(text, attachments = [], fileRefs = []) {
     this.hideWelcome();
     const div = document.createElement("div");
     div.className = "message message-user";
+    div.style.setProperty("--msg-stagger", this._computeStaggerDelay());
+    const userName = state.get("userName") || "User";
+    const userInitial = getUserInitial(userName);
+    const userAvatarBg = stringToHslColor(userName);
     const refsHtml =
       fileRefs && fileRefs.length
         ? `<div class="file-refs">${fileRefs
@@ -796,18 +971,28 @@ class ChatView {
     const attHtml = imgs ? `<div class="user-attachments">${imgs}</div>` : "";
     div.innerHTML = `
             <div class="message-row user">
-                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:85%;">
+                <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;max-width:var(--user-bubble-max-width);">
                     ${refsHtml}
                     <div class="user-bubble">${escapeHtml(text)}</div>
                     ${attHtml}
                 </div>
-                <div class="avatar avatar-user" aria-hidden="true">
-                    <i class="fas fa-user"></i>
+                <div class="avatar avatar-user" aria-hidden="true" style="--user-avatar-bg: ${escapeHtml(userAvatarBg)}">
+                    ${escapeHtml(userInitial)}
                 </div>
             </div>
         `;
     this.messagesInner.appendChild(div);
     this._messageVirtualizer?.add(div);
+
+    // 等待首字节指示器:在 AI turn 开始前显示
+    const indicator = document.createElement("div");
+    indicator.className = "loading-indicator";
+    indicator.dataset.csRole = "submitted-indicator";
+    indicator.innerHTML = `<span class="loading-indicator-dot"></span><span class="loading-indicator-dot"></span><span class="loading-indicator-dot"></span>`;
+    this.messagesInner.appendChild(indicator);
+    this._pendingIndicator = indicator;
+    this._messageVirtualizer?.add(indicator);
+
     this._maybeScrollToBottom(true);
   }
 
@@ -824,6 +1009,10 @@ class ChatView {
       turnId: resolvedTurnId,
     });
     this.hideWelcome();
+    // 移除等待首字节指示器
+    this._pendingIndicator?.remove();
+    this._pendingIndicator = null;
+
     this._isGenerating = true;
     this._scrollLocked = false;
     const startTime = Date.now();
@@ -856,10 +1045,11 @@ class ChatView {
     const el = document.createElement("div");
     el.className = "message message-assistant";
     el.id = resolvedTurnId;
+    el.style.setProperty("--msg-stagger", this._computeStaggerDelay());
     el.innerHTML = `
             <div class="message-row">
                 <div class="avatar avatar-assistant" aria-hidden="true">
-                    <i class="fas fa-leaf"></i>
+                    ${icon("logo")}
                 </div>
                 <div class="assistant-body">
                     <div class="message-header">
@@ -883,6 +1073,7 @@ class ChatView {
         `;
     this.messagesInner.appendChild(el);
     this._messageVirtualizer?.add(el);
+    this._messageVirtualizer?.pin(el); // 流式 turn 不回收
     turn.el = el;
     turn.body = el.querySelector(".assistant-body");
     turn.content = el.querySelector('[data-cs-role="content"]');
@@ -1455,6 +1646,9 @@ class ChatView {
     this.runLogBuilder.processEvent({ type: "error", turnId, message });
     this._isGenerating = false;
     this._currentStreamSegment = null;
+    // 清理可能存在的等待首字节指示器
+    this._pendingIndicator?.remove();
+    this._pendingIndicator = null;
     const turn = this.turns.get(turnId);
     if (turn) {
       clearInterval(turn.timerInterval);

@@ -262,4 +262,106 @@ class SymbolIndexTest {
         assertTrue(stats.indexVersion > 0)
         assertEquals(0.0, stats.cacheHitRate, 0.001)
     }
-}
+
+    // ========== getStats 等待行为 (修复 get_project_stats 全 0 回归) ==========
+
+    /**
+     * 模拟 SymbolIndex 启动后立即 getStats() (用户从未调过搜索/搜索类工具)。
+     * 修复前: 全 0。修复后: getStats 主动 ensureIndexed + 限时等, 拿到真实数据。
+     *
+     * 用 buildIndex() 异步 + 1000ms waitMs 验证:
+     *   - 在 waitMs 内能等到 indexingInProgress 翻为 false
+     *   - 最终 stats 与 buildIndex 注入的符号一致
+     */
+    @Test
+    fun `getStats triggers indexing and waits for completion when not yet built`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+
+        val fileA = createVirtualFile("/test/A.kt", 1L)
+        val fileB = createVirtualFile("/test/B.kt", 2L)
+        symbolIndex.testFileProvider = { setOf(fileA, fileB) }
+        // 用 fileAnalyzer 直接给符号, 不走 PSI 解析(测试只关心索引管线)
+        symbolIndex.fileAnalyzer = { file ->
+            listOf(
+                PSIAnalyzer.SymbolInfo(
+                    name = "Sym_${file.name}",
+                    type = PSIAnalyzer.SymbolType.CLASS,
+                    qualifiedName = null,
+                    filePath = file.path,
+                    lineNumber = 1,
+                    docComment = null,
+                    modifiers = emptyList(),
+                )
+            )
+        }
+
+        // 还没 build 过, getStats 应触发并阻塞等到完成
+        val stats = symbolIndex.getStats(waitMs = SymbolIndex.DEFAULT_STATS_WAIT_MS)
+
+        assertEquals(2, stats.indexedFiles, "应等异步 buildIndex 完成, 索引 2 个文件")
+        assertEquals(2, stats.classCount, "应有 2 个 CLASS 符号")
+        assertEquals(2, stats.uniqueNames)
+        assertEquals(2, stats.totalSymbols)
+    }
+
+    /**
+     * waitMs=0 时不阻塞, 立即返回当前快照(可能仍是 0, 用于测试或实时敏感调用方)。
+     */
+    @Test
+    fun `getStats with waitMs=0 does not block`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+        val fileA = createVirtualFile("/test/A.kt", 1L)
+        symbolIndex.testFileProvider = { setOf(fileA) }
+        symbolIndex.fileAnalyzer = { file ->
+            listOf(
+                PSIAnalyzer.SymbolInfo(
+                    name = "Sym",
+                    type = PSIAnalyzer.SymbolType.CLASS,
+                    qualifiedName = null,
+                    filePath = file.path,
+                    lineNumber = 1,
+                    docComment = null,
+                    modifiers = emptyList(),
+                )
+            )
+        }
+
+        // waitMs=0: 立即返回, 不等异步 buildIndex
+        val stats = symbolIndex.getStats(waitMs = 0)
+        assertEquals(0, stats.indexedFiles, "waitMs=0 不阻塞, 拿到的是 buildIndex 启动前的快照")
+    }
+
+    /**
+     * 第二次 getStats 时 buildIndex 已完成, 不应再触发新 build, 也不阻塞。
+     */
+    @Test
+    fun `getStats after manual build is fast and reflects data`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+        val fileA = createVirtualFile("/test/A.kt", 1L)
+        symbolIndex.testFileProvider = { setOf(fileA) }
+        symbolIndex.fileAnalyzer = { file ->
+            listOf(
+                PSIAnalyzer.SymbolInfo(
+                    name = "Sym",
+                    type = PSIAnalyzer.SymbolType.METHOD,
+                    qualifiedName = null,
+                    filePath = file.path,
+                    lineNumber = 1,
+                    docComment = null,
+                    modifiers = emptyList(),
+                )
+            )
+        }
+
+        symbolIndex.buildIndexSync()
+        // 已经 build 过, indexingInProgress=false, getStats 不阻塞
+        val t0 = System.currentTimeMillis()
+        val stats = symbolIndex.getStats(waitMs = SymbolIndex.DEFAULT_STATS_WAIT_MS)
+        val elapsed = System.currentTimeMillis() - t0
+        assertTrue(elapsed < 100, "已 build 后 getStats 应是 O(1), 实测 ${elapsed}ms")
+        assertEquals(1, stats.indexedFiles)
+        assertEquals(1, stats.methodCount)
+    }}

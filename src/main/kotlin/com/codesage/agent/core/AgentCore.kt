@@ -1,5 +1,6 @@
 package com.codesage.agent.core
 
+import com.codesage.agent.context.ContextBudgetManager
 import com.codesage.agent.context.ContextManager
 import com.codesage.agent.memory.MemoryManager
 import com.codesage.agent.memory.MemoryNudger
@@ -11,6 +12,7 @@ import com.codesage.agent.tools.SkillToolAdapter
 import com.codesage.agent.tools.ToolExecutor
 import com.codesage.agent.tools.ToolProvider
 import com.codesage.agent.tools.ToolRegistry
+import com.codesage.agent.tools.handlers.ContextToolHandlers
 import com.codesage.model.dto.*
 import com.codesage.model.gateway.ModelGateway
 import com.codesage.mcp.server.MCPServerManager
@@ -181,12 +183,19 @@ open class AgentCore(
     // 可观测性（T7.2：提前初始化供 ToolExecutor 使用）
     private val tracer: ExecutionTracer = ExecutionTracer()
 
+    // Phase 5: 上下文预算管理器（跨会话共享实例，通过 provider 绑定当前会话）
+    private val contextBudgetManager: ContextBudgetManager = ContextBudgetManager()
+
     // 工具系统
     // 注意：override 优先于 createDefault()，供子 Agent 按 toolset 过滤使用。
     // initialize() 仍会向其注册 memory tools / skills / 插件贡献的 tools。
     private val toolRegistry: ToolRegistry = toolRegistryOverride ?: ToolRegistry.createDefault(project)
     private val guardrails: ToolGuardrails? = project?.let {
-        ToolGuardrails(projectRoot = it.basePath, confirmationCallback = confirmationCallback)
+        ToolGuardrails(
+            projectRoot = it.basePath,
+            confirmationCallback = confirmationCallback,
+            contextBudgetManager = contextBudgetManager
+        )
     }
     private val toolExecutor: ToolExecutor = ToolExecutor(
         project = project,
@@ -232,7 +241,7 @@ open class AgentCore(
 
     // 对话持久化
     private val conversationPersistence: ConversationPersistence =
-            conversationPersistenceOverride ?: ConversationPersistence()
+        conversationPersistenceOverride ?: ConversationPersistence()
     private lateinit var sessionRestore: SessionRestore
 
     // 钩子（默认空实现，可通过配置注入）
@@ -325,6 +334,11 @@ open class AgentCore(
             // 测试环境中扩展点不可用，安全跳过
             logger.debug("ToolProvider extension point not available (test environment), skipping external tools")
         }
+
+        // Phase 5: 注册上下文预算自管理工具，并将会话 provider 绑定到预算管理器
+        contextBudgetManager.setContextManagerProvider { getCurrentContextManager() }
+        toolRegistry.register(ContextToolHandlers.createGetContextRemainingHandler(contextBudgetManager))
+        logger.info("Registered get_context_remaining tool")
 
         // 初始化对话持久化
         sessionRestore = SessionRestore(conversationPersistence, this)
@@ -571,6 +585,13 @@ open class AgentCore(
     }
 
     /**
+     * 获取当前会话的 ContextManager（供 ContextBudgetManager 动态读取 token 使用）
+     */
+    internal fun getCurrentContextManager(): ContextManager? {
+        return currentSessionId.get()?.let { sessions[it]?.contextManager }
+    }
+
+    /**
      * 获取当前会话的历史消息
      */
     fun getCurrentHistory(): List<Message> {
@@ -747,6 +768,7 @@ open class AgentCore(
             memoryNudger = memoryNudger,
             subAgentExecutor = subAgentExecutor,
             agentCore = this,
+            contextBudgetManager = contextBudgetManager,
         )
 
         val effectiveModel = resolveModelForMode(routing.effective)
@@ -1240,25 +1262,29 @@ data class AgentConfig(
 ) {
     companion object {
         val DEFAULT_SYSTEM_PROMPT = """
-            You are CodeSage, an AI coding assistant for IntelliJ IDEA.
-            You help developers with:
-            - Writing and refactoring code
-            - Debugging and fixing issues
-            - Code review and optimization
-            - Project analysis and documentation
-            - Executing development tasks
+            # 角色定义
+            你是 CodeSage，一位嵌入在 IntelliJ IDEA 中的专家级 AI 编程助手。
+            你的使命是帮助开发者编写、重构、调试和理解代码，同时严格保护用户项目的安全与完整。
 
-            You have access to the following tools to interact with the user's project:
-            - read_file: Read file contents
-            - write_file: Write or modify files
-            - list_directory: List files in a directory
-            - search_code: Search for code patterns
-            - run_command: Execute terminal commands
-            - get_project_structure: Get project overview
+            # ReAct 工作协议
+            每次回应前，按 Thought → Action → Observation → Answer 顺序思考与行动：
+            1. Thought：分析用户意图、当前已掌握的信息、还缺什么信息。
+            2. Action：如果缺少必要信息，调用合适工具获取；不要凭空猜测。
+            3. Observation：基于工具返回的事实继续推理，必要时重复 Thought → Action。
+            4. Answer：信息充分后再给出最终答案或代码修改。
 
-            When asked to modify code, prefer using write_file with the complete new content.
-            When exploring a project, use list_directory and read_file to understand the structure.
-            Always provide clear, concise, and actionable responses.
+            # 并行工具调用
+            当同一轮需要多个相互独立的工具时，必须一次性并行调用。工具结果会按原始顺序返回，综合分析后给出结论。
+
+            # 权限策略
+            - 默认只能读取项目目录内文件；写入限制在项目目录内。
+            - run_command / exec_shell 运行在 OS 级沙箱中：禁止网络、禁止写入项目外路径。
+            - 危险操作（rm -rf、curl | sh、修改系统配置）必须获得用户明确确认。
+
+            # 上下文预算
+            - 优先保留 system prompt、最近 10 轮对话和当前任务相关文件。
+            - 大文件先读前 1000 行摘要，需要时再分页读取。
+            - 遇到 truncated=true 应缩小范围重新查询，不要基于不完整信息下结论。
         """.trimIndent()
     }
 }

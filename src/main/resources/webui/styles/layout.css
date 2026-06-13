@@ -197,8 +197,12 @@
     max-width: 360px;
     max-height: 380px;
     overflow-y: auto;
-    background: var(--surface-elevated);
-    border: 1px solid var(--border-default);
+    background: var(--surface-glass);
+    -webkit-backdrop-filter: blur(var(--surface-glass-blur))
+        saturate(var(--surface-glass-saturate));
+    backdrop-filter: blur(var(--surface-glass-blur))
+        saturate(var(--surface-glass-saturate));
+    border: 1px solid var(--surface-glass-border);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
     z-index: var(--z-dropdown);
@@ -376,8 +380,12 @@
 }
 
 @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
 }
 
 @keyframes messageEnter {
@@ -392,13 +400,22 @@
 }
 
 @keyframes pulse {
-    0%, 100% { opacity: 0.4; }
-    50% { opacity: 1; }
+    0%,
+    100% {
+        opacity: 0.4;
+    }
+    50% {
+        opacity: 1;
+    }
 }
 
 @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .anim-fade-in {
@@ -411,4 +428,95 @@
 
 .spin {
     animation: spin 1.2s linear infinite;
+}
+
+/* ===================== Responsive Layout ===================== */
+
+@media (max-width: 1024px) {
+    .app-container {
+        grid-template-columns: 0 1fr 0;
+    }
+
+    .app-container.sidebar-collapsed {
+        grid-template-columns: 0 1fr 0;
+    }
+
+    .app-container.artifacts-collapsed {
+        grid-template-columns: 0 1fr 0;
+    }
+
+    .app-container.sidebar-collapsed.artifacts-collapsed {
+        grid-template-columns: 0 1fr 0;
+    }
+
+    .cs-sidebar,
+    .cs-artifacts {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        z-index: var(--z-modal);
+        width: var(--sidebar-width);
+        max-width: 80vw;
+        box-shadow: var(--shadow-xl);
+    }
+
+    .cs-sidebar {
+        left: 0;
+        transform: translateX(-100%);
+        transition: transform var(--duration-slow) var(--ease-out);
+    }
+
+    .app-container:not(.sidebar-collapsed) .cs-sidebar {
+        transform: translateX(0);
+    }
+
+    .cs-artifacts {
+        right: 0;
+        transform: translateX(100%);
+        transition: transform var(--duration-slow) var(--ease-out);
+    }
+
+    .app-container:not(.artifacts-collapsed) .cs-artifacts {
+        transform: translateX(0);
+    }
+
+    .main-area {
+        width: 100vw;
+    }
+}
+
+@media (max-width: 768px) {
+    .model-pill .model-name {
+        display: none;
+    }
+
+    .model-pill {
+        padding: 4px 6px;
+    }
+
+    .model-pill .chevron {
+        margin-left: 0;
+    }
+
+    .model-dropdown {
+        right: -40px;
+        min-width: 240px;
+        max-width: 300px;
+    }
+}
+
+@media (max-width: 480px) {
+    .chat-header {
+        padding: 0 var(--space-3);
+        gap: var(--space-2);
+    }
+
+    .brand-text {
+        display: none;
+    }
+
+    .session-title {
+        max-width: 120px;
+        display: none;
+    }
 }

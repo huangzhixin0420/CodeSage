@@ -52,6 +52,12 @@ class JStoKotlinContractTest {
         "set_show_thinking",
         "attach_file",
         "attach_image",
+        // 2026-06 v2.1 UI:消息内 code block 操作栏
+        "apply_code_block",
+        "insert_at_cursor",
+        "create_file_from_code",
+        "accept_hunk",
+        "reject_hunk",
         // SettingsBridgeHandler
         "settings_get",
         "settings_update",
@@ -90,6 +96,12 @@ class JStoKotlinContractTest {
         "switch_chat_mode",
         "set_show_thinking",
         "theme_changed",
+        // 2026-06 v2.1 UI:消息内 code block 操作栏
+        "apply_code_block",
+        "insert_at_cursor",
+        "create_file_from_code",
+        "accept_hunk",
+        "reject_hunk",
         "settings_get",
         "settings_update",
         "settings_reload",

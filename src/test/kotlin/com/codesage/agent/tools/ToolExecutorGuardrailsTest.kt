@@ -99,8 +99,12 @@ class ToolExecutorGuardrailsTest {
     }
 
     @Test
-    fun `should deny dangerous command via guardrails`() = runBlocking {
-        val guardrails = ToolGuardrails()
+    fun `dangerous command requires confirmation (headless auto-denies as CONFIRMATION_DENIED)`() = runBlocking {
+        // 2026-06 P1:危险命令不再 silent deny → BLOCKED/POLICY_VIOLATION,
+        // 改为 REQUIRES_CONFIRMATION。Headless 模式(confirmationCallback = null)
+        // 会自动拒绝,但 BlockReason 应为 CONFIRMATION_DENIED,而不是 POLICY_VIOLATION,
+        // 以便调用方知道"用户有机会点确认"。
+        val guardrails = ToolGuardrails()  // no callback -> headless
         val executor = ToolExecutor(
             project = null,
             guardrails = guardrails
@@ -114,6 +118,6 @@ class ToolExecutorGuardrailsTest {
             }
         }
 
-        assertEquals(ToolExecutionBlocked.BlockReason.POLICY_VIOLATION, exception.reason)
+        assertEquals(ToolExecutionBlocked.BlockReason.CONFIRMATION_DENIED, exception.reason)
     }
 }

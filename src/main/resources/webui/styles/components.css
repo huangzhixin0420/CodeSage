@@ -119,8 +119,12 @@
 }
 
 .cs-modal {
-    background: var(--surface-elevated);
-    border: 1px solid var(--border-default);
+    background: var(--surface-glass);
+    -webkit-backdrop-filter: blur(var(--surface-glass-blur))
+        saturate(var(--surface-glass-saturate));
+    backdrop-filter: blur(var(--surface-glass-blur))
+        saturate(var(--surface-glass-saturate));
+    border: 1px solid var(--surface-glass-border);
     border-radius: var(--radius-xl);
     box-shadow: var(--shadow-xl);
     max-width: 90vw;
@@ -611,4 +615,26 @@
     color: var(--fg-tertiary);
     text-align: center;
     font-size: var(--text-sm);
+}
+
+/* ===================== Responsive Artifacts ===================== */
+
+@media (max-width: 1024px) {
+    .cs-artifacts {
+        position: fixed;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        width: var(--artifacts-width);
+        max-width: 80vw;
+        z-index: var(--z-modal);
+        transform: translateX(100%);
+        transition: transform var(--duration-slow) var(--ease-out);
+        border-left: 1px solid var(--border-default);
+        box-shadow: var(--shadow-xl);
+    }
+
+    .app-container:not(.artifacts-collapsed) .cs-artifacts {
+        transform: translateX(0);
+    }
 }

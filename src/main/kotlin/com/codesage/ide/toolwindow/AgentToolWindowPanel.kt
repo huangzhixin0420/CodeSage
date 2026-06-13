@@ -269,6 +269,13 @@ class AgentToolWindowPanel(
     private fun syncTheme() {
         val isDark = !com.intellij.ui.JBColor.isBright()
         chatPanel.setTheme(if (isDark) "dark" else "light")
+        try {
+            val laf = com.intellij.ide.ui.LafManager.getInstance().currentUIThemeLookAndFeel?.id ?: "Default"
+            val isIslands = laf.contains("Islands", ignoreCase = true)
+            chatPanel.setLaf(laf, isIslands, isDark)
+        } catch (e: Exception) {
+            logger.warn("[AgentToolWindowPanel] failed to detect LaF: ${e.message}")
+        }
     }
 
     /**

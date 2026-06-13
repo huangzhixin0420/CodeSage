@@ -45,9 +45,9 @@
 
 ## 二、当前总体进度
 
-**当前阶段**: 阶段一/二/P1/P2 已全部完成  
-**当前任务**: 已全部完成，等待后端协同（artifact/file_search/structured reasoning）与完整虚拟滚动演进  
-**最后更新**: 2026-06-12
+**当前阶段**: 迭代二（P1/P2 增强）已全部完成  
+**当前任务**: 前端优化功能开发与测试验证均已完成，等待后端协议协同落地  
+**最后更新**: 2026-06-13
 
 ### 2.1 已完成的里程碑
 
@@ -68,12 +68,16 @@
 - [x] Artifact 面板升级（diff、版本历史、Apply/Reject）
 - [x] 性能优化（消息截断 + 加载更早消息）
 - [x] 视觉品牌升级（SVG 图标系统、暗色压暗、微交互）
+- [x] 消息内代码块 action bar（Apply / Insert / Create File / Copy、diff hunk Accept/Reject）
+- [x] 输入区上下文 chip 可视化（`@file` / `#selection` 可删除 pill、token 超限提示）
+- [x] 拖拽/粘贴增强（drop zone 高亮、图片大图预览、IDE 选区拖拽）
+- [x] 完整虚拟滚动方案 A（IntersectionObserver + ResizeObserver + DOM 回收）
+- [x] 响应式布局增强（1024/768/480px 断点、侧边栏 overlay、输入区全屏展开）
 
 ### 2.3 待开始任务
 
-- [ ] 输入区上下文 chip 可视化（拖拽/粘贴增强为后续增强）
-- [ ] 完整的 IntersectionObserver 虚拟滚动（方案 A，当前为截断方案 B）
 - [ ] 后端 artifact / file_search / structured reasoning 事件协议配合
+- [ ] 无障碍与性能持续优化（a11y audit、长对话 benchmark）
 
 ---
 
@@ -171,9 +175,9 @@
 
 ### 任务 7：输入区上下文编排器（P1）
 
-- **状态**: done（MVP：@/# autocomplete）
-- **完成时间**: 2026-06-12
-- **说明**: 已实现 `src/main/resources/webui/js/components/cs-mention.js`：在 textarea 中输入 `@` 或 `#` 时弹出自动补全面板，支持文件候选与上下文候选（#selection/#clipboard/#terminal），支持 ↑/↓/Enter/Esc 导航。已接入 `chat.js` 输入区，mention 按钮点击后也会触发补全。已编写并通过 `src/test/js-e2e/mention.e2e.mjs`（9 项断言全部通过）。上下文 chip 可视化可作为后续增强。
+- **状态**: done（@/# autocomplete + ContextChips 集成）
+- **完成时间**: 2026-06-12（MVP），2026-06-13（chip 集成）
+- **说明**: 已实现 `src/main/resources/webui/js/components/cs-mention.js`：在 textarea 中输入 `@` 或 `#` 时弹出自动补全面板，支持文件候选与上下文候选（#selection/#clipboard/#terminal），支持 ↑/↓/Enter/Esc 导航。已接入 `chat.js` 输入区，mention 按钮点击后也会触发补全。选中候选后交由 `ContextChips` 渲染为可删除 pill，不再直接修改 textarea。已编写并通过 `src/test/js-e2e/mention.e2e.mjs`（9 项断言全部通过）。
 - **目标**: 把输入区从“带附件的文本框”升级为“富上下文编排器”。
 - **实现思路**:
   - `@` / `#` 触发 autocomplete 浮动面板；
@@ -181,8 +185,9 @@
   - 拖拽/粘贴增强。
 - **产出文件**:
   - `src/main/resources/webui/js/components/cs-mention.js`
+  - 更新 `src/main/resources/webui/js/views/chat.js`
   - 更新 `input.css`
-- **依赖**: 后端 `file_search` 接口（先 mock）
+- **依赖**: 后端 `file_search` 接口（先 mock）；`ContextChips`
 
 ### 任务 8：Code Artifacts 工作流升级（P1）
 
@@ -205,13 +210,13 @@
 
 ### 任务 9：性能优化 — 虚拟滚动 / DOM Windowing（P2）
 
-- **状态**: done（方案 B：截断 + 加载更早消息）
-- **完成时间**: 2026-06-12
-- **说明**: 已实现 `src/main/resources/webui/js/message-virtualizer.js`：维护全部消息数据，DOM 中仅保留最近 `limit`（默认 50）条，顶部显示"加载更早消息"按钮，点击后分批回填；已与 `chat.js` 的 `addUserMessage`、`_startAITurn`、`loadHistory`、`clear` 集成。E2E 测试 `virtualizer.e2e.mjs` 15 项断言全部通过。
+- **状态**: done（方案 A：IntersectionObserver + ResizeObserver + DOM 回收）
+- **完成时间**: 2026-06-13
+- **说明**: 已实现 `src/main/resources/webui/js/message-virtualizer.js`：保留全部消息数据，通过 `IntersectionObserver` 跟踪可见性，`ResizeObserver` 缓存高度，仅保留可视区 + overscan 的 DOM，其余节点回收；顶部/底部 spacer 维持连续滚动条；支持 `pin` 元素不参与回收。已与 `chat.js` 的 `addUserMessage`、`_startAITurn`、`loadHistory`、`clear` 集成。E2E 测试 `virtualizer.e2e.mjs` 13 项断言全部通过。
 - **目标**: 解决长对话（>100 条消息）后的滚动卡顿、内存占用。
 - **实现思路**:
   - 第一阶段：截断 + “加载更早消息”按钮（快速降低内存）✅；
-  - 第二阶段：IntersectionObserver + DOM 回收（真正的虚拟滚动，待后续演进）。
+  - 第二阶段：IntersectionObserver + ResizeObserver + DOM 回收（真正的虚拟滚动）✅。
 - **产出文件**:
   - `src/main/resources/webui/js/message-virtualizer.js`
   - 更新 `src/main/resources/webui/js/views/chat.js`
@@ -245,10 +250,78 @@
   - 更新 `src/main/resources/webui/styles/chat.css`
 - **依赖**: 无
 
-### 任务 11：E2E 测试补充与回归验证
+### 任务 11：消息内代码块 Action Bar（P1）
 
 - **状态**: done
-- **完成时间**: 2026-06-12
+- **完成时间**: 2026-06-13
+- **说明**: 已增强 `src/main/resources/webui/js/markdown.js` 的 `enhanceCodeBlocks`：为每个 `<pre>` 代码块包装 `.code-block` 卡片头，显示语言徽标、文件路径，并提供 Apply to Editor / Insert at Cursor / Create File / Copy 操作按钮；对 diff 代码块使用 `CsDiffViewer` 渲染，并显示 hunk 级别的 Accept / Reject 按钮。新增桥消息：`apply_code_block`、`insert_at_cursor`、`create_file_from_code`、`accept_hunk`、`reject_hunk`，Kotlin 侧 `JCEFChatPanel.handleJSMessage` 已注册，并复用 `applyArtifactToEditor` / `createFileFromArtifact` 处理 apply/insert/create 动作。
+- **目标**: 让 LLM 回答中的代码块可直接操作，减少用户手动复制粘贴。
+- **实现思路**:
+  - 统一 diff 检测：语言为 `diff` 或内容符合统一 diff 格式；
+  - diff 块用 `CsDiffViewer` 渲染，提供 hunk Accept/Reject；
+  - 普通代码块提供 Apply / Insert / Create File / Copy。
+- **产出文件**:
+  - 更新 `src/main/resources/webui/js/markdown.js`
+  - 更新 `src/main/resources/webui/styles/chat.css`
+  - 更新 `src/main/kotlin/com/codesage/ide/ui/web/JCEFChatPanel.kt`
+  - 更新 `src/test/kotlin/com/codesage/ide/ui/web/JStoKotlinContractTest.kt`
+  - 新增 `src/test/js-e2e/code-block.e2e.mjs`
+- **依赖**: `js/diff.js`、`js/components/cs-diff-viewer.js`
+
+### 任务 12：输入区上下文 Chip 可视化（P1）
+
+- **状态**: done
+- **完成时间**: 2026-06-13
+- **说明**: 已实现 `src/main/resources/webui/js/components/cs-context-chips.js`：`ContextChips` 在 textarea 上方渲染可删除的 file/context pill；`@file` / `#selection` 等 mention 选中后不再直接插入文本，而是转为 chip；提供 `add/remove/clear/toPayload` API；跟踪 token 预算，超限后容器与提示加 `.over-limit` 变红；发送前解析为 `@path` 文本与 `fileRefs` 数组。`chat.js` 的 `_onFileReferencesAdded`、`_send` 已集成该组件。
+- **目标**: 把输入区从“带附件的文本框”升级为“富上下文编排器”。
+- **实现思路**:
+  - 文件引用/上下文选中后渲染为 chip；
+  - chip 显示类型图标、名称、删除按钮；
+  - token 超限视觉提示；
+  - 发送时聚合 chip 文本与文件引用。
+- **产出文件**:
+  - 新增 `src/main/resources/webui/js/components/cs-context-chips.js`
+  - 更新 `src/main/resources/webui/js/views/chat.js`
+  - 更新 `src/main/resources/webui/styles/input.css`
+  - 更新 `src/test/js-e2e/chat.e2e.mjs`
+  - 新增 `src/test/js-e2e/context-chips.e2e.mjs`
+- **依赖**: 无
+
+### 任务 13：拖拽/粘贴增强（P1）
+
+- **状态**: done
+- **完成时间**: 2026-06-13
+- **说明**: 已增强 `chat.js` 输入区交互：拖拽文件/选区进入输入容器时，容器高亮为 `.drop-zone`；粘贴图片后渲染大尺寸预览（`input-attachment-preview` 宽度 120px）并显示文件大小；支持从 IDE 拖拽选区插入 `#selection` 上下文 chip；拖拽/粘贴事件均通过 `ContextChips` 管理，避免直接修改 textarea。
+- **目标**: 提升上下文注入的直观性与效率。
+- **实现思路**:
+  - `dragenter/dragover/dragleave/drop` 事件管理 drop zone 状态；
+  - `paste` 事件识别图片 DataTransfer 并生成预览 chip；
+  - IDE 选区拖拽统一转为 `#selection` chip。
+- **产出文件**:
+  - 更新 `src/main/resources/webui/js/views/chat.js`
+  - 更新 `src/main/resources/webui/styles/input.css`
+- **依赖**: `ContextChips`
+
+### 任务 14：响应式布局增强（P2）
+
+- **状态**: done
+- **完成时间**: 2026-06-13
+- **说明**: 已在 `layout.css`、`sidebar.css`、`input.css` 中增加 1024px / 768px / 480px 断点：1024px 以下侧边栏/工件面板改为 fixed overlay 滑入；768px 以下模型选择器仅保留图标；480px 以下输入区可全屏展开，header 简化。保证插件窗口在较小尺寸下仍可用。
+- **目标**: 适配不同屏幕尺寸与 IDE 布局。
+- **实现思路**:
+  - 使用 CSS media query 替代 JS 布局计算；
+  - overlay 面板使用 transform 滑入/滑出；
+  - 输入区全屏展开由 `.input-area.fullscreen` 控制。
+- **产出文件**:
+  - 更新 `src/main/resources/webui/styles/layout.css`
+  - 更新 `src/main/resources/webui/styles/sidebar.css`
+  - 更新 `src/main/resources/webui/styles/input.css`
+- **依赖**: 无
+
+### 任务 15：E2E 测试补充与回归验证
+
+- **状态**: done
+- **完成时间**: 2026-06-13
 - **说明**: 已新增/更新以下 E2E 测试，全部通过：
   - `src/test/js-e2e/run-log.e2e.mjs`（34 项断言）
   - `src/test/js-e2e/thinking.e2e.mjs`（17 项断言）
@@ -256,10 +329,12 @@
   - `src/test/js-e2e/agent-dashboard.e2e.mjs`（8 项断言）
   - `src/test/js-e2e/mention.e2e.mjs`（9 项断言）
   - `src/test/js-e2e/artifact.e2e.mjs`（26 项断言）
-  - `src/test/js-e2e/virtualizer.e2e.mjs`（15 项断言）
-  - `src/test/js-e2e/chat.e2e.mjs`（74 项断言，含 1 处与本次重构无关的 CSS 断言修正）
+  - `src/test/js-e2e/virtualizer.e2e.mjs`（13 项断言）
+  - `src/test/js-e2e/chat.e2e.mjs`（73 项断言）
   - `src/test/js-e2e/settings.e2e.mjs`（58 项断言）
-  - `./gradlew build` 构建成功（1066 项 Kotlin 测试全部通过）。
+  - `src/test/js-e2e/code-block.e2e.mjs`（18 项断言）
+  - `src/test/js-e2e/context-chips.e2e.mjs`（9 项断言）
+  - `./gradlew build` 构建成功，Kotlin 契约测试通过。
 - **目标**: 保证重构不破坏现有行为，并覆盖新功能。
 - **覆盖点**:
   - RunLog 事件累积正确；
@@ -281,21 +356,20 @@
 | RunLog 层引入导致短期 bug 增多 | 高 | 已保留旧组件 class 名保持 E2E 兼容；新增专项 E2E 测试；小步提交 |
 | 后端无法输出结构化 reasoning | 中 | 前端已做兜底解析；后端 prompt 后续逐步优化 |
 | 工具调用视觉降级后信息丢失 | 中 | 保留完整详情可展开；提供“紧凑/详细”模式切换（Thinking） |
-| 虚拟滚动与流式更新冲突 | 中 | 当前截断方案仅在历史加载后触发，streaming 消息始终实时渲染；完整 IO 虚拟滚动需继续处理 |
+| 虚拟滚动与流式更新冲突 | 低 | 已演进为 IntersectionObserver + DOM 回收方案，streaming 消息默认进入 DOM 并被观察，pinned 消息不参与回收；需长对话 benchmark 进一步验证 |
 | 旧 E2E 测试因 DOM 结构变化失败 | 中 | 已同步更新 chat.e2e.mjs 中漂移的 CSS 断言；核心行为验证保留 |
 
 ---
 
 ## 五、下一步任务
 
-1. **输入区上下文 chip 可视化**：将 `@file`、`#selection` 等 mention 升级为可删除 chip/pill，增强拖拽/粘贴反馈。
-2. **完整虚拟滚动（方案 A）**：在截断基础上演进为 IntersectionObserver + DOM 回收，实现连续滚动条与更低内存占用。
-3. **后端协同**：
+1. **后端协同**：
    - 结构化 reasoning：在 Agent prompt 中加入 `<think>` / Markdown heading 引导。
    - step→tool 关联：在 `plan_generated` / `tool_call_start` 事件中提供 `toolCallIds` / `stepIds`。
    - artifact 事件：在生成代码时调用 `addArtifact`，并支持 `artifact_update` 推送后续版本。
-   - file_search：响应前端 `file_search` 桥消息。
-4. **无障碍与性能持续优化**：a11y audit、长对话 benchmark。
+   - file_search：统一由后端推送 `file_search_results` 桥消息，替代当前全局 `window.__cs_file_search_results` 回退。
+   - code block 动作：后端实现 `apply_code_block`、`insert_at_cursor`、`create_file_from_code`、`accept_hunk`、`reject_hunk` 的业务逻辑。
+2. **无障碍与性能持续优化**：a11y audit、长对话 benchmark、关键渲染路径优化。
 
 ---
 
@@ -306,3 +380,4 @@
 | 2026-06-12 | Kimi Code CLI | 文档初稿，记录重构设计摘要、计划与当前进度 |
 | 2026-06-12 | Kimi Code CLI | 完成 RunLog、Structured Thinking、Tool Badge、PlanV2、Agent Dashboard、Mention Autocomplete；全部 E2E 测试通过；更新进度 |
 | 2026-06-12 | Kimi Code CLI | 完成 Artifact 面板升级（diff/版本/apply/reject）、性能优化（截断+加载更早）、视觉品牌升级（SVG 图标/暗色压暗/微交互）；新增 artifact/virtualizer E2E；全部测试通过 |
+| 2026-06-13 | Kimi Code CLI | 完成迭代二：代码块 action bar、输入区上下文 chip、拖拽/粘贴增强、完整虚拟滚动方案 A、响应式布局；新增 code-block/context-chips E2E；更新 virtualizer/chat/mention E2E；`npm test` 与 `./gradlew build` 全部通过；更新本进度文档 |

@@ -504,15 +504,13 @@ async function runE2E() {
   // 关键回归:之前没有 _resetInput 时,ta2.value 还是 "第二个问题" 残留草稿,
   // 切到新会话却看到旧输入 — 现在必须为空。
 
-  // ============== 场景 8: 回形针按钮 → @file 插入(Cursor 风格) ==============
-  // 回归 bug:旧版 attach_file 选完文件后只发 input_attachments,前端渲染一个
-  // chip 预览(在输入框上方),但文件内容不会自动进上下文 — 用户感知"点了没反应"。
-  // v2.1 改为 file_references_added:把 @相对路径 直接插到 textarea 光标处,
-  // 用户继续打字,发送时 FileReferenceResolver 自动读内容注入上下文。
-  console.log("\n[8] 回形针按钮 → @file 插入");
+  // ============== 场景 8: 回形针按钮 → @file 渲染为上下文 chip ==============
+  // v2.2:选完文件后不再把 @path 塞进 textarea,而是渲染成可删除的 context chip,
+  // 避免干扰用户输入并支持 token 预算可视化。发送时 chip 会解析为 @path 文本。
+  console.log("\n[8] 回形针按钮 → @file 渲染为上下文 chip");
+  chat._contextChips?.clear();
   const taFile = w.document.getElementById("input-textarea");
   taFile.value = "请帮我看看 ";
-  taFile.setSelectionRange(taFile.value.length, taFile.value.length);
 
   dispatchEvent({
     type: "file_references_added",
@@ -525,20 +523,19 @@ async function runE2E() {
       },
     ],
   });
+  const chips1 = w.document.querySelectorAll(".context-chip");
+  assert(chips1.length === 1, `单个文件应渲染 1 个 chip,实际 ${chips1.length}`);
   assert(
-    taFile.value === "请帮我看看 @src/main/kotlin/Foo.kt ",
-    `单个文件 @ 应插到光标后,实际 "${taFile.value}"`,
+    Array.from(chips1).some((c) => c.textContent.includes("Foo.kt")),
+    "chip 应显示文件名",
   );
   assert(
-    taFile.selectionStart === taFile.value.length &&
-      taFile.selectionEnd === taFile.value.length,
-    `光标应停在插入文本末尾,实际 ${taFile.selectionStart}/${taFile.selectionEnd}`,
+    taFile.value === "请帮我看看 ",
+    "textarea 不应被 file_references_added 修改",
   );
-  assert(w.document.activeElement === taFile, "插入后 textarea 应自动获得焦点");
 
-  // 多文件:全部插入,中间空格
-  taFile.value = "";
-  taFile.setSelectionRange(0, 0);
+  // 多文件:多个 chip
+  chat._contextChips?.clear();
   dispatchEvent({
     type: "file_references_added",
     references: [
@@ -548,32 +545,21 @@ async function runE2E() {
     ],
   });
   assert(
-    taFile.value === "@src/A.kt @src/B.kt @src/C.kt ",
-    `多个文件应空格分隔,实际 "${taFile.value}"`,
+    w.document.querySelectorAll(".context-chip").length === 3,
+    "多文件应渲染多个 chip",
   );
 
-  // 关键回归:之前 v2.0 chip 路径下,选完文件后输入框里没东西 — 用户体感"无反馈"。
-  // 现在 @ 必须真的出现在 textarea 里,而不是只在预览区。
+  // 发送时解析为 @path
+  w.__e2e_sent = [];
+  chat._send("请帮我看看");
+  const sent = w.__e2e_sent[w.__e2e_sent.length - 1];
   assert(
-    taFile.value.includes("@src/"),
-    "@ 引用应被插入到 textarea (不是 chip 预览区)",
+    sent && sent.type === "send_message" && sent.message.includes("@src/A.kt"),
+    "send_message 应包含 chip 解析出的 @path",
   );
-  const chipCount = w.document.querySelectorAll(".input-attachment").length;
   assert(
-    chipCount === 0,
-    `文件 @ 流程不应渲染 chip 预览 (实际 ${chipCount}) — chip 仅为图片设计`,
-  );
-
-  // 兜底:在光标中间插入(不是末尾)
-  taFile.value = "前面 后面";
-  taFile.setSelectionRange(3, 3);
-  dispatchEvent({
-    type: "file_references_added",
-    references: [{ name: "X.ts", relativePath: "X.ts" }],
-  });
-  assert(
-    taFile.value === "前面 @X.ts 后面",
-    `应插入到 selectionStart 处,实际 "${taFile.value}"`,
+    sent && Array.isArray(sent.fileRefs) && sent.fileRefs.length === 3,
+    "send_message 应带 fileRefs",
   );
 
   // ============== 场景 9: 图片按钮 → 视觉强化 + 反馈 ==============
@@ -594,14 +580,14 @@ async function runE2E() {
   });
   const imgChip = w.document.querySelector(".input-attachment");
   assert(imgChip !== null, "应渲染图片 chip");
-  const thumb = imgChip?.querySelector(".input-attachment-thumb");
-  assert(thumb !== null, "图片 chip 应有缩略图");
-  // v2.1:缩略图尺寸从 18 → 28(由 input.css .input-attachment-thumb 规则控制,
-  // JSDOM 不能完整解析 CSS 变量,所以这里不读 computedStyle,改查 CSS 源码验证)
+  const thumb = imgChip?.querySelector(".input-attachment-preview");
+  assert(thumb !== null, "图片 chip 应有大图预览元素");
+  // v2.2:粘贴图片后显示大图预览(120x80),点击可展开。
+  // JSDOM 不能完整解析 CSS 变量,改查 CSS 源码验证。
   const inputCss = readFileSync(WEBUI + "/styles/input.css", "utf-8");
   assert(
-    /\.input-attachment-thumb\s*\{[^}]*width:\s*28px/.test(inputCss),
-    "input.css 应把 .input-attachment-thumb 缩略图 width 设为 28px",
+    /\.input-attachment-preview\s*\{[^}]*width:\s*120px/.test(inputCss),
+    "input.css 应把 .input-attachment-preview 宽度设为 120px",
   );
   const nameEl = imgChip?.querySelector(".input-attachment-name");
   assert(

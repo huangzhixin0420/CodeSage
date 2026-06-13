@@ -250,8 +250,10 @@ export class StructuredThinking {
                 <i class="fas fa-chevron-down thinking-chevron" data-cs-role="chevron"></i>
             </div>
             <div class="thinking-body" data-cs-role="body">
-                ${this.mode !== "raw" && sections.length > 1 ? this._renderStageProgress(sections) : ""}
-                ${bodyHtml}
+                <div class="thinking-body-content">
+                    ${this.mode !== "raw" && sections.length > 1 ? this._renderStageProgress(sections) : ""}
+                    ${bodyHtml}
+                </div>
             </div>
         `;
 
@@ -313,14 +315,14 @@ export class StructuredThinking {
   _renderBody(sections) {
     if (this.mode === "raw") {
       const rawHtml = escapeHtml(this.content);
-      return `<div class="thinking-body-content thinking-raw"><pre>${rawHtml}</pre></div>`;
+      return `<div class="thinking-raw"><pre>${rawHtml}</pre></div>`;
     }
 
     if (this.mode === "compact") {
       // 简洁模式：只显示最后一段
       const last = sections[sections.length - 1];
       if (!last) {
-        return `<div class="thinking-body-content">（无内容）</div>`;
+        return `<div class="thinking-section">（无内容）</div>`;
       }
       const html = escapeHtml(last.content).replace(/\n/g, "<br>");
       return `
@@ -333,7 +335,7 @@ export class StructuredThinking {
 
     // detailed
     if (!sections.length) {
-      return `<div class="thinking-body-content">（无内容）</div>`;
+      return `<div class="thinking-section">（无内容）</div>`;
     }
 
     const searchBox =
@@ -354,7 +356,7 @@ export class StructuredThinking {
       )
       .join("");
 
-    return `${searchBox}<div class="thinking-body-content">${sectionsHtml}</div>`;
+    return `${searchBox}${sectionsHtml}`;
   }
 
   _filterSections(query) {

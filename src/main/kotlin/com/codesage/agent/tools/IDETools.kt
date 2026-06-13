@@ -1,5 +1,6 @@
 package com.codesage.agent.tools
 
+import com.codesage.shared.security.CommandSandbox
 import com.codesage.shared.security.ShellInjectionDetector
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.application.ApplicationManager
@@ -30,6 +31,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import java.io.File
+import java.nio.ByteBuffer
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.charset.StandardCharsets
@@ -51,6 +53,9 @@ class IDETools(
     // L3: 可选审计日志。ToolRegistry.createDefault() / ToolExecutor 透传，
     // 不接时为 null（向后兼容测试和未配置审计的环境）。
     private val auditLog: com.codesage.tools.guardrails.ToolAuditLog? = null,
+    // Phase 3: OS 级命令沙箱。ToolRegistry 注入真实沙箱；null 时回退到旧版
+    // ProcessBuilder（保持测试和直接实例化的兼容性）。
+    private val commandSandbox: CommandSandbox? = null,
 ) {
     private val logger = Logger.getLogger<IDETools>()
 
@@ -58,6 +63,7 @@ class IDETools(
         const val LARGE_FILE_THRESHOLD = 100_000 // 100KB 视为大文件
         const val CHUNK_LINES = 1000
         const val MAX_CONTENT_LENGTH = 10_000
+
         // M2: 单条命令单流输出上限（字符数）。超过则截断并标 truncated。
         // 设大点是为了应对 `cat README` / `git log` 之类的常见场景；
         // 真的超大（`find /`）让 LLM 用 `| head` 自行控制。
@@ -113,34 +119,36 @@ class IDETools(
                     "size" to JsonPrimitive(virtualFile.length),
                 )
 
-                val content: String = if (virtualFile.length > LARGE_FILE_THRESHOLD && offset == null && limit == null) {
-                    // 大文件使用 memory-mapped 读取
-                    readLargeFile(virtualFile)
-                } else {
-                    val raw = String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
-                    val allLines = raw.lines()
-                    val totalLines = allLines.size
-                    responseFields["total_lines"] = JsonPrimitive(totalLines)
-
-                    // offset 越界时显式报错（"offset 1000 out of range: file has
-                    // 986 lines"），比静默返回空字符串更能引导 LLM 自我纠错。
-                    // offset == totalLines 视为合法 EOF，仍走分页路径并返回空
-                    // content。
-                    if (offset != null && offset > totalLines) {
-                        return@Computable ToolResult.Error(
-                            "offset $offset out of range: file has $totalLines lines"
-                        )
-                    }
-
-                    if (offset != null || limit != null) {
-                        val start = (offset ?: 0).coerceIn(0, totalLines)
-                        val end = if (limit != null) (start + limit).coerceIn(start, totalLines) else totalLines
-                        responseFields["start_line"] = JsonPrimitive(start)
-                        responseFields["end_line"] = JsonPrimitive(end)
-                        allLines.subList(start, end).joinToString("\n")
+                val content: String =
+                    if (virtualFile.length > LARGE_FILE_THRESHOLD && offset == null && limit == null) {
+                        // 大文件使用 memory-mapped 读取(内部已截断到 CHUNK_LINES)
+                        readLargeFile(virtualFile)
                     } else {
-                        raw
+                        val raw = String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
+                        val paged = computePagedContent(raw, offset, limit)
+                        if (paged == null) {
+                            // offset 越界 → 明确错误,引导 LLM 自我纠错
+                            return@Computable ToolResult.Error(pagedErrorMessage(offset!!, raw))
+                        }
+                        responseFields["total_lines"] = JsonPrimitive(paged.totalLines)
+                        if (paged.startLine != null) responseFields["start_line"] = JsonPrimitive(paged.startLine)
+                        if (paged.endLine != null) responseFields["end_line"] = JsonPrimitive(paged.endLine)
+                        paged.content
                     }
+
+                // 与 readMultipleFiles 对齐: 全文读取路径用 MAX_CONTENT_LENGTH
+                // 截断,避免 10MB 源文件一次性塞给 LLM。offset/limit 分页时 LLM
+                // 自己控制大小,不再二次截断; 大文件路径内部已截断到 CHUNK_LINES。
+                val isPaged = offset != null || limit != null
+                val (finalContent, wasTruncated) = if (isPaged || virtualFile.length > LARGE_FILE_THRESHOLD) {
+                    content to false
+                } else {
+                    safeTruncate(content, MAX_CONTENT_LENGTH)
+                }
+                responseFields["content"] = JsonPrimitive(finalContent)
+                if (wasTruncated) {
+                    responseFields["truncated"] = JsonPrimitive(true)
+                    responseFields["original_length"] = JsonPrimitive(content.length)
                 }
 
                 ToolResult.Success(JsonObject(responseFields))
@@ -153,40 +161,101 @@ class IDETools(
 
     /**
      * 使用 memory-mapped I/O 读取大文件
+     *
+     * 行为: 读取前 CHUNK_LINES 行(默认 1000),剩余行不解析; 末尾追加一行
+     * 截断提示,让 LLM 知道文件未读全,可以用 offset 续读。处理 UTF-8 多字节
+     * 字符不会跨行撕开; 末行(可能是 EOF, 也可能因 hit CHUNK_LINES 而被砍)
+     * 一定会 flush 到结果。
      */
     private fun readLargeFile(virtualFile: VirtualFile): String {
         val file = File(virtualFile.path)
         FileChannel.open(file.toPath(), StandardOpenOption.READ).use { channel ->
             val buffer: MappedByteBuffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size())
-            // 只读取前 CHUNK_LINES 行，避免一次性加载超大文件
-            val sb = StringBuilder()
-            var lineCount = 0
-            var byteBuffer = ByteArray(8192)
-            var bufPos = 0
-
-            while (buffer.hasRemaining() && lineCount < CHUNK_LINES) {
-                val b = buffer.get()
-                if (b == '\n'.code.toByte()) {
-                    sb.append(String(byteBuffer, 0, bufPos, StandardCharsets.UTF_8))
-                    sb.append('\n')
-                    bufPos = 0
-                    lineCount++
-                } else {
-                    if (bufPos >= byteBuffer.size) {
-                        // 扩展缓冲区
-                        byteBuffer = byteBuffer.copyOf(byteBuffer.size * 2)
-                    }
-                    byteBuffer[bufPos++] = b
-                }
-            }
-            if (bufPos > 0 && lineCount < CHUNK_LINES) {
-                sb.append(String(byteBuffer, 0, bufPos, StandardCharsets.UTF_8))
-            }
-            if (buffer.hasRemaining()) {
-                sb.append("\n... [文件过大，已截断。共 ${file.length()} 字节] ...")
-            }
-            return sb.toString()
+            return readLargeFileFromBuffer(buffer, file.length())
         }
+    }
+
+    /**
+     * 测试友好入口: 在已 map 好的 buffer 上跑分块解析逻辑。
+     * 行读取 → 满 CHUNK_LINES 跳出 → flush 末行 → 追加截断提示。
+     */
+    internal fun readLargeFileFromBuffer(buffer: ByteBuffer, fileLength: Long): String {
+        val sb = StringBuilder()
+        var lineCount = 0
+        var lineBuf = ByteArray(8192)
+        var linePos = 0
+        var hitChunkCap = false
+
+        while (buffer.hasRemaining()) {
+            if (lineCount >= CHUNK_LINES) {
+                hitChunkCap = true
+                break
+            }
+            val b = buffer.get()
+            if (b == '\n'.code.toByte()) {
+                sb.append(String(lineBuf, 0, linePos, StandardCharsets.UTF_8))
+                sb.append('\n')
+                linePos = 0
+                lineCount++
+            } else {
+                if (linePos >= lineBuf.size) {
+                    lineBuf = lineBuf.copyOf(lineBuf.size * 2)
+                }
+                lineBuf[linePos++] = b
+            }
+        }
+        // flush 末行(EOF 或 hit cap 都可能有残留)
+        if (linePos > 0) {
+            sb.append(String(lineBuf, 0, linePos, StandardCharsets.UTF_8))
+            sb.append('\n')
+        }
+        if (hitChunkCap) {
+            sb.append("... [文件过大, 已截断到前 $CHUNK_LINES 行, 共 $fileLength 字节。请用 offset 续读] ...\n")
+        } else if (buffer.position() < buffer.limit()) {
+            // 兜底
+            sb.append("... [文件过大, 已截断。共 $fileLength 字节] ...\n")
+        }
+        return sb.toString()
+    }
+
+    /**
+     * 分页读取 raw 文本内容(offset / limit → content)。
+     * 返回 null 表示 offset 越界(由调用方构造明确错误信息)。
+     *
+     * 行为契约:
+     *  - offset == null && limit == null → 返回 raw 全文
+     *  - offset == totalLines → 合法 EOF,返回空 content + start_line == end_line == totalLines
+     *  - offset > totalLines → 返回 null(越界)
+     *  - offset < 0 → coerce 到 0
+     *  - limit 越界 → 截到 totalLines
+     */
+    internal data class PagedContent(
+        val content: String,
+        val totalLines: Int,
+        val startLine: Int?,
+        val endLine: Int?,
+    )
+
+    internal fun pagedErrorMessage(offset: Int, raw: String): String {
+        val totalLines = raw.lines().size
+        return "offset $offset out of range: file has $totalLines lines"
+    }
+
+    internal fun computePagedContent(raw: String, offset: Int?, limit: Int?): PagedContent? {
+        val allLines = raw.lines()
+        val totalLines = allLines.size
+        if (offset != null && offset > totalLines) return null
+        if (offset == null && limit == null) {
+            return PagedContent(raw, totalLines, null, null)
+        }
+        val start = (offset ?: 0).coerceIn(0, totalLines)
+        val end = if (limit != null) (start + limit).coerceIn(start, totalLines) else totalLines
+        return PagedContent(
+            content = allLines.subList(start, end).joinToString("\n"),
+            totalLines = totalLines,
+            startLine = start,
+            endLine = end,
+        )
     }
 
     /**
@@ -246,7 +315,8 @@ class IDETools(
         }
         // 排干剩余输出让进程 pipe 不阻塞
         if (hitCap) {
-            while (reader.read(buf) != -1) { /* drain */ }
+            while (reader.read(buf) != -1) { /* drain */
+            }
         }
         val (final, wasSurrogate) = safeTruncate(sb.toString(), maxChars)
         return BoundedRead(final, wasSurrogate || hitCap)
@@ -448,7 +518,16 @@ class IDETools(
 
             if (recursive && child.isDirectory) {
                 if (depth < maxDepth) {
-                    collectDirectoryEntries(child, entries, true, depth + 1, maxDepth, state, excludeDirs, includeHidden)
+                    collectDirectoryEntries(
+                        child,
+                        entries,
+                        true,
+                        depth + 1,
+                        maxDepth,
+                        state,
+                        excludeDirs,
+                        includeHidden
+                    )
                 } else {
                     // 子目录存在但 depth 到了 maxDepth，标记截断
                     state.hitMaxDepth = true
@@ -487,7 +566,18 @@ class IDETools(
                 }
 
                 val state = SearchState()
-                searchInVirtualFile(root, regex, filePattern, matches, 0, 100, maxResults, state, excludeDirs, includeHidden)
+                searchInVirtualFile(
+                    root,
+                    regex,
+                    filePattern,
+                    matches,
+                    0,
+                    100,
+                    maxResults,
+                    state,
+                    excludeDirs,
+                    includeHidden
+                )
 
                 // H2: 透出 truncated + partial_scan_files，让 LLM 知道匹配被
                 // 截在哪一种上限上（results 上限 vs 大文件前 N 行扫描）
@@ -535,7 +625,18 @@ class IDETools(
 
         if (file.isDirectory) {
             file.children?.forEach { child ->
-                searchInVirtualFile(child, regex, filePattern, matches, depth + 1, maxDepth, maxResults, state, excludeDirs, includeHidden)
+                searchInVirtualFile(
+                    child,
+                    regex,
+                    filePattern,
+                    matches,
+                    depth + 1,
+                    maxDepth,
+                    maxResults,
+                    state,
+                    excludeDirs,
+                    includeHidden
+                )
             }
         } else {
             if (filePattern != null && !matchPattern(file.name, filePattern)) return
@@ -581,7 +682,9 @@ class IDETools(
     }
 
     /**
-     * 执行系统命令
+     * 执行系统命令。
+     *
+     * Phase 3: 优先使用 OS 级沙箱执行；未注入沙箱时回退到旧版 ProcessBuilder。
      */
     suspend fun runCommand(args: JsonObject): ToolResult = withContext(Dispatchers.IO) {
         val command = args["command"]?.jsonPrimitive?.content
@@ -595,7 +698,42 @@ class IDETools(
             return@withContext ToolResult.Error("Shell injection blocked: $injectionReason")
         }
 
-        try {
+        val sandbox = commandSandbox
+        if (sandbox != null) {
+            return@withContext runCommandWithSandbox(command, workingDir, timeout, sandbox)
+        }
+
+        runCommandLegacy(command, workingDir, timeout)
+    }
+
+    private fun runCommandWithSandbox(
+        command: String,
+        workingDir: String,
+        timeout: Long,
+        sandbox: CommandSandbox
+    ): ToolResult {
+        val result = sandbox.execute(command, File(workingDir), timeout, MAX_COMMAND_OUTPUT_CHARS)
+        if (result.error != null && result.exitCode == -1) {
+            return ToolResult.Error(result.error)
+        }
+        return ToolResult.Success(
+            JsonObject(
+                buildMap {
+                    put("stdout", JsonPrimitive(result.stdout))
+                    put("stderr", JsonPrimitive(result.stderr))
+                    put("exit_code", JsonPrimitive(result.exitCode))
+                    put("sandboxed", JsonPrimitive(result.sandboxed))
+                }
+            )
+        )
+    }
+
+    private fun runCommandLegacy(
+        command: String,
+        workingDir: String,
+        timeout: Long
+    ): ToolResult {
+        return try {
             val processBuilder = ProcessBuilder(
                 if (System.getProperty("os.name").contains("Windows")) {
                     listOf("cmd", "/c", command)
@@ -646,7 +784,7 @@ class IDETools(
                 process.destroyForcibly()
                 stdoutThread.interrupt()
                 stderrThread.interrupt()
-                return@withContext ToolResult.Error("Command timed out after ${timeout}ms")
+                return ToolResult.Error("Command timed out after ${timeout}ms")
             }
 
             val exitCode = process.exitValue()
@@ -866,7 +1004,19 @@ class IDETools(
                 }
 
                 val state = SearchState()
-                grepInFile(root, regex, filePattern, matches, contextLines, 0, 100, maxResults, state, excludeDirs, includeHidden)
+                grepInFile(
+                    root,
+                    regex,
+                    filePattern,
+                    matches,
+                    contextLines,
+                    0,
+                    100,
+                    maxResults,
+                    state,
+                    excludeDirs,
+                    includeHidden
+                )
 
                 ToolResult.Success(
                     JsonObject(
@@ -907,7 +1057,19 @@ class IDETools(
 
         if (file.isDirectory) {
             file.children?.forEach { child ->
-                grepInFile(child, regex, filePattern, matches, contextLines, depth + 1, maxDepth, maxResults, state, excludeDirs, includeHidden)
+                grepInFile(
+                    child,
+                    regex,
+                    filePattern,
+                    matches,
+                    contextLines,
+                    depth + 1,
+                    maxDepth,
+                    maxResults,
+                    state,
+                    excludeDirs,
+                    includeHidden
+                )
             }
         } else {
             if (filePattern != null && !matchPattern(file.name, filePattern)) return
@@ -1090,7 +1252,7 @@ class IDETools(
                 if (occurrences > 1) {
                     return ToolResult.Error(
                         "old_string appears $occurrences times in file; " +
-                            "provide more surrounding context to make it unique"
+                                "provide more surrounding context to make it unique"
                     )
                 }
                 content.replaceFirst(oldString, newString)
@@ -1100,7 +1262,7 @@ class IDETools(
                 if (startLine < 1 || endLine < startLine) {
                     return ToolResult.Error(
                         "Invalid line range: $startLine..$endLine " +
-                            "(start must be >= 1, end must be >= start)"
+                                "(start must be >= 1, end must be >= start)"
                     )
                 }
                 val lines = content.lines()
@@ -1155,7 +1317,7 @@ class IDETools(
             if (file.isDirectory && !recursive) {
                 return ToolResult.Error(
                     "Refusing to delete directory: $path. " +
-                        "Pass recursive=true to confirm deletion of directory and all contents."
+                            "Pass recursive=true to confirm deletion of directory and all contents."
                 )
             }
 
@@ -1308,7 +1470,7 @@ class IDETools(
                 if (!srcFile.delete()) {
                     return ToolResult.Error(
                         "Cross-device move partially failed: copied to $destination " +
-                            "but failed to delete source $source. Source still exists."
+                                "but failed to delete source $source. Source still exists."
                     )
                 }
                 method = "copy_and_delete"

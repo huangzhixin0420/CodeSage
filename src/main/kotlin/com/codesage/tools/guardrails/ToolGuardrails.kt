@@ -1,5 +1,7 @@
 package com.codesage.tools.guardrails
 
+import com.codesage.agent.context.ContextBudgetManager
+import com.codesage.agent.context.OutputLimits
 import com.codesage.agent.core.AgentStreamEvent
 import com.codesage.agent.tools.ToolResult
 import com.codesage.shared.utils.Logger
@@ -15,7 +17,8 @@ class ToolGuardrails(
     private val projectRoot: String? = null,
     private val confirmationCallback: ConfirmationCallback? = null,
     private val confirmationTimeoutMs: Long = 30_000,
-    private val eventEmitter: ((AgentStreamEvent.ToolConfirmationNeeded) -> Unit)? = null
+    private val eventEmitter: ((AgentStreamEvent.ToolConfirmationNeeded) -> Unit)? = null,
+    private val contextBudgetManager: ContextBudgetManager? = null
 ) {
     private val logger = Logger.getLogger<ToolGuardrails>()
 
@@ -198,12 +201,24 @@ class ToolGuardrails(
         return when (result) {
             is ToolResult.Success -> {
                 val content = result.data.toString()
-                val truncationResult = truncator.truncate(content)
+
+                // Phase 5: 根据剩余上下文预算动态调整截断阈值
+                val limits = contextBudgetManager?.getRecommendedOutputLimits()
+                    ?: OutputLimits(
+                        maxLength = truncator.defaultMaxLength,
+                        maxLines = truncator.defaultMaxLines
+                    )
+                val truncationResult = truncator.truncate(
+                    content,
+                    maxLength = limits.maxLength,
+                    maxLines = limits.maxLines
+                )
 
                 if (truncationResult.wasTruncated) {
                     logger.info(
                         "Truncated output for $toolName: " +
-                                "${truncationResult.originalLines} lines → ${truncationResult.truncatedLines} lines"
+                                "${truncationResult.originalLines} lines → ${truncationResult.truncatedLines} lines " +
+                                "(limit=${limits.maxLength} chars/${limits.maxLines} lines)"
                     )
                 }
 

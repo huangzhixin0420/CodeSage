@@ -5,7 +5,9 @@ import com.codesage.analysis.CodeInsightTools
 import com.codesage.model.dto.Tool
 import com.codesage.model.dto.ToolParameters
 import com.codesage.model.dto.ToolProperty
+import com.codesage.shared.security.CommandSandbox
 import com.codesage.shared.utils.Logger
+import java.io.File
 
 /**
  * 工具注册中心
@@ -84,8 +86,15 @@ class ToolRegistry {
             auditLog: com.codesage.tools.guardrails.ToolAuditLog? = null,
         ): ToolRegistry {
             return ToolRegistry().apply {
+                // Phase 3: 为命令执行工具注入 OS 级沙箱（默认开启 workspace 写权限）
+                val projectRoot = project?.basePath?.let { File(it) }
+                val commandSandbox = CommandSandbox.create(
+                    projectRoot,
+                    CommandSandbox.Mode.WORKSPACE_WRITE
+                )
+
                 // === IDE 文件操作工具（通过 Handler 注册） ===
-                val ideTools = IDETools(project, auditLog)
+                val ideTools = IDETools(project, auditLog, commandSandbox)
                 register(IDEFileHandlers.createReadFileHandler(ideTools))
                 register(IDEFileHandlers.createWriteFileHandler(ideTools))
                 register(IDEFileHandlers.createListDirectoryHandler(ideTools))
@@ -102,7 +111,7 @@ class ToolRegistry {
                 register(IDEFileHandlers.createGetProjectStructureHandler(ideTools))
 
                 // === 扩展工具（Git / Shell / HTTP / 数据处理） ===
-                val extendedTools = ExtendedTools(project)
+                val extendedTools = ExtendedTools(project, commandSandbox)
                 register(ExtendedToolHandlers.createGitStatusHandler(extendedTools))
                 register(ExtendedToolHandlers.createGitDiffHandler(extendedTools))
                 register(ExtendedToolHandlers.createGitLogHandler(extendedTools))
@@ -179,7 +188,14 @@ class ToolRegistry {
 
 internal fun readFileTool() = Tool(
     name = "read_file",
-    description = "读取指定文件的内容。支持相对项目根目录的路径或绝对路径。可指定 offset/limit 做分页；响应附带 total_lines / start_line / end_line 用于分页续读和 EOF 判断。offset 越界会返回明确错误（含实际行数）。",
+    description = """
+        Summary: 读取单个文件内容，支持相对/绝对路径和 offset/limit 分页。
+        Args: path (string, required): 文件路径；offset (int): 起始行号（0-based）；limit (int): 最大读取行数。
+        Do: 大文件先不带 offset 读前 1000 行摘要；需要后续内容时用 offset 续读；读取前用 list_directory 确认路径。
+        Don't: 不要读取 node_modules/build/.gradle/target 等生成目录；不要一次性读取超大文件而不分页。
+        Parallel: Yes，多个文件同时读取时用 read_multiple_files 更高效。
+        Cap: 全文读取时内容超过 MAX_CONTENT_LENGTH 会被截断并标记 truncated；offset 越界返回明确错误。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "path" to ToolProperty(
@@ -201,7 +217,14 @@ internal fun readFileTool() = Tool(
 
 internal fun writeFileTool() = Tool(
     name = "write_file",
-    description = "将内容写入指定文件。如果文件不存在会自动创建（包括父目录）。支持追加或覆盖模式。",
+    description = """
+        Summary: 将内容写入指定文件，不存在则自动创建（含父目录），支持追加或覆盖。
+        Args: path (string, required): 文件路径；content (string, required): 要写入的内容；append (boolean): 是否追加，默认 false。
+        Do: 创建新文件或小文件完全重写时使用；写入前确认路径正确；关键文件修改后运行测试验证。
+        Don't: 不要重写与任务无关的文件；不要用 write_file 做局部修改（改用 edit_file）；不要写入敏感信息。
+        Parallel: No，同一文件的并发写入会导致冲突。
+        Cap: 无显式大小限制，但极大 content 会消耗大量上下文。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "path" to ToolProperty(
@@ -223,7 +246,14 @@ internal fun writeFileTool() = Tool(
 
 internal fun listDirectoryTool() = Tool(
     name = "list_directory",
-    description = "列出指定目录下的文件和子目录。返回文件名、类型（file/directory）和相对路径。recursive=true 时递归深度受 max_depth 限制（0-20，默认 3）；truncated=true 表示在 max_depth 处还有子目录未展开，调大 max_depth 重试。默认跳过隐藏目录和 node_modules/build/.gradle/target/__pycache__/.idea；include_hidden 和 exclude_dirs 可覆盖。",
+    description = """
+        Summary: 列出目录内容，支持递归和深度控制，帮助理解项目结构。
+        Args: path (string): 目录路径，默认项目根目录；recursive (boolean): 是否递归；max_depth (int): 递归深度 0-20，默认 3；include_hidden (boolean): 是否包含隐藏文件；exclude_dirs (array): 要跳过的目录名。
+        Do: 探索项目结构时使用；先用小 depth，需要再加大；配合 read_file 读取关键文件。
+        Don't: 不要对 node_modules 等大型生成目录做深层递归；不要假设目录存在，先用 get_project_structure 或 list_directory 确认。
+        Parallel: Yes，多个独立目录可并行列出。
+        Cap: 默认跳过 node_modules/build/.gradle/target/__pycache__/.idea；truncated=true 表示还有子目录未展开。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "path" to ToolProperty(
@@ -253,7 +283,14 @@ internal fun listDirectoryTool() = Tool(
 
 internal fun searchCodeTool() = Tool(
     name = "search_code",
-    description = "在项目中搜索代码。支持正则表达式或普通文本搜索，可按文件类型过滤。max_results 限制 1-1000（默认 200），超出时 truncated=true；partial_scan_files 统计大文件只扫了前 1000 行的次数。请用更精确的 pattern 或 file_pattern 缩小范围。",
+    description = """
+        Summary: 在项目中搜索代码，支持正则或普通文本，可按文件类型过滤。
+        Args: query (string, required): 搜索关键词或正则；file_pattern (string): 文件匹配模式如 *.kt；path (string): 搜索根目录，默认项目根。
+        Do: 查找符号定义、调用点、配置项时使用；先用精确 pattern；结合 file_pattern 缩小范围。
+        Don't: 不要用过于宽泛的 query（如单个字母）；不要忽略 truncated=true 而基于不完整结果下结论。
+        Parallel: Yes，多个独立搜索可并行执行。
+        Cap: max_results 默认 200、上限 1000；truncated=true 或 partial_scan_files>0 表示结果不完整。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "query" to ToolProperty(
@@ -275,7 +312,14 @@ internal fun searchCodeTool() = Tool(
 
 internal fun runCommandTool() = Tool(
     name = "run_command",
-    description = "在指定工作目录下执行系统命令（如 shell 命令）。返回 stdout、stderr 和退出码。单流输出超过 max_output_chars（默认 1M 字符）会被截断并标 stdout_truncated/stderr_truncated；流读取异常会标 stdout_read_error/stderr_read_error，与非零 exit_code 区分开。",
+    description = """
+        Summary: 在工作目录下执行系统命令（shell），返回 stdout、stderr 和 exit_code。
+        Args: command (string, required): 要执行的命令；working_dir (string): 工作目录，默认项目根；timeout (int): 超时毫秒，默认 30000。
+        Do: 运行测试、构建、lint 等验证命令；用 `| head` 控制输出；命令前确认依赖已安装。
+        Don't: 不要执行 rm -rf /、curl | sh、修改系统配置等危险命令；不要假设命令存在而不检查；不要在沙箱内尝试网络命令。
+        Parallel: Yes，多个相互独立的命令可并行执行。
+        Cap: 单流输出超过 1M 字符会被截断并标记 stdout_truncated/stderr_truncated；命令运行在 OS 级沙箱中（禁网络、禁项目外写入）。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "command" to ToolProperty(
@@ -297,7 +341,14 @@ internal fun runCommandTool() = Tool(
 
 internal fun getProjectStructureTool() = Tool(
     name = "get_project_structure",
-    description = "获取当前项目的整体结构概览，包括模块、源代码目录、关键配置文件等。",
+    description = """
+        Summary: 获取项目整体结构概览，包括模块、源码目录和关键配置文件。
+        Args: depth (int): 目录递归深度，默认 2。
+        Do: 初识项目或确认模块边界时使用；先获取概览再深入具体文件。
+        Don't: 不要用它代替 list_directory 读取详细文件列表；depth 不要设过大。
+        Parallel: No，通常一次调用即可。
+        Cap: 受 depth 限制，不会递归太深。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "depth" to ToolProperty(
@@ -311,11 +362,14 @@ internal fun getProjectStructureTool() = Tool(
 
 internal fun delegateTaskTool() = Tool(
     name = "delegate_task",
-    description = "Spawn an isolated sub-agent to handle a specific workstream in parallel. " +
-            "Use when a task can be decomposed into independent sub-tasks. " +
-            "The sub-agent runs with a fresh session and isolated context. " +
-            "Returns the sub-agent\'s natural-language summary (plain text in its final turn) describing what it did. " +
-            "You can ask follow-up questions or request changes; metadata like iteration count is delivered via stream events, not in this result.",
+    description = """
+        Summary: 派生子 Agent 并行处理独立任务流，返回子 Agent 的最终自然语言总结。
+        Args: task_description (string, required): 子任务详细描述；toolset (string): 工具集（coder/explorer/verifier/webfetcher 或旧别名 dev/research/test/browser）；context_files (array): 子 Agent 需要访问的文件。
+        Do: 任务可拆分为独立子任务时使用；选择最小权限的 toolset；为子 Agent 提供清晰边界和必要上下文文件。
+        Don't: 不要用于高度耦合、必须连续沟通的任务；不要递归委托过深。
+        Parallel: Yes，多个 delegate_task 可与其他工具并行（注意子 Agent 独立运行）。
+        Cap: 子 Agent 结果以纯文本总结返回，详细元数据通过流事件交付。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "task_description" to ToolProperty(
@@ -347,7 +401,14 @@ internal fun delegateTaskTool() = Tool(
 
 internal fun findFileTool() = Tool(
     name = "find_file",
-    description = "Find files by name pattern (supports glob/regex). Returns matching file paths. Truncated at max_results (1-1000, default 50); truncated=true means there are more matches — narrow the pattern to enumerate all.",
+    description = """
+        Summary: 按文件名模式（支持 glob/regex）查找文件，返回匹配路径。
+        Args: pattern (string, required): 文件名模式，如 *.kt、build.gradle；path (string): 搜索根目录，默认项目根；max_results (int): 最大结果数 1-1000，默认 50。
+        Do: 定位特定文件、配置文件或测试文件时使用；pattern 尽量精确。
+        Don't: 不要用 .* 等过宽模式；不要忽略 truncated=true。
+        Parallel: Yes，多个独立查找可并行。
+        Cap: 默认最多 50 条，truncated=true 表示还有更多匹配。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "pattern" to ToolProperty("string", "File name pattern to search for (e.g. '*.kt', 'build.gradle')"),
@@ -360,7 +421,14 @@ internal fun findFileTool() = Tool(
 
 internal fun grepCodeTool() = Tool(
     name = "grep_code",
-    description = "Search for text patterns in file contents with line context (like grep). Returns matches with surrounding lines. context_lines clamped to [0, 50]; max_results clamped to [1, 1000] (default 200). truncated=true or partial_scan_files>0 means results are incomplete — narrow the query.",
+    description = """
+        Summary: 在文件内容中搜索文本模式（类似 grep），返回匹配行及上下文。
+        Args: query (string, required): 搜索文本或正则；path (string): 搜索根目录；file_pattern (string): 文件过滤模式；context_lines (int): 上下文行数 0-50，默认 2。
+        Do: 查找代码引用、字符串常量、函数调用时使用；先用精确 query。
+        Don't: 不要搜索过于宽泛的模式；不要忽略 truncated 或 partial_scan_files 标记。
+        Parallel: Yes，多个独立搜索可并行。
+        Cap: max_results 默认 200、上限 1000；大文件仅扫描前 1000 行。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "query" to ToolProperty("string", "Search text or regex pattern"),
@@ -374,7 +442,14 @@ internal fun grepCodeTool() = Tool(
 
 internal fun getFileInfoTool() = Tool(
     name = "get_file_info",
-    description = "Get metadata about a file: size, type, extension, modification time (epoch ms + ISO 8601), readability/writability, and line_count (for files < 1MB).",
+    description = """
+        Summary: 获取文件元数据：大小、类型、扩展名、修改时间、读写权限、行数（<1MB）。
+        Args: path (string, required): 文件路径。
+        Do: 读取大文件前先用它判断大小；验证文件是否存在及可写。
+        Don't: 不要用它代替 read_file 获取内容；不要对目录使用（结果可能无意义）。
+        Parallel: Yes。
+        Cap: 行数仅对小于 1MB 文件有效。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "path" to ToolProperty("string", "File path")
@@ -385,7 +460,14 @@ internal fun getFileInfoTool() = Tool(
 
 internal fun readMultipleFilesTool() = Tool(
     name = "read_multiple_files",
-    description = "Read contents of multiple files at once. More efficient than multiple read_file calls. Each file's content is truncated at MAX_CONTENT_LENGTH (UTF-8 safe); truncated results include truncated=true and original_length so the caller can switch to read_file with offset for the rest.",
+    description = """
+        Summary: 一次性读取多个文件，比多次 read_file 更高效。
+        Args: paths (array, required): 文件路径列表。
+        Do: 需要同时读取多个相关文件（如接口与实现、测试与被测代码）时使用。
+        Don't: 不要用它读取生成目录或超大文件；单个文件过大时改用 read_file 分页。
+        Parallel: Yes，内部并行读取。
+        Cap: 每个文件内容超过 MAX_CONTENT_LENGTH 会被截断并标记 truncated 和 original_length。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "paths" to ToolProperty("array", "List of file paths to read")
@@ -396,7 +478,14 @@ internal fun readMultipleFilesTool() = Tool(
 
 internal fun editFileTool() = Tool(
     name = "edit_file",
-    description = "Precisely edit a file by replacing old_string with new_string, or by replacing lines in a range. old_string must appear exactly once (or provide enough surrounding context); start_line/end_line are 1-based and must stay within file bounds. Out-of-range parameters return a clear error. Use this for small edits instead of rewriting entire files.",
+    description = """
+        Summary: 精确编辑文件，用 old_string 替换为 new_string，或按行范围替换。
+        Args: path (string, required): 文件路径；old_string (string): 要被替换的文本；new_string (string, required): 替换后的文本；start_line/end_line (int): 1-based 行范围。
+        Do: 小范围修改时使用；old_string 提供足够上下文确保唯一匹配；修改后验证文件仍能编译/通过测试。
+        Don't: 不要在不确认上下文的情况下使用；old_string 必须精确匹配；不要用它做大规模重写（改用 write_file）。
+        Parallel: No，同一文件并发编辑会冲突。
+        Cap: start_line/end_line 越界会返回明确错误。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "path" to ToolProperty("string", "File path"),
@@ -411,7 +500,14 @@ internal fun editFileTool() = Tool(
 
 internal fun deleteFileTool() = Tool(
     name = "delete_file",
-    description = "Delete a file. By default, refuses to delete directories to prevent accidental recursive removal — pass recursive=true to confirm deletion of a directory and all its contents. Use with caution.",
+    description = """
+        Summary: 删除文件；删除目录需要显式传 recursive=true。
+        Args: path (string, required): 文件或目录路径；recursive (boolean): 删除目录及其内容时必须为 true。
+        Do: 清理确认不再需要的文件；删除目录前 double-check 路径。
+        Don't: 不要删除与任务无关的文件；不要未确认就递归删除目录；不要删除 .git、node_modules 等关键目录。
+        Parallel: No。
+        Cap: 默认拒绝删除目录，防止误删。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "path" to ToolProperty("string", "File path (directories require recursive=true)"),
@@ -423,7 +519,14 @@ internal fun deleteFileTool() = Tool(
 
 internal fun copyFileTool() = Tool(
     name = "copy_file",
-    description = "Copy a file (or recursively a directory) from source to destination. Overwrites existing destination. Returns type=file or type=directory.",
+    description = """
+        Summary: 复制文件或目录到目标路径，覆盖已存在目标。
+        Args: source (string, required): 源路径；destination (string, required): 目标路径。
+        Do: 备份文件、创建模板副本时使用；确认 destination 正确。
+        Don't: 不要覆盖用户未同意的重要文件；不要复制到项目外。
+        Parallel: No，目标路径冲突会导致不可预期结果。
+        Cap: 自动处理目录递归复制。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "source" to ToolProperty("string", "Source file path"),
@@ -435,7 +538,14 @@ internal fun copyFileTool() = Tool(
 
 internal fun moveFileTool() = Tool(
     name = "move_file",
-    description = "Move/rename a file from source to destination. If source and destination are on different filesystems, automatically falls back to copy+delete and reports method=copy_and_delete. Partial failures (copy succeeded but source delete failed) are reported as errors.",
+    description = """
+        Summary: 移动/重命名文件；跨文件系统时自动回退为 copy+delete。
+        Args: source (string, required): 源路径；destination (string, required): 目标路径。
+        Do: 重命名文件、整理目录结构时使用；移动后更新相关引用。
+        Don't: 不要移动到项目外；不要覆盖重要文件而不确认。
+        Parallel: No。
+        Cap: 跨文件系统会报告 method=copy_and_delete；部分失败会返回错误。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "source" to ToolProperty("string", "Source file path"),
@@ -449,7 +559,14 @@ internal fun moveFileTool() = Tool(
 
 internal fun gitStatusTool() = Tool(
     name = "git_status",
-    description = "查看 Git 仓库状态，返回当前分支和变更文件列表。",
+    description = """
+        Summary: 查看 Git 仓库状态，返回当前分支和变更文件列表。
+        Args: working_dir (string): 工作目录，默认项目根。
+        Do: 开始任务前了解当前变更；确认分支后再提交。
+        Don't: 不要在非 Git 目录调用（会报错）。
+        Parallel: Yes，可与其他只读 Git 工具并行。
+        Cap: 只读工具，不修改仓库。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "working_dir" to ToolProperty("string", "工作目录路径，默认为项目根目录")
@@ -460,7 +577,14 @@ internal fun gitStatusTool() = Tool(
 
 internal fun gitDiffTool() = Tool(
     name = "git_diff",
-    description = "查看 Git 文件差异。支持查看暂存区差异或指定文件的差异。",
+    description = """
+        Summary: 查看 Git 文件差异，支持暂存区或指定文件。
+        Args: working_dir (string): 工作目录；cached (boolean): 是否查看暂存区；file (string): 指定文件路径。
+        Do: 提交前审查变更；查看特定文件改动。
+        Don't: 不要用于未跟踪文件；差异过大时用 `| head` 控制。
+        Parallel: Yes。
+        Cap: 只读工具。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "working_dir" to ToolProperty("string", "工作目录路径，默认为项目根目录"),
@@ -473,7 +597,14 @@ internal fun gitDiffTool() = Tool(
 
 internal fun gitLogTool() = Tool(
     name = "git_log",
-    description = "查看 Git 提交历史（单行格式）。",
+    description = """
+        Summary: 查看 Git 提交历史（单行格式）。
+        Args: working_dir (string): 工作目录；limit (int): 最大提交数 1-100，默认 20。
+        Do: 了解近期提交、定位引入问题的提交时使用。
+        Don't: limit 不要传过大值；不要用于非 Git 目录。
+        Parallel: Yes。
+        Cap: 只读工具，最大返回 100 条。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "working_dir" to ToolProperty("string", "工作目录路径，默认为项目根目录"),
@@ -485,7 +616,14 @@ internal fun gitLogTool() = Tool(
 
 internal fun gitBranchTool() = Tool(
     name = "git_branch",
-    description = "查看 Git 分支列表，识别当前分支。",
+    description = """
+        Summary: 查看 Git 分支列表，识别当前分支。
+        Args: working_dir (string): 工作目录。
+        Do: 确认当前分支、查看远程分支时使用。
+        Don't: 不要用于非 Git 目录。
+        Parallel: Yes。
+        Cap: 只读工具。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "working_dir" to ToolProperty("string", "工作目录路径，默认为项目根目录")
@@ -498,7 +636,14 @@ internal fun gitBranchTool() = Tool(
 
 internal fun execShellTool() = Tool(
     name = "exec_shell",
-    description = "执行 Shell 命令，返回 stdout、stderr 和退出码。支持超时控制和安全限制（自动阻止危险命令）。",
+    description = """
+        Summary: 执行 Shell 命令，返回 stdout、stderr 和 exit_code。
+        Args: command (string, required): 要执行的命令；working_dir (string): 工作目录；timeout (int): 超时毫秒，默认 60000、最大 300000。
+        Do: 运行构建、测试、lint、自定义脚本；用 `| head` 控制输出。
+        Don't: 不要执行 rm -rf /、curl | sh、修改系统配置等危险命令；沙箱内禁止网络和外项目写入。
+        Parallel: Yes，多个独立命令可并行。
+        Cap: 命令运行在 OS 级沙箱中；超时最大 300000ms。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "command" to ToolProperty("string", "要执行的 Shell 命令"),
@@ -513,7 +658,14 @@ internal fun execShellTool() = Tool(
 
 internal fun httpRequestTool() = Tool(
     name = "http_request",
-    description = "发送 HTTP 请求，支持 GET/POST/PUT/DELETE/PATCH。自动格式化 JSON 响应。",
+    description = """
+        Summary: 发送 HTTP 请求，支持 GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS，自动格式化 JSON 响应。
+        Args: url (string, required): 请求 URL；method (string): HTTP 方法，默认 GET；headers (object): 请求头；body (string): 请求体；timeout (int): 超时毫秒，默认 30000。
+        Do: 调用外部 API、下载文档、验证 webhook 时使用；明确 timeout。
+        Don't: 不要访问内网地址、localhost、file:// 等（会被 SSRF 防护拦截）；不要发送敏感凭证而不确认。
+        Parallel: Yes，多个独立请求可并行。
+        Cap: SSRF 防护默认开启；连接/读取超时会返回明确错误信息。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "url" to ToolProperty("string", "请求 URL"),
@@ -534,7 +686,14 @@ internal fun httpRequestTool() = Tool(
 
 internal fun parseJsonTool() = Tool(
     name = "parse_json",
-    description = "解析 JSON 字符串，支持 xpath-style 点号路径查询（如 user.address.city）。",
+    description = """
+        Summary: 解析 JSON 字符串，支持点号路径查询（如 user.address.city）。
+        Args: json (string, required): JSON 字符串；query (string): 点号分隔路径，可选。
+        Do: 提取 API 响应、配置文件中的特定字段；处理嵌套 JSON。
+        Don't: 不要用于非 JSON 文本；query 路径不存在时返回 null。
+        Parallel: Yes。
+        Cap: 仅支持简单点号路径，不支持数组切片或复杂表达式。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "json" to ToolProperty("string", "要解析的 JSON 字符串"),
@@ -546,7 +705,14 @@ internal fun parseJsonTool() = Tool(
 
 internal fun encodeBase64Tool() = Tool(
     name = "encode_base64",
-    description = "将字符串编码为 Base64。",
+    description = """
+        Summary: 将字符串编码为 Base64。
+        Args: input (string, required): 要编码的字符串。
+        Do: 构造 basic auth header、编码小段二进制数据时使用。
+        Don't: 不要用于大文件（应使用文件工具或流）。
+        Parallel: Yes。
+        Cap: 纯文本输入，输出长度约为输入的 4/3。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "input" to ToolProperty("string", "要编码的字符串")
@@ -557,7 +723,14 @@ internal fun encodeBase64Tool() = Tool(
 
 internal fun decodeBase64Tool() = Tool(
     name = "decode_base64",
-    description = "将 Base64 字符串解码为普通字符串。",
+    description = """
+        Summary: 将 Base64 字符串解码为普通字符串。
+        Args: input (string, required): Base64 字符串。
+        Do: 解析 basic auth、解码小数据时使用。
+        Don't: 不要解码不可信来源的大段 Base64；非法输入会报错。
+        Parallel: Yes。
+        Cap: 仅支持 UTF-8 可解码内容。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "input" to ToolProperty("string", "要解码的 Base64 字符串")
@@ -568,7 +741,14 @@ internal fun decodeBase64Tool() = Tool(
 
 internal fun formatJsonTool() = Tool(
     name = "format_json",
-    description = "JSON 美化或压缩格式化。",
+    description = """
+        Summary: JSON 美化或压缩格式化。
+        Args: json (string, required): JSON 字符串；compact (boolean): 是否压缩，默认 false。
+        Do: 整理 API 响应、生成可读配置时使用。
+        Don't: 不要用于非 JSON 输入；非法 JSON 会报错。
+        Parallel: Yes。
+        Cap: 纯格式化，不验证 schema。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "json" to ToolProperty("string", "要格式化的 JSON 字符串"),
@@ -580,7 +760,14 @@ internal fun formatJsonTool() = Tool(
 
 internal fun hashMd5Tool() = Tool(
     name = "hash_md5",
-    description = "计算字符串的 MD5 哈希值。",
+    description = """
+        Summary: 计算字符串的 MD5 哈希值。
+        Args: input (string, required): 要计算哈希的字符串。
+        Do: 生成校验值、快速比对内容时使用。
+        Don't: 不要用于密码或敏感数据（MD5 不安全）。
+        Parallel: Yes。
+        Cap: 输出 32 位十六进制字符串。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "input" to ToolProperty("string", "要计算哈希的字符串")
@@ -591,7 +778,14 @@ internal fun hashMd5Tool() = Tool(
 
 internal fun hashSha256Tool() = Tool(
     name = "hash_sha256",
-    description = "计算字符串的 SHA-256 哈希值。",
+    description = """
+        Summary: 计算字符串的 SHA-256 哈希值。
+        Args: input (string, required): 要计算哈希的字符串。
+        Do: 生成校验值、内容签名时使用。
+        Don't: 不要用于密码哈希（应使用专门 KDF）。
+        Parallel: Yes。
+        Cap: 输出 64 位十六进制字符串。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "input" to ToolProperty("string", "要计算哈希的字符串")
@@ -605,7 +799,14 @@ internal fun hashSha256Tool() = Tool(
 // Git 增强
 internal fun gitAddTool() = Tool(
     name = "git_add",
-    description = "将文件添加到 Git 暂存区。支持添加单个文件、多个文件或全部变更。",
+    description = """
+        Summary: 将文件添加到 Git 暂存区。
+        Args: working_dir (string): 工作目录；files (array): 要添加的文件路径列表；all (boolean): 是否添加所有变更，默认 false。
+        Do: 提交前暂存变更；明确指定 files 避免误加。
+        Don't: 不要未确认就 all=true；不要添加包含敏感信息的文件。
+        Parallel: No，会修改仓库状态。
+        Cap: 仅对 Git 仓库有效。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "working_dir" to ToolProperty("string", "工作目录路径，默认为项目根目录"),
@@ -618,7 +819,14 @@ internal fun gitAddTool() = Tool(
 
 internal fun gitCommitTool() = Tool(
     name = "git_commit",
-    description = "创建 Git 提交。如果 message 为空则执行 git commit --amend。",
+    description = """
+        Summary: 创建 Git 提交或 amend 上一次提交。
+        Args: working_dir (string): 工作目录；message (string): 提交信息；amend (boolean): 是否 amend；no_verify (boolean): 是否跳过钩子。
+        Do: 完成变更后创建提交；message 清晰描述改动。
+        Don't: 不要未确认就 amend 公共提交；不要提交未审查的代码。
+        Parallel: No。
+        Cap: 仅对 Git 仓库有效。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "working_dir" to ToolProperty("string", "工作目录路径，默认为项目根目录"),
@@ -632,7 +840,14 @@ internal fun gitCommitTool() = Tool(
 
 internal fun gitStashTool() = Tool(
     name = "git_stash",
-    description = "Git stash 操作：保存、弹出、查看或清空暂存。",
+    description = """
+        Summary: Git stash 操作：保存、弹出、查看或清空。
+        Args: working_dir (string): 工作目录；action (enum): save/pop/list/clear/drop；message (string): stash 消息（仅 save）。
+        Do: 临时保存未完成变更、切换分支前使用。
+        Don't: 不要随意 clear/drop 以免丢失工作；drop 前确认 stash 内容。
+        Parallel: No。
+        Cap: 仅对 Git 仓库有效。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "working_dir" to ToolProperty("string", "工作目录路径，默认为项目根目录"),
@@ -649,7 +864,14 @@ internal fun gitStashTool() = Tool(
 
 internal fun gitBlameTool() = Tool(
     name = "git_blame",
-    description = "查看指定文件每行的最后修改者和提交信息。",
+    description = """
+        Summary: 查看指定文件每行的最后修改者和提交信息。
+        Args: working_dir (string): 工作目录；file (string, required): 文件路径；line_start/line_end (int): 行范围。
+        Do: 追踪代码历史、定位回归引入提交时使用。
+        Don't: 不要用于非 Git 跟踪文件；范围过大时先缩小。
+        Parallel: Yes。
+        Cap: 只读工具。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "working_dir" to ToolProperty("string", "工作目录路径，默认为项目根目录"),
@@ -664,7 +886,14 @@ internal fun gitBlameTool() = Tool(
 // 文件操作增强
 internal fun createDirectoryTool() = Tool(
     name = "create_directory",
-    description = "创建目录（包括不存在的父目录）。",
+    description = """
+        Summary: 创建目录（含不存在的父目录）。
+        Args: path (string, required): 目录路径。
+        Do: 创建新模块、测试目录时使用；确认 path 在项目内。
+        Don't: 不要创建与任务无关的目录；不要创建系统目录。
+        Parallel: No，目标路径冲突会导致错误。
+        Cap: 幂等，目录已存在时返回成功。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "path" to ToolProperty("string", "要创建的目录路径")
@@ -675,7 +904,14 @@ internal fun createDirectoryTool() = Tool(
 
 internal fun zipDirectoryTool() = Tool(
     name = "zip_directory",
-    description = "将目录压缩为 zip 文件。",
+    description = """
+        Summary: 将目录压缩为 zip 文件。
+        Args: source (string, required): 要压缩的目录；destination (string, required): 输出 zip 路径。
+        Do: 打包备份、生成归档时使用。
+        Don't: 不要压缩项目外目录；不要覆盖重要文件而不确认。
+        Parallel: No。
+        Cap: 标准 zip 格式，不含加密。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "source" to ToolProperty("string", "要压缩的目录路径"),
@@ -687,7 +923,14 @@ internal fun zipDirectoryTool() = Tool(
 
 internal fun unzipArchiveTool() = Tool(
     name = "unzip_archive",
-    description = "解压 zip 文件到指定目录。",
+    description = """
+        Summary: 解压 zip 文件到指定目录。
+        Args: source (string, required): zip 文件路径；destination (string, required): 解压目标目录。
+        Do: 解压依赖包、模板或备份时使用；确认来源可信。
+        Don't: 不要解压来源不明的 zip（路径遍历风险）；不要解压到项目外。
+        Parallel: No。
+        Cap: 标准 zip 格式。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "source" to ToolProperty("string", "zip 文件路径"),
@@ -700,7 +943,14 @@ internal fun unzipArchiveTool() = Tool(
 // 构建工具
 internal fun mavenTool() = Tool(
     name = "maven",
-    description = "执行 Maven 命令（mvn）。自动检测项目中的 pom.xml。",
+    description = """
+        Summary: 执行 Maven 命令（mvn）。
+        Args: goals (string, required): Maven 目标；working_dir (string): 工作目录；profiles (string): 激活的 profile；properties (object): 额外系统属性。
+        Do: 构建、测试、查看依赖树时使用；优先用 verify/test 等安全目标。
+        Don't: 不要执行会修改系统或删除项目的命令；注意沙箱禁止网络可能影响依赖下载。
+        Parallel: No，构建通常有状态。
+        Cap: 依赖本地 mvn 和项目 pom.xml。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "goals" to ToolProperty("string", "Maven 目标，如 'clean install'、'test'、'dependency:tree'"),
@@ -714,7 +964,14 @@ internal fun mavenTool() = Tool(
 
 internal fun gradleTool() = Tool(
     name = "gradle",
-    description = "执行 Gradle 命令（./gradlew 或 gradle）。自动检测项目中的 build.gradle/build.gradle.kts。",
+    description = """
+        Summary: 执行 Gradle 命令（./gradlew 或 gradle）。
+        Args: tasks (string, required): Gradle 任务；working_dir (string): 工作目录；args (string): 额外参数如 --info。
+        Do: 构建、测试、查看依赖时使用；优先用 check/test。
+        Don't: 不要执行危险任务；注意沙箱禁止网络可能影响依赖下载。
+        Parallel: No。
+        Cap: 依赖本地 gradlew/gradle 和 build 文件。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "tasks" to ToolProperty("string", "Gradle 任务，如 'build'、'test'、'dependencies'"),
@@ -728,7 +985,14 @@ internal fun gradleTool() = Tool(
 // 测试工具
 internal fun runTestsTool() = Tool(
     name = "run_tests",
-    description = "运行项目中的测试。支持 JUnit、TestNG。可指定类、方法或包。",
+    description = """
+        Summary: 运行项目测试（JUnit/TestNG）。
+        Args: test_class (string): 测试类全限定名；test_method (string): 测试方法名（需同时指定 test_class）；package_path (string): 测试包路径；working_dir (string): 工作目录。
+        Do: 修改代码后运行相关测试验证；先跑最小相关集，再扩大。
+        Don't: 不要未修改就全量跑所有测试；注意测试可能依赖外部服务。
+        Parallel: No，测试运行通常有状态。
+        Cap: 通过 IDE 测试运行器执行，结果格式与项目配置相关。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "test_class" to ToolProperty("string", "测试类全限定名（可选）"),
@@ -743,7 +1007,14 @@ internal fun runTestsTool() = Tool(
 // 正则工具
 internal fun regexTestTool() = Tool(
     name = "regex_test",
-    description = "测试正则表达式是否匹配给定文本。返回匹配结果和捕获组。",
+    description = """
+        Summary: 测试正则表达式是否匹配给定文本，返回匹配结果和捕获组。
+        Args: pattern (string, required): 正则表达式；text (string, required): 要测试的文本；flags (string): 标志如 i/m。
+        Do: 验证正则、提取捕获组时使用；先用小文本测试。
+        Don't: 不要使用过于复杂或回溯严重的正则；不要处理超大文本。
+        Parallel: Yes。
+        Cap: 基于 Kotlin Regex 实现。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "pattern" to ToolProperty("string", "正则表达式模式"),
@@ -756,7 +1027,14 @@ internal fun regexTestTool() = Tool(
 
 internal fun regexExtractTool() = Tool(
     name = "regex_extract",
-    description = "使用正则表达式从文本中提取所有匹配项。支持命名捕获组。",
+    description = """
+        Summary: 使用正则表达式从文本中提取所有匹配项，支持命名捕获组。
+        Args: pattern (string, required): 正则表达式；text (string, required): 要提取的文本；flags (string): 标志如 i/m。
+        Do: 从日志、API 响应中提取结构化数据时使用。
+        Don't: 不要用复杂正则解析 HTML/JSON（应用专用工具）；不要处理超大文本。
+        Parallel: Yes。
+        Cap: 基于 Kotlin Regex 实现。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "pattern" to ToolProperty("string", "正则表达式模式"),
@@ -770,7 +1048,14 @@ internal fun regexExtractTool() = Tool(
 // Diff 工具
 internal fun diffFilesTool() = Tool(
     name = "diff_files",
-    description = "比较两个文件或两段文本的差异，返回统一 diff 格式结果。",
+    description = """
+        Summary: 比较两个文件或两段文本的差异，返回统一 diff 格式。
+        Args: source (string, required): 原始路径或文本；target (string, required): 目标路径或文本；is_paths (boolean): 是否为文件路径，默认 true；context_lines (int): 上下文行数，默认 3。
+        Do: 审查变更、生成补丁描述时使用；is_paths=true 时直接比较文件。
+        Don't: 不要用于二进制文件；超大文件可能产生巨大 diff。
+        Parallel: Yes。
+        Cap: 文本 diff，context_lines 最大受实现限制。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "source" to ToolProperty("string", "原始文件路径或文本"),
@@ -785,7 +1070,14 @@ internal fun diffFilesTool() = Tool(
 // 文档工具
 internal fun generateDocTool() = Tool(
     name = "generate_doc",
-    description = "为代码生成文档注释（Javadoc/KDoc/JSDoc）。需要提供文件路径和行号范围。",
+    description = """
+        Summary: 为代码生成文档注释（Javadoc/KDoc/JSDoc）。
+        Args: file_path (string, required): 文件路径；line_start/line_end (int, required): 1-based 行范围；style (enum): javadoc/kdoc/jsdoc。
+        Do: 为公共 API、复杂函数生成文档时使用；生成后人工检查准确性。
+        Don't: 不要覆盖用户手写的详细文档；不要对私有简单 getter 滥用。
+        Parallel: No，会修改文件。
+        Cap: 基于文件内容与行范围生成。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "file_path" to ToolProperty("string", "文件路径"),
@@ -800,7 +1092,14 @@ internal fun generateDocTool() = Tool(
 // 数据库工具
 internal fun sqlExecuteTool() = Tool(
     name = "sql_execute",
-    description = "执行 SQL 查询或命令。需要项目已配置数据库数据源（IntelliJ Database Tools）。",
+    description = """
+        Summary: 执行 SQL 查询或命令（需项目已配置 IntelliJ Database Tools 数据源）。
+        Args: data_source_name (string, required): 数据源名称；sql (string, required): SQL 语句；limit (int): 最大返回行数，默认 100。
+        Do: 排查数据问题、验证查询结果时使用；优先 SELECT，避免 DML 除非用户要求。
+        Don't: 不要执行 DROP/DELETE/UPDATE 等危险命令而不确认；不要查询无关表。
+        Parallel: No，数据库连接有状态。
+        Cap: 受 limit 限制；仅支持已配置数据源。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "data_source_name" to ToolProperty("string", "数据源名称"),
@@ -814,7 +1113,14 @@ internal fun sqlExecuteTool() = Tool(
 // Docker 工具
 internal fun dockerTool() = Tool(
     name = "docker",
-    description = "执行 Docker 命令：查看容器、镜像、日志，或运行容器。",
+    description = """
+        Summary: 执行 Docker 命令（ps/images/logs/run/exec/stop/rmi/inspect）。
+        Args: command (enum, required): Docker 子命令；target (string): 容器/镜像名或 ID；options (string): 额外选项。
+        Do: 查看容器状态、读取日志、检查镜像时使用；优先只读命令。
+        Don't: 不要未确认就 stop/rmi/run 影响运行中服务；不要在生产环境随意操作。
+        Parallel: No，Docker daemon 操作有状态。
+        Cap: 依赖本地 Docker daemon 和权限。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "command" to ToolProperty(
@@ -832,7 +1138,14 @@ internal fun dockerTool() = Tool(
 // 依赖分析工具
 internal fun analyzeDependenciesTool() = Tool(
     name = "analyze_dependencies",
-    description = "分析项目依赖：查找过时依赖、检测冲突、生成依赖树。",
+    description = """
+        Summary: 分析项目依赖（tree/outdated/conflicts）。
+        Args: action (enum, required): tree/outdated/conflicts；working_dir (string): 工作目录。
+        Do: 排查依赖冲突、查找过时依赖、生成依赖树时使用。
+        Don't: 不要频繁调用 outdated（耗时长）；注意沙箱禁网络可能影响版本检查。
+        Parallel: No。
+        Cap: 支持 Maven/Gradle 项目，结果依赖构建工具输出。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "action" to ToolProperty(
@@ -849,7 +1162,14 @@ internal fun analyzeDependenciesTool() = Tool(
 // 网页抓取工具
 internal fun webScraperTool() = Tool(
     name = "web_scraper",
-    description = "抓取网页内容并提取纯文本。支持指定 CSS 选择器提取特定元素。",
+    description = """
+        Summary: 抓取网页内容并提取纯文本，支持 CSS 选择器。
+        Args: url (string, required): 目标 URL；selector (string): CSS 选择器；timeout (int): 超时毫秒，默认 15000。
+        Do: 获取文档、教程、API 说明时使用；selector 可精确定位内容。
+        Don't: 不要抓取需要登录或受保护的页面；不要频繁请求同一站点。
+        Parallel: Yes，多个独立 URL 可并行。
+        Cap: 返回纯文本，复杂动态页面可能无法渲染。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "url" to ToolProperty("string", "目标网页 URL"),
@@ -863,7 +1183,14 @@ internal fun webScraperTool() = Tool(
 // 剪贴板工具
 internal fun clipboardTool() = Tool(
     name = "clipboard",
-    description = "操作系统剪贴板：获取当前内容或设置新内容。",
+    description = """
+        Summary: 操作系统剪贴板：get 获取内容 / set 设置内容。
+        Args: action (enum, required): get/set；content (string): set 时必填。
+        Do: 将生成的代码片段写入剪贴板供用户粘贴；读取用户已复制的文本。
+        Don't: 不要写入敏感信息；get 时注意隐私内容。
+        Parallel: No，剪贴板是全局状态。
+        Cap: 受操作系统剪贴板大小限制。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "action" to ToolProperty("string", "操作: get/set", enum = listOf("get", "set")),
@@ -876,7 +1203,14 @@ internal fun clipboardTool() = Tool(
 // 时间戳工具
 internal fun timestampTool() = Tool(
     name = "timestamp",
-    description = "时间戳与日期互转。支持多种格式。",
+    description = """
+        Summary: 时间戳与日期字符串互转，支持 ISO/RFC/relative 等格式。
+        Args: value (string, required): 时间戳或日期字符串；input_format (enum, required): timestamp/iso/rfc；output_format (enum, required): timestamp/iso/rfc/relative。
+        Do: 日志分析、时间格式化、计算相对时间时使用。
+        Don't: 不要输入与 input_format 不匹配的格式。
+        Parallel: Yes。
+        Cap: 基于标准日期格式解析。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "value" to ToolProperty("string", "时间戳（毫秒）或日期字符串"),
@@ -898,7 +1232,14 @@ internal fun timestampTool() = Tool(
 // UUID 工具
 internal fun uuidTool() = Tool(
     name = "uuid",
-    description = "生成 UUID（v4 随机）或验证 UUID 格式。",
+    description = """
+        Summary: 生成 UUID v4 或验证 UUID 格式。
+        Args: action (enum, required): generate/validate；uuid (string): validate 时必填。
+        Do: 生成唯一标识、验证用户输入的 UUID 时使用。
+        Don't: 不要用于加密安全场景（v4 是随机，非排序）。
+        Parallel: Yes。
+        Cap: 标准 UUID v4 格式。
+    """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "action" to ToolProperty("string", "操作: generate/validate", enum = listOf("generate", "validate")),

@@ -471,7 +471,9 @@ export class ToolCall {
                 <i class="fas fa-chevron-down tool-chevron" data-cs-role="chevron"></i>
             </div>
             <div class="tool-body" data-cs-role="body">
-                ${this._renderBody()}
+                <div class="tool-body-inner">
+                    ${this._renderBody()}
+                </div>
             </div>
         `;
 

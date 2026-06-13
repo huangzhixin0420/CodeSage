@@ -14,7 +14,9 @@ data class ChatRequest(
     val temperature: Double? = null,
     @SerialName("max_tokens")
     val maxTokens: Int? = null,
-    val stream: Boolean = false
+    val stream: Boolean = false,
+    @SerialName("parallel_tool_calls")
+    val parallelToolCalls: Boolean? = null
 )
 
 /**

@@ -68,6 +68,7 @@
                                 : "light";
                     }
                     document.documentElement.setAttribute("data-theme", t);
+                    document.body.setAttribute("data-theme", t);
                 } catch (e) {
                     /* ignore */
                 }
@@ -83,7 +84,11 @@
             <!-- ============== Main Area ============== -->
             <div class="main-area">
                 <!-- Settings view (overlays chat content when active) -->
-                <div class="cs-settings-root" id="cs-settings-root" style="display:none"></div>
+                <div
+                    class="cs-settings-root"
+                    id="cs-settings-root"
+                    style="display: none"
+                ></div>
 
                 <!-- Header -->
                 <header class="chat-header">
@@ -98,7 +103,14 @@
                         </button>
                         <div class="brand">
                             <div class="brand-mark" aria-label="CodeSage">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2.5"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
                                     <path d="M12 2L4 7v10l8 5 8-5V7l-8-5z" />
                                     <path d="M12 22V12" />
                                     <path d="M4 7l8 5 8-5" />
@@ -106,7 +118,11 @@
                             </div>
                             <span class="brand-text">CodeSage</span>
                         </div>
-                        <span class="session-title" id="session-title" title=""></span>
+                        <span
+                            class="session-title"
+                            id="session-title"
+                            title=""
+                        ></span>
                     </div>
                     <div class="header-right">
                         <!-- Model selector -->
@@ -118,10 +134,16 @@
                                 aria-expanded="false"
                             >
                                 <span class="model-dot"></span>
-                                <span class="model-name" id="model-name">Loading…</span>
+                                <span class="model-name" id="model-name"
+                                    >Loading…</span
+                                >
                                 <i class="fas fa-chevron-down chevron"></i>
                             </button>
-                            <div class="model-dropdown" id="model-dropdown" role="listbox"></div>
+                            <div
+                                class="model-dropdown"
+                                id="model-dropdown"
+                                role="listbox"
+                            ></div>
                         </div>
 
                         <button
@@ -139,7 +161,10 @@
                             data-cs-tooltip="显示/隐藏思考过程"
                             aria-label="切换思考过程"
                         >
-                            <i class="fas fa-brain" id="thinking-toggle-icon"></i>
+                            <i
+                                class="fas fa-brain"
+                                id="thinking-toggle-icon"
+                            ></i>
                         </button>
 
                         <button
@@ -172,12 +197,23 @@
                 </header>
 
                 <!-- Messages -->
-                <div class="messages-container" id="messages-container" tabindex="-0">
+                <div
+                    class="messages-container"
+                    id="messages-container"
+                    tabindex="-0"
+                >
                     <div class="messages-inner" id="messages-inner">
                         <!-- Welcome state (default empty) -->
                         <div class="welcome-state" id="welcome-state">
                             <div class="welcome-mark">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
                                     <path d="M12 2L4 7v10l8 5 8-5V7l-8-5z" />
                                     <path d="M12 22V12" />
                                     <path d="M4 7l8 5 8-5" />
@@ -185,7 +221,8 @@
                             </div>
                             <h1 class="welcome-title">欢迎使用 CodeSage</h1>
                             <p class="welcome-subtitle">
-                                你的 AI 编码助手,直接对话即可读改文件、执行命令、生成代码。
+                                你的 AI
+                                编码助手,直接对话即可读改文件、执行命令、生成代码。
                             </p>
                             <div class="welcome-actions" id="welcome-actions">
                                 <!-- JS dynamically injects starter prompts -->
@@ -203,7 +240,11 @@
                 <!-- Input Area -->
                 <div class="input-area">
                     <div class="input-container" id="input-container">
-                        <div class="input-attachments" id="input-attachments"></div>
+                        <div class="context-chips" id="context-chips"></div>
+                        <div
+                            class="input-attachments"
+                            id="input-attachments"
+                        ></div>
                         <div class="input-textarea-wrap">
                             <textarea
                                 class="input-textarea"
@@ -240,16 +281,32 @@
                                 >
                                     <i class="fas fa-at"></i>
                                 </button>
-                                <div class="mode-tabs" id="mode-tabs" role="tablist">
-                                    <button class="mode-tab" data-mode="chat" title="普通对话">
+                                <div
+                                    class="mode-tabs"
+                                    id="mode-tabs"
+                                    role="tablist"
+                                >
+                                    <button
+                                        class="mode-tab"
+                                        data-mode="chat"
+                                        title="普通对话"
+                                    >
                                         <i class="fas fa-comments"></i>
                                         <span>Chat</span>
                                     </button>
-                                    <button class="mode-tab" data-mode="agent" title="Agent 模式(自动调用工具)">
+                                    <button
+                                        class="mode-tab"
+                                        data-mode="agent"
+                                        title="Agent 模式(自动调用工具)"
+                                    >
                                         <i class="fas fa-bolt"></i>
                                         <span>Agent</span>
                                     </button>
-                                    <button class="mode-tab" data-mode="plan" title="先出计划再执行">
+                                    <button
+                                        class="mode-tab"
+                                        data-mode="plan"
+                                        title="先出计划再执行"
+                                    >
                                         <i class="fas fa-list-check"></i>
                                         <span>Plan</span>
                                     </button>
@@ -283,10 +340,17 @@
             <aside class="cs-artifacts" id="cs-artifacts">
                 <div class="cs-artifacts-header">
                     <div class="cs-artifacts-title">
-                        <i class="fas fa-puzzle-piece" style="color:var(--accent);"></i>
+                        <i
+                            class="fas fa-puzzle-piece"
+                            style="color: var(--accent)"
+                        ></i>
                         工件
                     </div>
-                    <button class="icon-btn" id="artifacts-close-btn" aria-label="关闭">
+                    <button
+                        class="icon-btn"
+                        id="artifacts-close-btn"
+                        aria-label="关闭"
+                    >
                         <i class="fas fa-xmark"></i>
                     </button>
                 </div>

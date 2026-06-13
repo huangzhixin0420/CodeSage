@@ -13,6 +13,7 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "culori": "^4.0.2",
     "jsdom": "^26.1.0"
   }
 }

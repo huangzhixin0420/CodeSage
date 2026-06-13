@@ -35,6 +35,12 @@
     --surface-active: rgba(0, 0, 0, 0.06);
     --surface-overlay: rgba(15, 23, 23, 0.32);
 
+    /* === Glass Surface(浮层专用)=== */
+    --surface-glass: rgba(255, 255, 255, 0.72);
+    --surface-glass-border: rgba(255, 255, 255, 0.4);
+    --surface-glass-blur: 12px;
+    --surface-glass-saturate: 150%;
+
     /* === Foreground (文本) === */
     --fg-primary: #0f172a; /* 标题、对话正文 */
     --fg-secondary: #475569; /* 次要文本 */
@@ -92,10 +98,23 @@
     --diff-remove-fg: #991b1b; /* red-800 */
     --diff-remove-line: rgba(239, 68, 68, 0.16);
 
+    /* === Avatar === */
+    --avatar-size-md: 32px;
+    --avatar-size-sm: 24px;
+    --avatar-radius: 8px; /* 几何方形微圆角,匹配 IDE 风格 */
+    --avatar-radius-circle: 50%; /* 用户首字母圆形 */
+    --role-badge-fg: var(--fg-tertiary);
+    --role-badge-bg: var(--surface-sunken);
+
     /* === User Bubble === */
     --user-bubble-bg: #0f172a; /* slate-900,与主背景对比明显 */
     --user-bubble-fg: #f8fafc;
     --user-bubble-radius: 18px;
+    --user-bubble-max-width: 75%;
+    --user-bubble-radius-tl: 18px; /* 右上小圆角,ChatGPT 范式 */
+    --user-bubble-radius-tr: 6px;
+    --user-bubble-radius-bl: 18px;
+    --user-bubble-radius-br: 18px;
 
     /* === Spacing (4px base) === */
     --space-0: 0;
@@ -202,6 +221,11 @@
     --surface-active: rgba(255, 255, 255, 0.1);
     --surface-overlay: rgba(8, 10, 13, 0.72);
 
+    /* === Dark Glass Surface === */
+    --surface-glass: rgba(26, 28, 31, 0.72);
+    --surface-glass-border: rgba(255, 255, 255, 0.08);
+    --surface-glass-blur: 14px;
+
     /* === Dark Foreground === */
     --fg-primary: #f1f5f9;
     --fg-secondary: #cbd5e1;
@@ -265,6 +289,172 @@
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
     --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.6);
     --shadow-xl: 0 20px 48px rgba(0, 0, 0, 0.7);
+}
+
+/* === Islands 主题适配(JetBrains 2025.2+)=== */
+body[data-laaf="Islands"] {
+    --island-arc: 10px;
+    --island-arc-compact: 8px;
+    --island-gap: 4px;
+    --island-hairline: 1px;
+    --island-alpha: 1;
+
+    --radius-md: var(--island-arc-compact);
+    --radius-lg: var(--island-arc);
+    --radius-xl: 12px;
+    --surface-raised: transparent;
+    --surface-elevated: color-mix(in srgb, var(--surface-base) 95%, white 5%);
+    --border-default: color-mix(in srgb, var(--fg-primary) 8%, transparent);
+    --shadow-xs: none;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+body[data-laaf="Islands"][data-theme="dark"] {
+    --border-default: color-mix(in srgb, var(--fg-primary) 12%, transparent);
+    --surface-elevated: color-mix(in srgb, var(--surface-base) 92%, white 8%);
+}
+
+/* === Glass fallback:浏览器不支持 backdrop-filter 时用实色 === */
+@supports not (backdrop-filter: blur(1px)) {
+    :root {
+        --surface-glass: var(--surface-elevated);
+    }
+}
+
+/* === OKLCH 动态色彩系统 v1.0 ===
+ * 在支持的浏览器中用感知均匀的 OKLCH 空间派生品牌色与语义色,
+ * 使亮/暗主题下颜色在感知亮度与色度上更一致,并支持未来通过
+ * 单一 H/C/L 变量进行主题定制。不支持的浏览器自动回退到上方
+ * 的 sRGB/HEX 硬编码值。
+ *
+ * 设计决策:
+ *   - 仅对需要“动态变体”的颜色启用 OKLCH:accent、状态色、链接。
+ *   - Surface 与灰阶保持 HEX,避免中性色产生不可预测的色相漂移。
+ *   - 使用相对颜色语法(RCS)生成 hover/active/soft/fg,减少手动
+ *     维护的色板数量。
+ */
+@supports (color: oklch(from red l c h)) {
+    :root {
+        /* --- Source primitives(L/C/H 分量) --- */
+        --accent-oklch-l: 0.7;
+        --accent-oklch-c: 0.149;
+        --accent-oklch-h: 162.5;
+
+        --success-oklch-l: 0.7;
+        --success-oklch-c: 0.149;
+        --success-oklch-h: 162.5;
+
+        --warning-oklch-l: 0.77;
+        --warning-oklch-c: 0.165;
+        --warning-oklch-h: 75;
+
+        --error-oklch-l: 0.64;
+        --error-oklch-c: 0.208;
+        --error-oklch-h: 24;
+
+        --info-oklch-l: 0.62;
+        --info-oklch-c: 0.188;
+        --info-oklch-h: 258;
+
+        /* --- Source colors --- */
+        --accent-source: oklch(
+            var(--accent-oklch-l) var(--accent-oklch-c) var(--accent-oklch-h)
+        );
+        --success-source: oklch(
+            var(--success-oklch-l) var(--success-oklch-c) var(--success-oklch-h)
+        );
+        --warning-source: oklch(
+            var(--warning-oklch-l) var(--warning-oklch-c) var(--warning-oklch-h)
+        );
+        --error-source: oklch(
+            var(--error-oklch-l) var(--error-oklch-c) var(--error-oklch-h)
+        );
+        --info-source: oklch(
+            var(--info-oklch-l) var(--info-oklch-c) var(--info-oklch-h)
+        );
+
+        /* --- Accent brand --- */
+        --accent: var(--accent-source);
+        --accent-hover: oklch(
+            from var(--accent-source) calc(l - 0.1) calc(c - 0.02) h
+        );
+        --accent-active: oklch(
+            from var(--accent-source) calc(l - 0.19) calc(c - 0.04) h
+        );
+        --accent-soft: oklch(from var(--accent-source) l c h / 0.08);
+        --accent-medium: oklch(from var(--accent-source) l c h / 0.16);
+        --accent-fg: oklch(from var(--accent-source) 0.99 calc(c * 0.05) h);
+        --accent-ring: oklch(from var(--accent-source) l c h / 0.32);
+        --border-focus: var(--accent);
+        --fg-link: oklch(from var(--accent-source) calc(l - 0.08) c h);
+
+        /* --- Semantic states --- */
+        --success: var(--success-source);
+        --success-soft: oklch(from var(--success-source) l c h / 0.1);
+        --success-fg: oklch(
+            from var(--success-source) calc(l - 0.2) calc(c - 0.04) h
+        );
+
+        --warning: var(--warning-source);
+        --warning-soft: oklch(from var(--warning-source) l c h / 0.1);
+        --warning-fg: oklch(
+            from var(--warning-source) calc(l - 0.2) calc(c - 0.04) h
+        );
+
+        --error: var(--error-source);
+        --error-soft: oklch(from var(--error-source) l c h / 0.1);
+        --error-fg: oklch(
+            from var(--error-source) calc(l - 0.2) calc(c - 0.04) h
+        );
+
+        --info: var(--info-source);
+        --info-soft: oklch(from var(--info-source) l c h / 0.1);
+        --info-fg: oklch(
+            from var(--info-source) calc(l - 0.2) calc(c - 0.04) h
+        );
+    }
+
+    [data-theme="dark"] {
+        /* 暗色模式:提升亮度、略微降低色度,保持可读性 */
+        --accent-oklch-l: 0.77;
+        --accent-oklch-c: 0.154;
+
+        --success-oklch-l: 0.77;
+        --success-oklch-c: 0.154;
+
+        --warning-oklch-l: 0.84;
+        --warning-oklch-c: 0.164;
+
+        --error-oklch-l: 0.71;
+        --error-oklch-c: 0.166;
+
+        --info-oklch-l: 0.71;
+        --info-oklch-c: 0.143;
+
+        /* 暗色模式下 hover/active 应该更亮,方向与亮色相反 */
+        --accent-hover: oklch(
+            from var(--accent-source) calc(l + 0.08) calc(c - 0.02) h
+        );
+        --accent-active: oklch(
+            from var(--accent-source) calc(l + 0.13) calc(c - 0.04) h
+        );
+        --accent-fg: oklch(0.22 0.04 165);
+        --fg-link: oklch(from var(--accent-source) calc(l + 0.05) c h);
+
+        --success-fg: oklch(
+            from var(--success-source) calc(l + 0.12) calc(c - 0.02) h
+        );
+        --warning-fg: oklch(
+            from var(--warning-source) calc(l + 0.1) calc(c - 0.02) h
+        );
+        --error-fg: oklch(
+            from var(--error-source) calc(l + 0.1) calc(c - 0.02) h
+        );
+        --info-fg: oklch(
+            from var(--info-source) calc(l + 0.1) calc(c - 0.02) h
+        );
+    }
 }
 
 /* === 无障碍:减少动画 === */

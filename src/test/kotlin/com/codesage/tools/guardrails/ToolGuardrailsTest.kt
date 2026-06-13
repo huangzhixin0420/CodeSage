@@ -78,7 +78,8 @@ class ToolGuardrailsTest {
     }
 
     @Test
-    fun `rm -rf command is always denied even with permanent allow callback`() = runBlocking {
+    fun `rm -rf command is allowed when user grants ALLOW_PERMANENTLY in confirmation dialog`() = runBlocking {
+        // 2026-06 P1:黑盒黑名单 → 用户自主选择。危险命令现在可以被用户"永久允许"。
         val callback = object : ToolGuardrails.ConfirmationCallback {
             override suspend fun requestConfirmation(
                 toolName: String,
@@ -90,7 +91,10 @@ class ToolGuardrailsTest {
 
         val guardrails = ToolGuardrails(confirmationCallback = callback)
         val result = guardrails.preCheck("run_command", mapOf("command" to "rm -rf /tmp/test"))
-        assertTrue(result is ToolGuardrails.PreCheckResult.Denied)
+        assertTrue(
+            result is ToolGuardrails.PreCheckResult.Allowed,
+            "用户选择永久允许后,rm -rf 应被放行,实际: $result"
+        )
     }
 
     @Test
@@ -237,16 +241,20 @@ class ToolGuardrailsTest {
     }
 
     @Test
-    fun `exec_shell with dangerous command is blocked`() = runBlocking {
+    fun `exec_shell with dangerous command requires confirmation (not silently blocked)`() = runBlocking {
+        // 2026-06 P1:危险命令不再 silent deny,改为 REQUIRES_CONFIRMATION。
+        // headless 模式(confirmationCallback = null)下默认拒绝,但 reason 应包含危险标签
+        // 而不是直接吞掉——这跟原来的"block"语义在 UI 层有区别。
         val guardrails = ToolGuardrails()
         val result = guardrails.preCheck("exec_shell", mapOf("command" to "rm -rf /"))
         assertTrue(
             result is ToolGuardrails.PreCheckResult.Denied,
-            "Dangerous exec_shell command must be blocked, got: $result"
+            "Headless 模式危险命令应默认拒绝,got: $result"
         )
         assertTrue(
-            (result as ToolGuardrails.PreCheckResult.Denied).reason.contains("Dangerous", ignoreCase = true),
-            "Block reason should mention danger, got: ${result.reason}"
+            (result as ToolGuardrails.PreCheckResult.Denied).reason.contains("危险", ignoreCase = true) ||
+                result.reason.contains("danger", ignoreCase = true),
+            "Block reason 应体现危险,got: ${result.reason}"
         )
     }
 

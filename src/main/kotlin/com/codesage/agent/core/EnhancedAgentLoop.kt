@@ -1,5 +1,6 @@
 package com.codesage.agent.core
 
+import com.codesage.agent.context.ContextBudgetManager
 import com.codesage.agent.context.ContextManager
 import com.codesage.agent.memory.MemoryManager
 import com.codesage.agent.memory.MemoryNudger
@@ -11,12 +12,25 @@ import com.codesage.model.gateway.ModelGateway
 import com.codesage.shared.exceptions.*
 import com.codesage.shared.utils.Logger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.booleanOrNull
 
 /**
@@ -59,6 +73,7 @@ class EnhancedAgentLoop(
     private val memoryNudger: MemoryNudger? = null,
     private val subAgentExecutor: SubAgentExecutor? = null,
     private val agentCore: AgentCore? = null,
+    private val contextBudgetManager: ContextBudgetManager? = null,
 ) {
 
     private val logger = Logger.getLogger<EnhancedAgentLoop>()
@@ -196,6 +211,25 @@ class EnhancedAgentLoop(
                     contextManager.injectMemoryContext(nudge)
                 }
 
+                // Phase 5: 每轮 LLM 调用前主动压缩上下文（保留 system prompt + 头部/尾部消息）
+                contextBudgetManager?.let { budget ->
+                    if (budget.shouldCompress()) {
+                        val originalTokens = contextManager.estimateTokens()
+                        val compressed = contextManager.compressContext()
+                        if (compressed) {
+                            val compressedTokens = contextManager.estimateTokens()
+                            logger.info("[Turn $turnNumber] Proactive context compression: $originalTokens -> $compressedTokens tokens")
+                            emitEvent(
+                                AgentStreamEvent.ContextCompressed(
+                                    originalTokens = originalTokens,
+                                    compressedTokens = compressedTokens,
+                                    strategy = "ContextCompressor"
+                                )
+                            )
+                        }
+                    }
+                }
+
                 val messages = contextManager.getContext()
                 // 清理 orphan tool_result：tool_result 必须有对应的 tool_use。
                 // 上下文来源：用户上轮代理 Claude 的提供商（如 MiniMax、、
@@ -236,7 +270,8 @@ class EnhancedAgentLoop(
                     messages = processedMessages,
                     tools = tools,
                     temperature = 0.7,
-                    stream = true
+                    stream = true,
+                    parallelToolCalls = if (tools != null) true else null
                 )
 
                 emitEvent(AgentStreamEvent.Thinking("思考中... (turn $turnNumber)"))
@@ -358,65 +393,12 @@ class EnhancedAgentLoop(
                             phase = ConversationPhase.TOOL_DISPATCH
                             contextManager.addMessage(assistantMsg)
 
-                            val allToolResults = mutableListOf<Triple<ToolCall, String, Boolean>>()
-                            val inFlightIds = mutableListOf<String>()
-
-                            logger.debug("[EnhancedAgentLoop] for loop START, toolCalls.size=${assistantMsg.toolCalls.size}, interrupted=$interrupted")
-                            for ((idx, toolCall) in assistantMsg.toolCalls.withIndex()) {
-                                logger.debug("[EnhancedAgentLoop]   iter $idx, toolId=${toolCall.id}, interrupted=$interrupted")
-                                // 2026-06 修复: 取消时不再 break — 改成 continue + 发 ToolCallError,
-                                // 让所有 in-flight 工具都有终态,UI 卡片不会转圈等 30s watchdog
-                                if (interrupted) {
-                                    logger.warn(
-                                        "[EnhancedAgentLoop] interrupted during TOOL_EXECUTE, " +
-                                            "emitting ToolCallError for in-flight tool: " +
-                                            "toolId=${toolCall.id}, name=${toolCall.name}, " +
-                                            "turn=$turnNumber, inFlightNotified=${inFlightIds.size}"
-                                    )
-                                    emitEvent(AgentStreamEvent.ToolCallError(
-                                        toolCallId = toolCall.id,
-                                        error = "Cancelled by user (in-flight when stop was requested)"
-                                    ))
-                                    continue
-                                }
-
-                                phase = ConversationPhase.TOOL_EXECUTE
-                                inFlightIds += toolCall.id
-                                logger.info("[Tool] id=${toolCall.id}, name=${toolCall.name}, args=${toolCall.arguments}")
-                                // ToolCallStart 已在流式检测阶段发出，此处不再重复
-                                hooks.preToolExecution(toolCall.name, parseArguments(toolCall.arguments))
-
-                                val toolStartTime = System.currentTimeMillis()
-                                val toolResult = executeTool(toolCall, session, ::emitEvent)
-                                logger.debug("[EnhancedAgentLoop]   iter $idx, toolId=${toolCall.id}, executeTool returned len=${toolResult.length}")
-                                val toolDuration = System.currentTimeMillis() - toolStartTime
-                                val success = parseToolSuccess(toolResult)
-
-                                logger.info(
-                                    "[EnhancedAgentLoop] tool executed: " +
-                                        "toolId=${toolCall.id}, name=${toolCall.name}, " +
-                                        "success=$success, durationMs=$toolDuration, " +
-                                        "resultLen=${toolResult.length}, turn=$turnNumber"
-                                )
-                                logger.debug("[Tool] id=${toolCall.id}, result=$toolResult")
-
-                                hooks.postToolExecution(toolCall.name, toolResult, success)
-                                emitEvent(
-                                    AgentStreamEvent.ToolCallResult(
-                                        toolCallId = toolCall.id,
-                                        toolName = toolCall.name,
-                                        result = toolResult,
-                                        success = success
-                                    )
-                                )
-
-                                allToolResults.add(Triple(toolCall, toolResult, success))
-                            }
-
-                            if (inFlightIds.isNotEmpty()) {
-                                logger.info("[EnhancedAgentLoop] tool batch done: turn=$turnNumber, count=${inFlightIds.size}, results=${allToolResults.size}")
-                            }
-
+                            val allToolResults = executeToolCallsParallel(
+                                toolCalls = assistantMsg.toolCalls,
+                                session = session,
+                                turnNumber = turnNumber,
+                                emitEvent = ::emitEvent
+                            )
                             // RESULT_INTEGRATE: 整合工具结果到上下文
                             phase = ConversationPhase.RESULT_INTEGRATE
                             for ((toolCall, toolResult, _) in allToolResults) {
@@ -612,9 +594,11 @@ class EnhancedAgentLoop(
                             "[Turn $turnNumber] Outer catch non-abort action=${action::class.simpleName} " +
                                     "after $outerCatchCount outer catches; force breaking to avoid loop"
                         )
-                        emitEvent(AgentStreamEvent.Error(
-                            "未预料的错误恢复动作 (${action::class.simpleName})，强制终止。原始错误: ${e.message}"
-                        ))
+                        emitEvent(
+                            AgentStreamEvent.Error(
+                                "未预料的错误恢复动作 (${action::class.simpleName})，强制终止。原始错误: ${e.message}"
+                            )
+                        )
                         break
                     }
                 }
@@ -731,6 +715,157 @@ class EnhancedAgentLoop(
         }
     }
 
+    /**
+     * 并行执行同一轮返回的多个 tool_call。
+     *
+     * 设计要点：
+     * - 同一轮内的 tool_call 默认相互独立，使用 Semaphore 限制最大并发（默认 6）。
+     * - 事件按 `toolCalls` 原始顺序 emit，UI 渲染顺序与模型输出一致。
+     * - 取消时不再 break，而是为剩余工具返回 cancelled 标记，统一 emit ToolCallError。
+     * - executeTool 内部可能通过 emit 发送流式事件，因此每个 async 块在 IO 调度器上执行。
+     */
+    private suspend fun executeToolCallsParallel(
+        toolCalls: List<ToolCall>,
+        session: AgentSession,
+        turnNumber: Int,
+        emitEvent: suspend (AgentStreamEvent) -> Unit
+    ): List<Triple<ToolCall, String, Boolean>> {
+        if (toolCalls.isEmpty()) return emptyList()
+
+        data class ToolExecutionResult(
+            val index: Int,
+            val toolCall: ToolCall,
+            val result: String,
+            val success: Boolean,
+            val durationMs: Long,
+            val cancelled: Boolean = false
+        )
+
+        val maxConcurrency = 6
+        val semaphore = Semaphore(maxConcurrency)
+        // channelFlow 的 send 不支持并发调用;delegate_task 等工具可能在执行中 emit 事件,
+        // 因此工具执行期间的 emit 需串行化。结果事件在 awaitAll 后按原始顺序统一 emit,天然串行。
+        val emitMutex = kotlinx.coroutines.sync.Mutex()
+        val safeEmit: suspend (AgentStreamEvent) -> Unit = { event ->
+            emitMutex.withLock { emitEvent(event) }
+        }
+
+        // 使用 SupervisorJob 让取消只影响未完成的子任务,已完成的可以正常收集。
+        val scope = CoroutineScope(currentCoroutineContext() + SupervisorJob())
+
+        // 监控外部中断信号：一旦 interrupted 变为 true，取消整个 scope，
+        // 使尚未完成的 in-flight 工具被标记为取消。
+        val interruptMonitor = scope.launch {
+            while (!interrupted) {
+                delay(50)
+            }
+            logger.info(
+                "[EnhancedAgentLoop] interruption detected during TOOL_EXECUTE, " +
+                        "cancelling in-flight tools: turn=$turnNumber"
+            )
+            scope.cancel("User interrupted")
+        }
+
+        val deferredResults = toolCalls.mapIndexed { idx, toolCall ->
+            scope.async(Dispatchers.IO) {
+                semaphore.withPermit {
+                    if (interrupted) {
+                        logger.warn(
+                            "[EnhancedAgentLoop] interrupted during TOOL_EXECUTE, " +
+                                    "returning cancelled marker for tool: " +
+                                    "toolId=${toolCall.id}, name=${toolCall.name}, turn=$turnNumber"
+                        )
+                        return@async ToolExecutionResult(
+                            index = idx,
+                            toolCall = toolCall,
+                            result = "",
+                            success = false,
+                            durationMs = 0,
+                            cancelled = true
+                        )
+                    }
+
+                    logger.info("[Tool] id=${toolCall.id}, name=${toolCall.name}, args=${toolCall.arguments}")
+                    hooks.preToolExecution(toolCall.name, parseArguments(toolCall.arguments))
+
+                    val toolStartTime = System.currentTimeMillis()
+                    val toolResult = executeTool(toolCall, session, safeEmit)
+                    val toolDuration = System.currentTimeMillis() - toolStartTime
+                    val success = parseToolSuccess(toolResult)
+
+                    logger.info(
+                        "[EnhancedAgentLoop] tool executed: " +
+                                "toolId=${toolCall.id}, name=${toolCall.name}, " +
+                                "success=$success, durationMs=$toolDuration, " +
+                                "resultLen=${toolResult.length}, turn=$turnNumber"
+                    )
+                    logger.debug("[Tool] id=${toolCall.id}, result=$toolResult")
+
+                    hooks.postToolExecution(toolCall.name, toolResult, success)
+                    ToolExecutionResult(
+                        index = idx,
+                        toolCall = toolCall,
+                        result = toolResult,
+                        success = success,
+                        durationMs = toolDuration
+                    )
+                }
+            }
+        }
+
+        val completedResults = try {
+            deferredResults.awaitAll()
+        } catch (e: CancellationException) {
+            // scope 被取消：收集已完成的，未完成的标记为取消
+            deferredResults.mapIndexed { idx, deferred ->
+                if (deferred.isCompleted && deferred.getCompletionExceptionOrNull() == null) {
+                    deferred.getCompleted()
+                } else {
+                    ToolExecutionResult(
+                        index = idx,
+                        toolCall = toolCalls[idx],
+                        result = "",
+                        success = false,
+                        durationMs = 0,
+                        cancelled = true
+                    )
+                }
+            }
+        } finally {
+            interruptMonitor.cancelAndJoin()
+        }
+
+        val sortedResults = completedResults.sortedBy { it.index }
+
+        // 按原始顺序 emit 事件，保证 UI 渲染顺序与 toolCalls 一致
+        for (execResult in sortedResults) {
+            if (execResult.cancelled) {
+                emitEvent(
+                    AgentStreamEvent.ToolCallError(
+                        toolCallId = execResult.toolCall.id,
+                        error = "Cancelled by user (in-flight when stop was requested)"
+                    )
+                )
+            } else {
+                emitEvent(
+                    AgentStreamEvent.ToolCallResult(
+                        toolCallId = execResult.toolCall.id,
+                        toolName = execResult.toolCall.name,
+                        result = execResult.result,
+                        success = execResult.success
+                    )
+                )
+            }
+        }
+
+        logger.info(
+            "[EnhancedAgentLoop] tool batch done: turn=$turnNumber, " +
+                    "count=${toolCalls.size}, results=${sortedResults.size}"
+        )
+
+        return sortedResults.map { Triple(it.toolCall, it.result, it.success) }
+    }
+
     private suspend fun executeDelegateTask(
         toolCall: ToolCall,
         session: AgentSession,
@@ -741,8 +876,8 @@ class EnhancedAgentLoop(
             // 之前这里只 return 一行 JSON 错误，不知道是 wiring 断在哪一段
             logger.error(
                 "[DelegateTask] subAgentExecutor is null | toolCallId=${toolCall.id} " +
-                    "parentSession=${session.id} — wiring broken (AgentCore.subAgentDepth " +
-                    "or EnhancedAgentLoop 构造参数透传失败)"
+                        "parentSession=${session.id} — wiring broken (AgentCore.subAgentDepth " +
+                        "or EnhancedAgentLoop 构造参数透传失败)"
             )
             return "{\"success\":false,\"error\":\"SubAgent executor not configured\"}"
         }
@@ -755,9 +890,9 @@ class EnhancedAgentLoop(
             // 3) LLM 传了但 value 类型不是 string（罕见）
             logger.warn(
                 "[DelegateTask] task_description missing | toolCallId=${toolCall.id} " +
-                    "rawArgs=${toolCall.arguments.take(500)} " +
-                    "parsedKeys=${args.keys} " +
-                    "taskDescriptionType=${args["task_description"]?.javaClass?.simpleName}"
+                        "rawArgs=${toolCall.arguments.take(500)} " +
+                        "parsedKeys=${args.keys} " +
+                        "taskDescriptionType=${args["task_description"]?.javaClass?.simpleName}"
             )
             return "{\"success\":false,\"error\":\"Missing task_description\"}"
         }
@@ -774,7 +909,7 @@ class EnhancedAgentLoop(
         if (args.containsKey("max_iterations")) {
             logger.warn(
                 "[DelegateTask] ignoring deprecated parameter 'max_iterations' " +
-                    "(value=${args["max_iterations"]}); the budget system was removed in f8000c7."
+                        "(value=${args["max_iterations"]}); the budget system was removed in f8000c7."
             )
         }
 
@@ -786,8 +921,8 @@ class EnhancedAgentLoop(
         val startTs = System.currentTimeMillis()
         logger.info(
             "[DelegateTask] entry | toolCallId=${toolCall.id} parentSession=${session.id} " +
-                "subSession=$subSessionId toolset=$toolset taskLen=${taskDescription.length} " +
-                "contextFiles=${contextFiles.size}"
+                    "subSession=$subSessionId toolset=$toolset taskLen=${taskDescription.length} " +
+                    "contextFiles=${contextFiles.size}"
         )
 
         return try {
@@ -839,9 +974,9 @@ class EnhancedAgentLoop(
 
             logger.info(
                 "[DelegateTask] done | toolCallId=${toolCall.id} subSession=$subSessionId " +
-                    "success=${result.success} cancelled=${result.cancelled} " +
-                    "iterations=${result.iterationsUsed} tools=${result.toolsUsed} " +
-                    "elapsedMs=${System.currentTimeMillis() - startTs}"
+                        "success=${result.success} cancelled=${result.cancelled} " +
+                        "iterations=${result.iterationsUsed} tools=${result.toolsUsed} " +
+                        "elapsedMs=${System.currentTimeMillis() - startTs}"
             )
 
             // P1: 返回纯文本摘要（不再 JSON 包装）。
@@ -863,7 +998,7 @@ class EnhancedAgentLoop(
             // 关键修复：之前 `e` 没传给 logger，栈丢光。现在带 throwable 一起进 idea.log。
             logger.error(
                 "[DelegateTask] failed | toolCallId=${toolCall.id} subSession=$subSessionId " +
-                    "elapsedMs=${System.currentTimeMillis() - startTs}",
+                        "elapsedMs=${System.currentTimeMillis() - startTs}",
                 e
             )
             // P1: 失败也走纯文本兜底，不返回 JSON
@@ -904,7 +1039,8 @@ class EnhancedAgentLoop(
         val toolResultIds = mutableSetOf<String>()
         messages.forEachIndexed { idx, msg ->
             if (msg.role == Role.ASSISTANT && !msg.toolCalls.isNullOrEmpty()) {
-                assistantDeclaredByIndex[idx] = msg.toolCalls.mapNotNull { it.id.takeIf { id -> id.isNotEmpty() } }.toSet()
+                assistantDeclaredByIndex[idx] =
+                    msg.toolCalls.mapNotNull { it.id.takeIf { id -> id.isNotEmpty() } }.toSet()
             } else if (msg.role == Role.TOOL) {
                 msg.toolCallId?.takeIf { it.isNotEmpty() }?.let { toolResultIds.add(it) }
             }
@@ -922,6 +1058,7 @@ class EnhancedAgentLoop(
                         msg
                     }
                 }
+
                 Role.ASSISTANT -> {
                     val declared = assistantDeclaredByIndex[idx] ?: return@mapIndexed msg
                     // assistant 声明了 tool_use，但 toolResultIds 里完全没有它的对应
@@ -945,6 +1082,7 @@ class EnhancedAgentLoop(
                             )
                             msg.copy(toolCalls = null)
                         }
+
                         else -> {
                             // 部分没完成 — 只过滤掉 unfulfilled 的 tool_use，保留
                             // 已有 tool_result 的那些。assistant 文本保留不变。
@@ -960,6 +1098,7 @@ class EnhancedAgentLoop(
                         }
                     }
                 }
+
                 else -> msg
             }
         }.filterNotNull()

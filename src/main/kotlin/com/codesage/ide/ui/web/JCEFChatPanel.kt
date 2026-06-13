@@ -556,6 +556,36 @@ class JCEFChatPanel(
                     createFileFromArtifact(title, content)
                 }
 
+                // 2026-06 v2.1 UI:消息内 code block 操作栏
+                "apply_code_block" -> {
+                    val content = json.jsonObject["code"]?.jsonPrimitive?.content ?: ""
+                    val filePath = json.jsonObject["filePath"]?.jsonPrimitive?.content ?: ""
+                    applyArtifactToEditor(filePath.ifBlank { "code-block" }, content)
+                }
+                "insert_at_cursor" -> {
+                    val content = json.jsonObject["code"]?.jsonPrimitive?.content ?: ""
+                    insertAtCursor(content)
+                }
+                "create_file_from_code" -> {
+                    val content = json.jsonObject["code"]?.jsonPrimitive?.content ?: ""
+                    val filePath = json.jsonObject["filePath"]?.jsonPrimitive?.content ?: ""
+                    createFileFromArtifact(filePath.ifBlank { "NewFile.kt" }, content)
+                }
+                "accept_hunk" -> {
+                    val filePath = json.jsonObject["filePath"]?.jsonPrimitive?.content ?: ""
+                    val diff = json.jsonObject["diff"]?.jsonPrimitive?.content ?: ""
+                    val hunkIndex = json.jsonObject["hunkIndex"]?.jsonPrimitive?.content?.toIntOrNull() ?: -1
+                    logger.info("[Bridge] accept_hunk filePath=$filePath hunkIndex=$hunkIndex")
+                    // TODO: 调用 patch applicator 只应用指定 hunk
+                    applyArtifactToEditor(filePath.ifBlank { "code-block" }, diff)
+                }
+                "reject_hunk" -> {
+                    val filePath = json.jsonObject["filePath"]?.jsonPrimitive?.content ?: ""
+                    val hunkIndex = json.jsonObject["hunkIndex"]?.jsonPrimitive?.content?.toIntOrNull() ?: -1
+                    logger.info("[Bridge] reject_hunk filePath=$filePath hunkIndex=$hunkIndex")
+                    // TODO: 记录拒绝的 hunk,后续不再提示
+                }
+
                 "regenerate" -> { /* TODO */
                 }
 
@@ -1012,6 +1042,17 @@ class JCEFChatPanel(
         sendToJS(mapOf("type" to "theme", "theme" to theme))
     }
 
+    fun setLaf(lafId: String, isIslands: Boolean, isDark: Boolean) {
+        sendToJS(
+            mapOf(
+                "type" to "laf",
+                "laf" to lafId,
+                "isIslands" to isIslands,
+                "isDark" to isDark,
+            )
+        )
+    }
+
     fun addArtifact(artifactId: String, title: String, language: String, content: String) {
         sendToJS(
             mapOf(
@@ -1107,6 +1148,28 @@ class JCEFChatPanel(
                 com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(p) {
                     val caret = editor.caretModel.primaryCaret
                     doc.insertString(caret.offset, contentToInsert)
+                }
+            }
+        }
+    }
+
+    private fun insertAtCursor(content: String) {
+        val p = project ?: run {
+            logger.warn("[insertAtCursor] no project")
+            return
+        }
+        val contentToInsert = if (content.length > MAX_ARTIFACT_INSERT_SIZE) {
+            content.take(MAX_ARTIFACT_INSERT_SIZE) + "\n// [truncated]"
+        } else {
+            content
+        }
+        com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+            val editor = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(p).selectedTextEditor
+            editor?.document?.let { doc ->
+                com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(p) {
+                    val caret = editor.caretModel.primaryCaret
+                    doc.insertString(caret.offset, contentToInsert)
+                    caret.moveToOffset(caret.offset + contentToInsert.length)
                 }
             }
         }

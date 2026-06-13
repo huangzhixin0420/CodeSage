@@ -277,3 +277,25 @@
     background: var(--surface-hover);
     color: var(--fg-primary);
 }
+
+/* ===================== Responsive Sidebar ===================== */
+
+@media (max-width: 1024px) {
+    .cs-sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: var(--sidebar-width);
+        max-width: 80vw;
+        z-index: var(--z-modal);
+        transform: translateX(-100%);
+        transition: transform var(--duration-slow) var(--ease-out);
+        border-right: 1px solid var(--border-default);
+        box-shadow: var(--shadow-xl);
+    }
+
+    .app-container:not(.sidebar-collapsed) .cs-sidebar {
+        transform: translateX(0);
+    }
+}

@@ -1,5 +1,6 @@
 package com.codesage.agent.tools
 
+import com.codesage.shared.security.CommandSandbox
 import com.codesage.shared.security.ShellInjectionDetector
 import com.codesage.shared.security.SsrfGuard
 import com.codesage.shared.net.ProxyAwareHttpClientFactory
@@ -19,9 +20,18 @@ import java.util.concurrent.TimeUnit
 /**
  * 扩展工具集 - Git / Shell / HTTP / 数据处理
  */
-class ExtendedTools(private val project: Project?) {
+class ExtendedTools(
+    private val project: Project?,
+    // Phase 3: OS 级命令沙箱。ToolRegistry 注入真实沙箱；null 时回退到旧版行为。
+    private val commandSandbox: CommandSandbox? = null,
+) {
     private val logger = Logger.getLogger<ExtendedTools>()
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+
+    companion object {
+        // Phase 3: 与 IDETools 对齐的单条命令输出上限
+        const val MAX_COMMAND_OUTPUT_CHARS = 1_000_000
+    }
 
     /**
      * SSRF 防护开关，默认为 true。
@@ -201,7 +211,42 @@ class ExtendedTools(private val project: Project?) {
         // 绝对危险的操作（如 rm -rf /）由 SensitiveActionPolicy 统一评估为 BLOCKED 并拒绝，
         // 高风险操作（如网络命令）由 ToolGuardrails 触发用户确认流程。
 
-        try {
+        val sandbox = commandSandbox
+        if (sandbox != null) {
+            return@withContext execShellWithSandbox(command, workingDir, timeout, sandbox)
+        }
+
+        execShellLegacy(command, workingDir, timeout)
+    }
+
+    private fun execShellWithSandbox(
+        command: String,
+        workingDir: String,
+        timeout: Long,
+        sandbox: CommandSandbox
+    ): ToolResult {
+        val result = sandbox.execute(command, File(workingDir), timeout, MAX_COMMAND_OUTPUT_CHARS)
+        if (result.error != null && result.exitCode == -1) {
+            return ToolResult.Error(result.error)
+        }
+        return ToolResult.Success(
+            JsonObject(
+                buildMap {
+                    put("stdout", JsonPrimitive(result.stdout))
+                    put("stderr", JsonPrimitive(result.stderr))
+                    put("exit_code", JsonPrimitive(result.exitCode))
+                    put("sandboxed", JsonPrimitive(result.sandboxed))
+                }
+            )
+        )
+    }
+
+    private fun execShellLegacy(
+        command: String,
+        workingDir: String,
+        timeout: Long
+    ): ToolResult {
+        return try {
             val processBuilder = ProcessBuilder(
                 if (System.getProperty("os.name").contains("Windows")) {
                     listOf("cmd", "/c", command)
@@ -244,7 +289,7 @@ class ExtendedTools(private val project: Project?) {
                 process.destroyForcibly()
                 stdoutThread.interrupt()
                 stderrThread.interrupt()
-                return@withContext ToolResult.Error("Command timed out after ${timeout}ms")
+                return ToolResult.Error("Command timed out after ${timeout}ms")
             }
 
             val exitCode = process.exitValue()
@@ -369,33 +414,33 @@ class ExtendedTools(private val project: Project?) {
             logger.error("HTTP request timed out: $url (timeout=${timeout}ms)", e)
             ToolResult.Error(
                 "HTTP request timed out (${timeout}ms): $url — " +
-                    "可能是目标无响应、代理(SOCKS/HTTP)不可达、或网络被防火墙屏蔽。"
+                        "可能是目标无响应、代理(SOCKS/HTTP)不可达、或网络被防火墙屏蔽。"
             )
         } catch (e: java.net.UnknownHostException) {
             logger.error("HTTP unknown host: $url", e)
             ToolResult.Error(
                 "HTTP 域名无法解析: $url — ${e.message}。" +
-                    "检查 DNS 设置,或确认目标域名拼写正确。"
+                        "检查 DNS 设置,或确认目标域名拼写正确。"
             )
         } catch (e: java.net.ConnectException) {
             logger.error("HTTP connect failed: $url", e)
             ToolResult.Error(
                 "HTTP 连接失败: $url — ${e.message}。" +
-                    "目标主机拒绝连接(可能服务已下线、端口被防火墙拦截、或代理配置错误)。"
+                        "目标主机拒绝连接(可能服务已下线、端口被防火墙拦截、或代理配置错误)。"
             )
         } catch (e: java.net.ProtocolException) {
             // OkHttp 抛 "Too many follow-up requests: N" — 重定向循环
             logger.error("HTTP redirect loop: $url (${e.message})", e)
             ToolResult.Error(
                 "HTTP 重定向循环: $url — ${e.message}。" +
-                    "服务器反复重定向,可能是配置错误、登录墙、或 CDN 配置异常。" +
-                    "如需绕过重定向,可在请求里设 headers 携带认证 Cookie。"
+                        "服务器反复重定向,可能是配置错误、登录墙、或 CDN 配置异常。" +
+                        "如需绕过重定向,可在请求里设 headers 携带认证 Cookie。"
             )
         } catch (e: javax.net.ssl.SSLException) {
             logger.error("HTTP SSL error: $url", e)
             ToolResult.Error(
                 "HTTP SSL/TLS 错误: $url — ${e.message}。" +
-                    "证书过期、不被信任、或协议版本不匹配。考虑用 HTTP 而非 HTTPS,或更新本地证书。"
+                        "证书过期、不被信任、或协议版本不匹配。考虑用 HTTP 而非 HTTPS,或更新本地证书。"
             )
         } catch (e: Exception) {
             logger.error("HTTP request failed: $url", e)

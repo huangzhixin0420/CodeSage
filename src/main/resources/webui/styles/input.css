@@ -330,8 +330,12 @@
 /* ===================== Mention Autocomplete ===================== */
 
 .mention-popup {
-    background: var(--surface-elevated);
-    border: 1px solid var(--border-default);
+    background: var(--surface-glass);
+    -webkit-backdrop-filter: blur(var(--surface-glass-blur))
+        saturate(var(--surface-glass-saturate));
+    backdrop-filter: blur(var(--surface-glass-blur))
+        saturate(var(--surface-glass-saturate));
+    border: 1px solid var(--surface-glass-border);
     border-radius: var(--radius-md);
     box-shadow: var(--shadow-lg);
     padding: 4px;
@@ -390,4 +394,215 @@
     font-size: 10px;
     color: var(--fg-tertiary);
     flex-shrink: 0;
+}
+
+/* ===================== Context Chips ===================== */
+
+.context-chips {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: var(--space-2) var(--space-3) 0;
+    min-height: 4px;
+}
+
+.context-chips-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.context-chips-row.near-limit .context-chip {
+    border-color: var(--warning);
+    background: var(--warning-soft);
+}
+
+.context-chips-row.over-limit .context-chip {
+    border-color: var(--error);
+    background: var(--error-soft);
+    color: var(--error-fg);
+}
+
+.context-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px 4px 6px;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-pill);
+    font-size: var(--text-xs);
+    color: var(--fg-secondary);
+    transition: all var(--duration-fast) var(--ease-out);
+    max-width: 240px;
+}
+
+.context-chip:hover {
+    border-color: var(--accent);
+}
+
+.context-chip i {
+    font-size: 10px;
+    color: var(--accent);
+    flex-shrink: 0;
+}
+
+.context-chip-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+.context-chip-remove {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg-tertiary);
+    font-size: 8px;
+    transition: all var(--duration-fast) var(--ease-out);
+    flex-shrink: 0;
+}
+
+.context-chip-remove:hover {
+    background: var(--error-soft);
+    color: var(--error);
+}
+
+.context-chips-hint {
+    font-size: var(--text-2xs);
+    color: var(--fg-tertiary);
+    padding-left: 2px;
+}
+
+.context-chips-hint.near-limit {
+    color: var(--warning-fg);
+}
+
+.context-chips-hint.over-limit {
+    color: var(--error-fg);
+}
+
+/* ===================== Drop Zone ===================== */
+
+.input-container {
+    transition:
+        border-color var(--duration-fast) var(--ease-out),
+        box-shadow var(--duration-fast) var(--ease-out),
+        background var(--duration-fast) var(--ease-out);
+}
+
+.input-container.drop-active {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+/* ===================== Image Attachment Preview ===================== */
+
+.input-attachment.image-attachment {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 6px;
+    max-width: 160px;
+}
+
+.input-attachment-preview {
+    width: 120px;
+    height: 80px;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    cursor: zoom-in;
+    transition: all var(--duration-base) var(--ease-out);
+}
+
+.input-attachment.expanded .input-attachment-preview {
+    width: 100%;
+    height: auto;
+    max-height: 320px;
+    cursor: zoom-out;
+}
+
+/* ===================== Full-screen Input (mobile) ===================== */
+
+.input-container.fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal);
+    border-radius: 0;
+    max-width: none;
+    display: flex;
+    flex-direction: column;
+}
+
+.input-container.fullscreen .input-textarea {
+    flex: 1;
+    max-height: none;
+}
+
+.input-container.fullscreen .input-toolbar {
+    padding: var(--space-3);
+}
+
+/* ===================== Responsive ===================== */
+
+@media (max-width: 768px) {
+    .model-pill .model-name {
+        display: none;
+    }
+
+    .model-pill {
+        padding: 4px 6px;
+    }
+
+    .model-pill .model-dot {
+        margin-right: 0;
+    }
+
+    .model-dropdown {
+        right: -40px;
+        min-width: 240px;
+        max-width: 300px;
+    }
+
+    .input-area {
+        padding: var(--space-2) var(--space-3) var(--space-3);
+    }
+
+    .input-hint {
+        padding-left: var(--space-2);
+        padding-right: var(--space-2);
+    }
+}
+
+@media (max-width: 480px) {
+    .chat-header {
+        padding: 0 var(--space-3);
+    }
+
+    .brand-text {
+        display: none;
+    }
+
+    .session-title {
+        max-width: 120px;
+    }
+
+    .mode-tabs {
+        display: none;
+    }
+
+    .input-toolbar-left {
+        gap: 2px;
+    }
+
+    .input-attachment-preview {
+        width: 100px;
+        height: 66px;
+    }
 }

@@ -1,5 +1,8 @@
 package com.codesage.tools.guardrails
 
+import com.codesage.agent.context.ContextBudgetManager
+import com.codesage.agent.context.ContextManager
+import com.codesage.model.dto.Message
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 
@@ -56,5 +59,29 @@ class OutputTruncatorTest {
         assertTrue(result.content.contains("Line 1"))
         assertTrue(result.content.contains("Line 100"))
         assertTrue(result.content.contains("truncated"))
+    }
+
+    @Test
+    fun `dynamic threshold truncates more aggressively when context budget is tight`() {
+        val contextManager = ContextManager()
+        // Consume ~1.5k tokens of a 2.5k window so remaining budget is tight
+        val filler = "x ".repeat(3000)
+        contextManager.addMessage(Message.userMessage(filler))
+
+        val budget = ContextBudgetManager(
+            contextLength = 2500,
+            responseReserveTokens = 0,
+            contextManagerProvider = { contextManager }
+        )
+        val limits = budget.getRecommendedOutputLimits()
+
+        val truncator = OutputTruncator()
+        val content = (1..300).joinToString("\n") { "Line $it" }
+        val result = truncator.truncate(content, maxLength = limits.maxLength, maxLines = limits.maxLines)
+
+        assertTrue(result.wasTruncated)
+        assertTrue(result.content.length <= limits.maxLength + 200) // allow truncation notice overhead
+        assertTrue(result.truncatedLines <= limits.maxLines + 10)
+        assertTrue(limits.maxLength < OutputTruncator.DEFAULT_MAX_LENGTH)
     }
 }
