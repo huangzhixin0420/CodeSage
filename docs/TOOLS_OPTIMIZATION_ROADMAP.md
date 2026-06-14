@@ -76,7 +76,7 @@
 | 6.5.1 | **PSI 调用图替代启发式正则** | ⚠️ 部分落地 | `find_usages` 已走 `ReferencesSearch`，但 `findCallees` 仍有 regex 扫描兜底 | `CodeInsightExecutor.findCallees` 完全基于 PSI / `KtCallExpression` / `PsiMethodCallExpression` | 待分配 | - |
 | 6.8.3 | **`dependency_tree` 依赖树工具** | ✅ 已完成 | 仅有通用 `maven`/`gradle` 包装，无结构化依赖树输出 | 新增 `DependencyTreeTool` UnifiedTool，解析 Maven JSON / Gradle 文本输出；注册于 `ToolRegistry`；测试见 `DependencyTreeToolTest` | AI-Agent | 2026-06-14 |
 | 6.9.2 | **LLM 自动会话摘要** | ⚠️ 部分落地 | `SessionSummarizer` 为规则引擎，未接入 LLM | `BuiltInMemoryProvider.onSessionEnd` 异步调用轻量模型生成摘要与关键事实 | 待分配 | - |
-| 6.9.3 | 记忆上下文**token 预算 / Top-K 注入** | ⚠️ 部分落地 | 已有 16KB 长度保护和 token 估算，但未按“与当前查询相似度排序 + token 上限 Top-K”注入 | `BuiltInMemoryProvider.prefetch` 中按查询相似度排序，设置 token 预算上限，保留 Top-K | 待分配 | - |
+| 6.9.3 | 记忆上下文**token 预算 / Top-K 注入** | ✅ 已完成 | 已有 16KB 长度保护和 token 估算，但未按“与当前查询相似度排序 + token 上限 Top-K”注入 | `BuiltInMemoryProvider.prefetch` 中按查询相似度排序，设置 token 预算上限，保留 Top-K；实际交付：`MemorySimilarityRanker.kt` / `BuiltInMemoryProvider.kt` / `BuiltInMemoryProviderTest.kt` / `MemorySimilarityRankerTest.kt` | AI-Agent | 2026-06-14 |
 | 6.11.3 | Skill 工具统一命名、`examples`、`use_skill` 元工具 | ⚠️ 部分落地 | `Skill` 接口有 `category`/`tags`/`metadata`，但无 `examples` 字段和统一 `use_skill` 元工具 | `Skill.kt` 增加 `examples`；`SkillToolAdapter` 转换时增强 schema；新增 `use_skill` 元工具 | 待分配 | - |
 | 6.12.1 | **统一截断标记与续读协议** | ✅ 已完成 | 各工具截断字段不统一 | 在 `ToolResult` / `ToolExecutor.postProcess` 中统一追加 `{truncated, total_items, returned_items, next_offset, hint}`；交付：`ToolResultMetadata.kt` / `ToolResultTruncationNormalizer.kt` / `ToolExecutor.kt` / `ToolGuardrails.kt` / `ToolResultMetadataTest.kt` | AI-Agent | 2026-06-14 |
 | 6.12.2 | 工具结果中嵌入 **token 预算提示** | ✅ 已完成 | 未在工具结果中提示上下文消耗 | `ToolExecutor.postProcess` 追加 `context_cost_estimate` / `remaining_context_hint`；交付：`ToolResultBudgetHints.kt` / `ToolExecutor.kt` / `AgentCore.kt` / `ToolResultMetadataTest.kt` | AI-Agent | 2026-06-14 |
@@ -207,11 +207,43 @@
 
 ---
 
+#### 3.4.5 6.9.3 记忆上下文 token 预算 / Top-K 注入（AI-Agent，2026-06-14）
+
+**关键设计决策：**
+
+1. **排序与预算解耦**：新增 `MemorySimilarityRanker` 负责按查询相似度排序，内置 embedding cosine 相似度与 token overlap 文本降级两条路径；`BuiltInMemoryProvider` 在此基础上叠加类型优先级与 token 预算，职责清晰。
+2. **类型优先级优先于纯相似度**：`preference` / `pattern`（高优先级）> `fact` / `project`（中优先级）> 其他（低优先级），同优先级内再按相似度排序；保证用户偏好/编码风格这类长期提示优先进入上下文。
+3. **token 预算可配置且向后兼容**：默认总预算 2048 tokens，通过 `prefetchTokenBudget` / `prefetchUseTokenBudget` 可调；关闭预算时回退到原有 16KB 字符截断行为，不破坏调用方。
+4. **Top-K 截断提示**：超出预算的记忆在 `<memory-context>` 中追加 `[N more memories omitted due to context budget]`，让模型知道存在截断；同时保留单条 4KB 字符截断与整段 16KB 字符兜底。
+5. **复用现有向量能力**：`MemorySimilarityRanker` 直接复用项目已有的 `MemoryEmbedding` hash-based 向量（无 native 依赖），并支持注入失败时自动降级到文本 overlap。
+
+**测试状态：**
+
+- `./gradlew check`：通过（新增 9 个单元测试）
+- `npm test`：通过
+- 新增测试：
+  - `BuiltInMemoryProviderTest.prefetch ranks memories by similarity to query`
+  - `BuiltInMemoryProviderTest.prefetch applies token budget and reports omitted memories`
+  - `BuiltInMemoryProviderTest.prefetch prefers high priority memory type within token budget`
+  - `BuiltInMemoryProviderTest.prefetch falls back to character truncation when token budget is disabled`
+  - `MemorySimilarityRankerTest.text overlap score returns zero for empty inputs`
+  - `MemorySimilarityRankerTest.text overlap score is higher for related texts`
+  - `MemorySimilarityRankerTest.rank by similarity falls back to text overlap when embedding is unavailable`
+  - `MemorySimilarityRankerTest.rank by similarity orders exact match highest`
+
+**遗留边界情况 / 已知限制：**
+
+- token 估算沿用 `BuiltInMemoryProvider.estimateTokens` 的字符经验值（中文 ≈ 1 token/字，英文 ≈ 4 chars/token），对代码/中文混合场景可能不够精确；后续可接入 `TokenEstimator` 或真实 tokenizer。
+- 当前排序基于候选集内重新计算 embedding，未直接复用 `memory_embeddings` 表中已存储的向量；若后续需支撑超大规模记忆，可改为从 SQLite 加载存储向量以减少重复编码。
+- `prefetchCache` 仍以格式化后的字符串为缓存值；当 `prefetchTokenBudget` 等配置动态变化时，需要等 `syncTurn` 触发缓存失效才会重新计算。
+
+---
+
 ## 4. 进度总览
 
 ```text
 P0:  0 项部分落地，0 项未开始，1 项已完成
-P1:  3 项部分落地，2 项未开始，4 项已完成
+P1:  2 项部分落地，2 项未开始，5 项已完成
 P2:  0 项部分落地，3 项未开始，0 项已完成
 ```
 
@@ -306,6 +338,7 @@ P2:  0 项部分落地，3 项未开始，0 项已完成
 | 2026-06-14 | AI-Agent | 完成 6.3.3 `semantic_search` 真实 embedding 向量召回：新增 ONNX provider、SQLite chunk 向量索引、`reindex_semantic` 工具与模型下载脚本，同步更新测试与进度文档 |
 | 2026-06-14 | AI-Agent | 完成 6.8.3 `dependency_tree` 依赖树工具：新增 `DependencyTreeTool` UnifiedTool，支持 Maven JSON 与 Gradle 文本解析，注册并补充 6 个单元测试，同步更新进度文档 |
 | 2026-06-14 | AI-Agent | 完成 6.12.1 / 6.12.2 统一截断协议与 token 预算提示：新增 `ToolResultMetadata`、`ToolResultTruncationNormalizer`、`ToolResultBudgetHints`，扩展 `ToolResult.Success` 与 `ToolExecutor.formatResult`，补充 10 个单元测试，同步更新进度文档 |
+| 2026-06-14 | AI-Agent | 完成 6.9.3 记忆上下文 token 预算 / Top-K 注入：新增 `MemorySimilarityRanker` 按查询相似度排序并支持文本 fallback，`BuiltInMemoryProvider.prefetch` 增加类型优先级、2048 token 预算与省略提示，补充 8 个单元测试，同步更新进度文档 |
 
 ---
 

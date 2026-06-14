@@ -45,6 +45,10 @@ class BuiltInMemoryProvider : MemoryProvider {
     // 协程作用域（用于后台预取）
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    // 6.9.3 prefetch token 预算（可配置，便于测试）
+    var prefetchTokenBudget: Int = DEFAULT_PREFETCH_TOKEN_BUDGET
+    var prefetchUseTokenBudget: Boolean = DEFAULT_PREFETCH_USE_TOKEN_BUDGET
+
     init {
         // 兜底：主动加载 org.sqlite.JDBC 并注册到 DriverManager。
         // 在 IDE 插件环境中，DriverManager 的平台类加载器可能看不到插件类加载器加载的
@@ -137,8 +141,8 @@ class BuiltInMemoryProvider : MemoryProvider {
         val conn = connection ?: return ""
 
         return try {
-            // 1. FTS5 搜索相关记忆
-            val memories = searchMemories(conn, query, limit = 5)
+            // 1. FTS5/向量召回候选记忆（扩大候选集，保证后续排序与预算仍有足够选择）
+            val memories = searchMemories(conn, query, limit = 20)
 
             // 2. 获取最近几轮对话作为短期记忆
             val recentTurns = getRecentTurns(conn, sessionId, limit = 3)
@@ -148,41 +152,8 @@ class BuiltInMemoryProvider : MemoryProvider {
                 return ""
             }
 
-            // 3. 格式化为 <memory-context> 块
-            // H1 修复：
-            // - 单条 memory 截断到 [PREFETCH_ITEM_MAX_LEN] (4KB)，防止单条记录（用户曾粘贴
-            //   上 MB 日志）撑爆 system prompt 请求体
-            // - 转义 `</memory-context>` 关闭标签，防止用户内容里包含这个子串污染 prompt 解析
-            val builder = StringBuilder()
-            builder.appendLine("<memory-context>")
-
-            if (memories.isNotEmpty()) {
-                builder.appendLine("## Relevant Memories")
-                memories.forEach { mem ->
-                    val sanitized = sanitizeMemoryContent(mem.content)
-                    builder.appendLine("- [${mem.type}] $sanitized")
-                }
-            }
-
-            if (recentTurns.isNotEmpty()) {
-                builder.appendLine("## Recent Conversation")
-                recentTurns.forEach { turn ->
-                    val userSanitized = sanitizeMemoryContent(turn.userMsg)
-                    val assistantSanitized = sanitizeMemoryContent(turn.assistantMsg)
-                    builder.appendLine("User: $userSanitized")
-                    builder.appendLine("Assistant: $assistantSanitized")
-                }
-            }
-
-            builder.appendLine("</memory-context>")
-
-            // 总长度二次保护：即使单条截断，多条累积也可能超过 16KB
-            val resultRaw = builder.toString()
-            val result = if (resultRaw.length > PREFETCH_TOTAL_MAX_LEN) {
-                resultRaw.take(PREFETCH_TOTAL_MAX_LEN) + "\n[...truncated...]"
-            } else {
-                resultRaw
-            }
+            // 3. 按查询相似度与类型优先级排序，并应用 token/字符预算
+            val result = buildPrefetchContext(memories, recentTurns, query)
 
             prefetchCache[cacheKey] = result
             result
@@ -191,6 +162,129 @@ class BuiltInMemoryProvider : MemoryProvider {
             ""
         }
     }
+
+    // === 6.9.3 记忆上下文排序与预算 ===
+
+    /**
+     * 6.9.3 对召回记忆按类型优先级与查询相似度综合排序。
+     *
+     * 优先级：preference / pattern > fact / project > 其他。
+     * 同优先级内再按与 [query] 的余弦相似度降序排列。
+     */
+    private fun rankMemoriesForInjection(
+        memories: List<MemoryRecord>,
+        query: String
+    ): List<MemoryRecord> {
+        val scored = MemorySimilarityRanker().rankBySimilarity(memories, query)
+        return scored.sortedWith(
+            compareByDescending<MemorySimilarityRanker.ScoredMemory> { MEMORY_TYPE_PRIORITY[it.record.type] ?: 1 }
+                .thenByDescending { it.score }
+        ).map { it.record }
+    }
+
+    /**
+     * 6.9.3 构建 prefetch 文本块。
+     *
+     * 流程：
+     * 1. 按相似度与类型优先级排序记忆；
+     * 2. 若启用 token 预算，按估算 token 数依次选取 Top-K，超出部分用提示告知模型；
+     * 3. 追加最近对话；
+     * 4. 最终按 [PREFETCH_TOTAL_MAX_LEN] 做字符级兜底截断。
+     */
+    private fun buildPrefetchContext(
+        memories: List<MemoryRecord>,
+        recentTurns: List<TurnRecord>,
+        query: String
+    ): String {
+        val rankedMemories = rankMemoriesForInjection(memories, query)
+
+        var selectedMemories = rankedMemories
+        var omittedCount = 0
+
+        if (prefetchUseTokenBudget) {
+            val budgetResult = applyTokenBudget(rankedMemories, recentTurns)
+            selectedMemories = budgetResult.selectedMemories
+            omittedCount = budgetResult.omittedCount
+        }
+
+        val builder = StringBuilder()
+        builder.appendLine("<memory-context>")
+
+        if (selectedMemories.isNotEmpty()) {
+            builder.appendLine("## Relevant Memories")
+            selectedMemories.forEach { mem ->
+                val sanitized = sanitizeMemoryContent(mem.content)
+                builder.appendLine("- [${mem.type}] $sanitized")
+            }
+            if (omittedCount > 0) {
+                builder.appendLine("[$omittedCount more memories omitted due to context budget]")
+            }
+        }
+
+        if (recentTurns.isNotEmpty()) {
+            builder.appendLine("## Recent Conversation")
+            recentTurns.forEach { turn ->
+                val userSanitized = sanitizeMemoryContent(turn.userMsg)
+                val assistantSanitized = sanitizeMemoryContent(turn.assistantMsg)
+                builder.appendLine("User: $userSanitized")
+                builder.appendLine("Assistant: $assistantSanitized")
+            }
+        }
+
+        builder.appendLine("</memory-context>")
+
+        // 总长度兜底：即使单条截断，多条累积也可能超过 16KB
+        val resultRaw = builder.toString()
+        return if (resultRaw.length > PREFETCH_TOTAL_MAX_LEN) {
+            resultRaw.take(PREFETCH_TOTAL_MAX_LEN) + "\n[...truncated...]"
+        } else {
+            resultRaw
+        }
+    }
+
+    /**
+     * 6.9.3 token 预算应用：在总预算内保留 Top-K 条记忆。
+     *
+     * 预算分配：
+     * - 先扣除 `<memory-context>` wrapper、最近对话、区标题与省略提示的固定开销；
+     * - 剩余预算按顺序累加每条记忆的估算 token 数；
+     * - 超出预算的记忆被计入 [BudgetResult.omittedCount]，并在结果中提示模型。
+     */
+    private fun applyTokenBudget(
+        memories: List<MemoryRecord>,
+        recentTurns: List<TurnRecord>
+    ): BudgetResult {
+        val fixedOverhead = estimateTokens(MEMORY_CONTEXT_WRAPPER)
+        val recentTurnsTokens = recentTurns.sumOf { turn ->
+            estimateTokens("User: ${turn.userMsg}\n") + estimateTokens("Assistant: ${turn.assistantMsg}\n")
+        }
+        val headerTokens = estimateTokens("## Relevant Memories\n")
+        val hintTokens = estimateTokens("[99 more memories omitted due to context budget]\n")
+
+        var memoryBudget = prefetchTokenBudget - fixedOverhead - recentTurnsTokens - headerTokens - hintTokens
+        if (memoryBudget < 0) memoryBudget = 0
+
+        val selected = mutableListOf<MemoryRecord>()
+        var usedTokens = 0
+        var omitted = 0
+
+        for (memory in memories) {
+            val sanitized = sanitizeMemoryContent(memory.content)
+            val itemTokens = estimateTokens("- [${memory.type}] $sanitized\n")
+            // 至少保留一条最相关的记忆，避免预算过小时丢失全部上下文
+            if (selected.isEmpty() || usedTokens + itemTokens <= memoryBudget) {
+                selected.add(memory)
+                usedTokens += itemTokens
+            } else {
+                omitted++
+            }
+        }
+
+        return BudgetResult(selected, omitted)
+    }
+
+    /** 6.9.3 token 预算结果。 */
+    private data class BudgetResult(val selectedMemories: List<MemoryRecord>, val omittedCount: Int)
 
     override fun queuePrefetch(query: String, sessionId: String) {
         coroutineScope.launch {
@@ -948,5 +1042,24 @@ class BuiltInMemoryProvider : MemoryProvider {
 
         /** prefetch 整段的最大字符数（H1 修复） */
         private const val PREFETCH_TOTAL_MAX_LEN: Int = 16 * 1024
+
+        /** 6.9.3 默认 prefetch token 总预算。 */
+        private const val DEFAULT_PREFETCH_TOKEN_BUDGET: Int = 2048
+
+        /** 6.9.3 是否默认启用 token 预算（可通过 `codesage.memory.prefetch.tokenBudget.enabled` 系统属性覆盖）。 */
+        private val DEFAULT_PREFETCH_USE_TOKEN_BUDGET: Boolean =
+            System.getProperty("codesage.memory.prefetch.tokenBudget.enabled", "true").toBoolean()
+
+        /** 6.9.3 `<memory-context>` wrapper 的估算 token 开销。 */
+        private const val MEMORY_CONTEXT_WRAPPER: String =
+            "<memory-context>\n## Relevant Memories\n## Recent Conversation\n</memory-context>\n"
+
+        /** 6.9.3 记忆类型优先级：数字越大优先级越高。 */
+        private val MEMORY_TYPE_PRIORITY: Map<String, Int> = mapOf(
+            "preference" to 3,
+            "pattern" to 3,
+            "fact" to 2,
+            "project" to 2
+        )
     }
 }

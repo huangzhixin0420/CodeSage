@@ -328,4 +328,90 @@ class BuiltInMemoryProviderTest {
             "Session end should persist dark theme fact: $searchResult"
         )
     }
+
+    // ===== 6.9.3 记忆上下文 token 预算 / Top-K 注入 =====
+
+    @Test
+    fun `prefetch ranks memories by similarity to query`() {
+        // 使用 memory_add 避免产生 recent turns 干扰预算与顺序；统一类型以隔离相似度排序
+        provider.handleToolCall("memory_add", mapOf("content" to "Project frontend uses React", "type" to "fact"))
+        provider.handleToolCall("memory_add", mapOf("content" to "Project theme should be dark", "type" to "fact"))
+        provider.handleToolCall(
+            "memory_add",
+            mapOf("content" to "Project deployment uses Kubernetes", "type" to "fact")
+        )
+
+        val result = provider.prefetch("Which UI library does the project use?", sessionId)
+
+        assertTrue(result.contains("<memory-context>"))
+        val reactIndex = result.indexOf("React")
+        val k8sIndex = result.indexOf("Kubernetes")
+        assertTrue(reactIndex > 0, "React memory should appear in prefetch: $result")
+        assertTrue(k8sIndex > 0, "Kubernetes memory should appear in prefetch: $result")
+        assertTrue(reactIndex < k8sIndex, "React should rank higher than Kubernetes: $result")
+    }
+
+    @Test
+    fun `prefetch applies token budget and reports omitted memories`() {
+        repeat(5) { i ->
+            provider.handleToolCall(
+                "memory_add",
+                mapOf("content" to "This is a moderately long memory content number $i", "type" to "fact")
+            )
+        }
+
+        provider.prefetchTokenBudget = 80
+        provider.prefetchUseTokenBudget = true
+
+        val result = provider.prefetch("memory content", sessionId)
+
+        assertTrue(result.contains("<memory-context>"))
+        assertTrue(
+            result.contains("more memories omitted due to context budget"),
+            "Should report omitted memories: $result"
+        )
+
+        // 只应保留少量记忆（预算 80 tokens 通常只能容纳 2-3 条）
+        val memoryMatches = result.split("- [fact]").size - 1
+        assertTrue(memoryMatches in 1..3, "Should keep only Top-K memories within budget, got $memoryMatches: $result")
+    }
+
+    @Test
+    fun `prefetch prefers high priority memory type within token budget`() {
+        // fact 记忆包含查询关键词，但 preference 优先级更高；预算只够保留 1 条
+        provider.handleToolCall("memory_add", mapOf("content" to "Uses Gradle build", "type" to "fact"))
+        provider.handleToolCall("memory_add", mapOf("content" to "Prefers spaces indentation", "type" to "preference"))
+
+        provider.prefetchTokenBudget = 50
+        provider.prefetchUseTokenBudget = true
+
+        val result = provider.prefetch("prefers Gradle build", sessionId)
+
+        assertTrue(result.contains("preference"), "High priority preference should be retained: $result")
+        assertFalse(
+            result.contains("Gradle build"),
+            "Lower priority fact should be omitted when budget only fits one: $result"
+        )
+        assertTrue(result.contains("more memories omitted due to context budget"))
+    }
+
+    @Test
+    fun `prefetch falls back to character truncation when token budget is disabled`() {
+        repeat(5) { i ->
+            provider.handleToolCall("memory_add", mapOf("content" to "Memory content item $i", "type" to "fact"))
+        }
+
+        provider.prefetchUseTokenBudget = false
+
+        val result = provider.prefetch("Memory content", sessionId)
+
+        assertTrue(result.contains("<memory-context>"))
+        assertFalse(
+            result.contains("more memories omitted due to context budget"),
+            "Disabled token budget should not emit omission hint: $result"
+        )
+
+        val memoryMatches = result.split("- [fact]").size - 1
+        assertEquals(5, memoryMatches, "All memories should be included when token budget is disabled: $result")
+    }
 }
