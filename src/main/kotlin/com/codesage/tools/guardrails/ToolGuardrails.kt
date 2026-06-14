@@ -4,6 +4,7 @@ import com.codesage.agent.context.ContextBudgetManager
 import com.codesage.agent.context.OutputLimits
 import com.codesage.agent.core.AgentStreamEvent
 import com.codesage.agent.tools.ToolResult
+import com.codesage.agent.tools.ToolResultMetadata
 import com.codesage.shared.utils.Logger
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -198,7 +199,11 @@ class ToolGuardrails(
     }
 
     /**
-     * 执行后处理（截断等）
+     * 执行后处理（截断等）。
+     *
+     * 6.12.1：若结果已被工具自身标记截断（通过 [ToolResult.metadata]），或 guardrails
+     * 在这里进行了额外截断，都会保留并更新元数据，最终由 `ToolExecutor.formatResult`
+     * 统一输出 `{truncated, total_items, returned_items, next_offset, hint}`。
      */
     fun postProcess(toolName: String, result: ToolResult): ToolResult {
         return when (result) {
@@ -225,11 +230,31 @@ class ToolGuardrails(
                     )
                 }
 
-                ToolResult.Success(kotlinx.serialization.json.JsonPrimitive(truncationResult.content) as kotlinx.serialization.json.JsonElement)
+                val baseMetadata = result.metadata ?: ToolResultMetadata.EMPTY
+                val updatedMetadata = if (truncationResult.wasTruncated) {
+                    baseMetadata.copy(
+                        truncated = true,
+                        hint = mergeHint(
+                            baseMetadata.hint,
+                            "Guardrails truncated output from ${truncationResult.originalLength} chars " +
+                                    "to ${truncationResult.content.length} chars (limit=${limits.maxLength} chars/${limits.maxLines} lines); " +
+                                    "use offset/limit or filters to reduce result size."
+                        )
+                    )
+                } else baseMetadata
+
+                ToolResult.Success(
+                    kotlinx.serialization.json.JsonPrimitive(truncationResult.content) as kotlinx.serialization.json.JsonElement,
+                    metadata = updatedMetadata.takeIf { !it.isEmpty() }
+                )
             }
 
             else -> result
         }
+    }
+
+    private fun mergeHint(existing: String?, additional: String): String {
+        return if (existing.isNullOrBlank()) additional else "$existing; $additional"
     }
 
     /**

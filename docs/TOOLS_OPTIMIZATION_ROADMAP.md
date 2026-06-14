@@ -78,8 +78,8 @@
 | 6.9.2 | **LLM 自动会话摘要** | ⚠️ 部分落地 | `SessionSummarizer` 为规则引擎，未接入 LLM | `BuiltInMemoryProvider.onSessionEnd` 异步调用轻量模型生成摘要与关键事实 | 待分配 | - |
 | 6.9.3 | 记忆上下文**token 预算 / Top-K 注入** | ⚠️ 部分落地 | 已有 16KB 长度保护和 token 估算，但未按“与当前查询相似度排序 + token 上限 Top-K”注入 | `BuiltInMemoryProvider.prefetch` 中按查询相似度排序，设置 token 预算上限，保留 Top-K | 待分配 | - |
 | 6.11.3 | Skill 工具统一命名、`examples`、`use_skill` 元工具 | ⚠️ 部分落地 | `Skill` 接口有 `category`/`tags`/`metadata`，但无 `examples` 字段和统一 `use_skill` 元工具 | `Skill.kt` 增加 `examples`；`SkillToolAdapter` 转换时增强 schema；新增 `use_skill` 元工具 | 待分配 | - |
-| 6.12.1 | **统一截断标记与续读协议** | ❌ 未开始 | 各工具截断字段不统一 | 在 `ToolResult` / `ToolExecutor.postProcess` 中统一追加 `{truncated, total_items, returned_items, next_offset, hint}` | 待分配 | - |
-| 6.12.2 | 工具结果中嵌入 **token 预算提示** | ❌ 未开始 | 未在工具结果中提示上下文消耗 | `ToolExecutor.postProcess` 追加 `context_cost_estimate` / `remaining_context_hint` | 待分配 | - |
+| 6.12.1 | **统一截断标记与续读协议** | ✅ 已完成 | 各工具截断字段不统一 | 在 `ToolResult` / `ToolExecutor.postProcess` 中统一追加 `{truncated, total_items, returned_items, next_offset, hint}`；交付：`ToolResultMetadata.kt` / `ToolResultTruncationNormalizer.kt` / `ToolExecutor.kt` / `ToolGuardrails.kt` / `ToolResultMetadataTest.kt` | AI-Agent | 2026-06-14 |
+| 6.12.2 | 工具结果中嵌入 **token 预算提示** | ✅ 已完成 | 未在工具结果中提示上下文消耗 | `ToolExecutor.postProcess` 追加 `context_cost_estimate` / `remaining_context_hint`；交付：`ToolResultBudgetHints.kt` / `ToolExecutor.kt` / `AgentCore.kt` / `ToolResultMetadataTest.kt` | AI-Agent | 2026-06-14 |
 
 ### 3.3 P2 级
 
@@ -173,11 +173,45 @@
 
 ---
 
+#### 3.4.4 6.12.1 / 6.12.2 统一截断协议与 token 预算提示（AI-Agent，2026-06-14）
+
+**关键设计决策：**
+
+1. **元数据与数据解耦**：新增 `ToolResultMetadata` 数据类并扩展 `ToolResult.Success(metadata = ...)`，使截断/预算提示与业务数据解耦；所有现有 `ToolResult.Success(data)` 调用因默认参数保持 100% 向后兼容。
+2. **归一化层位于 ToolExecutor**：`ToolResultTruncationNormalizer` 统一识别历史上各工具五花八门的截断字段（`truncated`/`original_length`、`stdout_truncated`/`stderr_truncated`、`partial_scan_files`、`total_lines`/`start_line`/`end_line` 等），转换为 `{truncated, total_items, returned_items, next_offset, hint}` 协议。
+3. **Guardrails 截断可叠加**：`ToolGuardrails.postProcess` 在自身进行输出截断时保留并更新已有元数据，既保留工具层的 `total_items/next_offset`，又追加 guardrails 截断提示。
+4. **预算提示全覆盖**：`ToolResultBudgetHints` 为每次工具结果估算 token 消耗（1 token ≈ 4 字符的经验值），并结合 `ContextBudgetManager` 生成 `remaining_context_hint`；`AgentCore` 把会话级 `ContextBudgetManager` 实例注入 `ToolExecutor`。
+5. **最终 JSON 顶层输出**：`ToolExecutor.formatResult` 在 `{success, data/error}` 之外，仅在元数据非空时追加统一字段，避免无意义字段污染普通结果。
+
+**测试状态：**
+
+- `./gradlew check`：通过（新增 10 个单元测试）
+- `npm test`：通过
+- 新增测试：
+  - `ToolResultMetadataTest.normalizer extracts read_file pagination metadata`
+  - `ToolResultMetadataTest.normalizer marks read_file truncated when original_length present`
+  - `ToolResultMetadataTest.normalizer extracts run_command truncation metadata`
+  - `ToolResultMetadataTest.normalizer extracts search_code truncation metadata`
+  - `ToolResultMetadataTest.budget hints estimate tokens from result content`
+  - `ToolResultMetadataTest.budget hints produce remaining context hint`
+  - `ToolResultMetadataTest.guardrails postProcess preserves and updates existing metadata`
+  - `ToolResultMetadataTest.ToolExecutor formats success result with truncation metadata and budget hints`
+  - `ToolResultMetadataTest.ToolExecutor formats error result with budget hints only`
+  - `ToolResultMetadataTest.guardrails truncation without tool metadata still produces normalized output`
+
+**遗留边界情况 / 已知限制：**
+
+- `read_file` 等大文件若被 guardrails 额外按字符截断，`next_offset` 仍按工具层返回的 `end_line` 计算，可能与 guardrails 截断后的实际内容末尾不完全对齐；模型需结合 `hint` 判断。
+- token 估算采用固定 1:4 字符比，对纯英文代码可能低估、对中文注释可能高估；后续可接入 `ContextBudgetManager` 的真实 tokenizer。
+- 当前 `remaining_context_hint` 在 `ContextBudgetManager` 的 provider 未绑定（如单元测试）时基于 `tokensUsed = 0` 计算，会显示 `0% used`；IDE 真实会话中 provider 会返回实际用量。
+
+---
+
 ## 4. 进度总览
 
 ```text
 P0:  0 项部分落地，0 项未开始，1 项已完成
-P1:  5 项部分落地，2 项未开始，2 项已完成
+P1:  3 项部分落地，2 项未开始，4 项已完成
 P2:  0 项部分落地，3 项未开始，0 项已完成
 ```
 
@@ -271,6 +305,7 @@ P2:  0 项部分落地，3 项未开始，0 项已完成
 | 2026-06-14 | AI-Agent | 完成 6.4.3 Shell 命令流式输出：后台进程支持 `stream_output` 实时 emit `CommandOutputStream` 事件，同步更新测试与进度文档 |
 | 2026-06-14 | AI-Agent | 完成 6.3.3 `semantic_search` 真实 embedding 向量召回：新增 ONNX provider、SQLite chunk 向量索引、`reindex_semantic` 工具与模型下载脚本，同步更新测试与进度文档 |
 | 2026-06-14 | AI-Agent | 完成 6.8.3 `dependency_tree` 依赖树工具：新增 `DependencyTreeTool` UnifiedTool，支持 Maven JSON 与 Gradle 文本解析，注册并补充 6 个单元测试，同步更新进度文档 |
+| 2026-06-14 | AI-Agent | 完成 6.12.1 / 6.12.2 统一截断协议与 token 预算提示：新增 `ToolResultMetadata`、`ToolResultTruncationNormalizer`、`ToolResultBudgetHints`，扩展 `ToolResult.Success` 与 `ToolExecutor.formatResult`，补充 10 个单元测试，同步更新进度文档 |
 
 ---
 

@@ -207,7 +207,8 @@ open class AgentCore(
         project = project,
         guardrails = guardrails,
         toolRegistry = toolRegistry,
-        tracer = tracer  // T7.2：传入 tracer 以追踪 tool 调用
+        tracer = tracer,  // T7.2：传入 tracer 以追踪 tool 调用
+        contextBudgetManager = contextBudgetManager  // 6.12.2：嵌入 token 预算提示
     )
     private val skillToolAdapter: SkillToolAdapter? = skillToolAdapter
 

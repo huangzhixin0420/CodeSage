@@ -27,7 +27,9 @@ class ToolExecutor(
     private val auditLog: ToolAuditLog? = null,
     private val toolRegistry: ToolRegistry? = null,
     private val tracer: ExecutionTracer? = null,
-    private val traceContext: ExecutionTracer.TraceContext? = null
+    private val traceContext: ExecutionTracer.TraceContext? = null,
+    // 6.12.2：上下文预算管理器，用于在工具结果中嵌入 token 预算提示
+    private val contextBudgetManager: com.codesage.agent.context.ContextBudgetManager? = null
 ) {
     private val logger = Logger.getLogger<ToolExecutor>()
     private val json = Json { ignoreUnknownKeys = true }
@@ -117,15 +119,25 @@ class ToolExecutor(
             // 3. 执行工具（带重试）
             val result = executeToolWithRetry(toolCall, args, onStream)
 
-            // 4. Guardrails 后置处理（截断）
-            val processedResult = guardrails?.postProcess(toolCall.name, result) ?: result
-            val formatted = formatResult(processedResult)
+            // 4. 归一化工具层截断元数据并附着到结果（6.12.1）
+            val rawMetadata = ToolResultTruncationNormalizer.extract(toolCall.name, result, args)
+            val resultWithMetadata = if (result is ToolResult.Success && rawMetadata != ToolResultMetadata.EMPTY) {
+                result.copy(metadata = rawMetadata)
+            } else result
+
+            // 5. Guardrails 后置处理（截断）
+            val processedResult = guardrails?.postProcess(toolCall.name, resultWithMetadata) ?: resultWithMetadata
+
+            // 6. 计算 token 预算提示并合并到元数据（6.12.2）
+            val finalMetadata = computeFinalMetadata(processedResult)
+
+            val formatted = formatResult(processedResult, finalMetadata)
             val duration = System.currentTimeMillis() - startTime
 
-            // 5. 记录审计日志
-            val wasTruncated = processedResult is ToolResult.Success &&
-                    result is ToolResult.Success &&
-                    processedResult.data.toString().length < result.data.toString().length
+            // 7. 记录审计日志
+            val wasTruncated = (processedResult is ToolResult.Success && processedResult.metadata?.truncated == true) ||
+                    (processedResult is ToolResult.Success && result is ToolResult.Success &&
+                            processedResult.data.toString().length < result.data.toString().length)
             auditLog?.log(
                 toolName = toolCall.name,
                 arguments = args,
@@ -314,37 +326,87 @@ class ToolExecutor(
         }
     }
 
-    private fun formatResult(result: ToolResult): String {
+    /**
+     * 合并 guardrails 层可能产生的截断元数据与 token 预算提示，生成最终元数据。
+     *
+     * 6.12.2：context 预算提示始终追加（预算管理器可用时），让模型感知单次工具调用的
+     * 上下文消耗。
+     */
+    private fun computeFinalMetadata(result: ToolResult): ToolResultMetadata {
+        val base = if (result is ToolResult.Success) result.metadata else null
+        val content = when (result) {
+            is ToolResult.Success -> result.data.toString()
+            is ToolResult.Error -> result.message
+        }
+        val costEstimate = ToolResultBudgetHints.estimateTokens(content)
+        val remainingHint = ToolResultBudgetHints.remainingHint(contextBudgetManager, costEstimate)
+
+        return if (base == null || base.isEmpty()) {
+            ToolResultMetadata(
+                contextCostEstimate = costEstimate,
+                remainingContextHint = remainingHint
+            )
+        } else {
+            base.copy(
+                contextCostEstimate = costEstimate,
+                remainingContextHint = remainingHint
+            )
+        }
+    }
+
+    private fun formatResult(result: ToolResult): String = formatResult(result, computeFinalMetadata(result))
+
+    /**
+     * 将工具结果序列化为 JSON，并追加统一截断元数据与 token 预算提示。
+     *
+     * 6.12.1 / 6.12.2：成功结果除了 `{success, data}` 之外，还会在顶层输出
+     * `{truncated, total_items, returned_items, next_offset, hint,
+     *  context_cost_estimate, remaining_context_hint}` 中的非空字段。
+     */
+    private fun formatResult(result: ToolResult, metadata: ToolResultMetadata): String {
         return when (result) {
             is ToolResult.Success -> {
-                json.encodeToString(
-                    JsonObject.serializer(), JsonObject(
-                        mapOf(
-                            "success" to JsonPrimitive(true),
-                            "data" to result.data
-                        )
-                    )
+                val fields = mutableMapOf<String, JsonElement>(
+                    "success" to JsonPrimitive(true),
+                    "data" to result.data
                 )
+                appendMetadata(fields, metadata)
+                json.encodeToString(JsonObject.serializer(), JsonObject(fields))
             }
 
             is ToolResult.Error -> {
-                json.encodeToString(
-                    JsonObject.serializer(), JsonObject(
-                        mapOf(
-                            "success" to JsonPrimitive(false),
-                            "error" to JsonPrimitive(result.message)
-                        )
-                    )
+                val fields = mutableMapOf<String, JsonElement>(
+                    "success" to JsonPrimitive(false),
+                    "error" to JsonPrimitive(result.message)
                 )
+                appendMetadata(fields, metadata)
+                json.encodeToString(JsonObject.serializer(), JsonObject(fields))
             }
         }
+    }
+
+    private fun appendMetadata(fields: MutableMap<String, JsonElement>, metadata: ToolResultMetadata) {
+        if (metadata.truncated) fields["truncated"] = JsonPrimitive(true)
+        metadata.totalItems?.let { fields["total_items"] = JsonPrimitive(it) }
+        metadata.returnedItems?.let { fields["returned_items"] = JsonPrimitive(it) }
+        metadata.nextOffset?.let { fields["next_offset"] = JsonPrimitive(it) }
+        metadata.hint?.let { fields["hint"] = JsonPrimitive(it) }
+        metadata.contextCostEstimate?.let { fields["context_cost_estimate"] = JsonPrimitive(it) }
+        metadata.remainingContextHint?.let { fields["remaining_context_hint"] = JsonPrimitive(it) }
     }
 }
 
 /**
  * 工具执行结果
+ *
+ * 6.12.1 / 6.12.2：`Success` 新增可选 [metadata]，用于在 `ToolExecutor` 层统一携带
+ * 截断协议与 token 预算提示，同时保持所有现有 `ToolResult.Success(data)` 调用的向后兼容。
  */
 sealed class ToolResult {
-    data class Success(val data: JsonElement) : ToolResult()
+    data class Success(
+        val data: JsonElement,
+        val metadata: ToolResultMetadata? = null
+    ) : ToolResult()
+
     data class Error(val message: String) : ToolResult()
 }
