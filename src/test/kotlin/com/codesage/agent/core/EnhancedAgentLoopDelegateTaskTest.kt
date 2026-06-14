@@ -8,6 +8,7 @@ import com.codesage.model.dto.*
 import com.codesage.model.gateway.ModelGateway
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.*
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -83,8 +84,8 @@ class EnhancedAgentLoopDelegateTaskTest {
             startSession,
             completion.sessionId,
             "SubAgentStart.sessionId and SubAgentComplete.sessionId MUST match " +
-                "(UI EventRouter keys its lastSubAgent* maps by this id). " +
-                "start='$startSession' complete='${completion.sessionId}'"
+                    "(UI EventRouter keys its lastSubAgent* maps by this id). " +
+                    "start='$startSession' complete='${completion.sessionId}'"
         )
 
         // 验证 fake executor 确实被调用了
@@ -96,6 +97,288 @@ class EnhancedAgentLoopDelegateTaskTest {
             startSession,
             fakeSubAgentExecutor.lastSubSessionIdOverride,
             "spawn should have been called with subSessionIdOverride == startSession"
+        )
+    }
+
+    @Test
+    fun `delegate_task should pass isolated_worktree to spawn`() = runBlocking {
+        val parent = AgentCore()
+        parent.initialize(AgentConfig(defaultModel = "test-model", systemPrompt = "parent"))
+
+        val expectedResult = SubAgentResult(
+            success = true,
+            output = "sub-agent finished in worktree",
+            sessionId = "sub_wt_123",
+            iterationsUsed = 2,
+            toolsUsed = listOf("read_file"),
+            worktreeDiff = "diff content",
+            worktreeChanges = buildJsonObject { put("has_changes", true) }
+        )
+        val fakeSubAgentExecutor = FakeSubAgentExecutor(parent, expectedResult)
+
+        val gateway = createGatewayThatCallsDelegateTaskThenFinalizes(
+            arguments = """{"task_description":"Refactor in isolation","toolset":"coder","isolated_worktree":true}"""
+        )
+
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = ToolExecutor(null),
+            stateFlow = kotlinx.coroutines.flow.MutableStateFlow(AgentState.IDLE),
+            subAgentExecutor = fakeSubAgentExecutor
+        )
+
+        val events = loop.run(
+            userMessage = "Please refactor in isolation",
+            session = AgentSession(id = "session_wt"),
+            contextManager = ContextManager(),
+            currentModel = "test-model",
+            systemPrompt = "parent"
+        ).toList()
+
+        assertEquals(1, fakeSubAgentExecutor.spawnCallCount)
+        assertEquals("Refactor in isolation", fakeSubAgentExecutor.lastTaskDescription)
+        assertEquals("coder", fakeSubAgentExecutor.lastToolset)
+        assertTrue(fakeSubAgentExecutor.lastIsolatedWorktree, "isolated_worktree should be passed through")
+
+        // 验证返回的 JSON 包含 worktree 字段
+        val toolResultEvents = events.filterIsInstance<AgentStreamEvent.ToolCallResult>()
+        assertTrue(toolResultEvents.isNotEmpty(), "ToolCallResult should be emitted")
+        val resultJson = Json.parseToJsonElement(toolResultEvents.first().result).jsonObject
+        assertEquals("diff content", resultJson["worktree_diff"]?.jsonPrimitive?.content)
+        assertEquals(true, resultJson["worktree_changes"]?.jsonObject?.get("has_changes")?.jsonPrimitive?.booleanOrNull)
+    }
+
+    @Test
+    fun `delegate_task with isolated_worktree false should not enable worktree`() = runBlocking {
+        val parent = AgentCore()
+        parent.initialize(AgentConfig(defaultModel = "test-model", systemPrompt = "parent"))
+
+        val fakeSubAgentExecutor = FakeSubAgentExecutor(
+            parent,
+            SubAgentResult(true, "done", "x", 0, emptyList())
+        )
+
+        val gateway = createGatewayThatCallsDelegateTaskThenFinalizes(
+            arguments = """{"task_description":"Normal task","toolset":"dev","isolated_worktree":false}"""
+        )
+
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = ToolExecutor(null),
+            stateFlow = kotlinx.coroutines.flow.MutableStateFlow(AgentState.IDLE),
+            subAgentExecutor = fakeSubAgentExecutor
+        )
+
+        loop.run(
+            userMessage = "Please do normal task",
+            session = AgentSession(id = "session_nowt"),
+            contextManager = ContextManager(),
+            currentModel = "test-model",
+            systemPrompt = "parent"
+        ).toList()
+
+        assertFalse(fakeSubAgentExecutor.lastIsolatedWorktree, "isolated_worktree should default to false")
+    }
+
+    @Test
+    fun `delegate_task should pass max_depth to spawn and default to 2`() = runBlocking {
+        val parent = AgentCore()
+        parent.initialize(AgentConfig(defaultModel = "test-model", systemPrompt = "parent"))
+
+        val fakeSubAgentExecutor = FakeSubAgentExecutor(
+            parent,
+            SubAgentResult(true, "done", "x", 0, emptyList())
+        )
+
+        val gateway = createGatewayThatCallsDelegateTaskThenFinalizes(
+            arguments = """{"task_description":"Custom depth","toolset":"dev","max_depth":4}"""
+        )
+
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = ToolExecutor(null),
+            stateFlow = kotlinx.coroutines.flow.MutableStateFlow(AgentState.IDLE),
+            subAgentExecutor = fakeSubAgentExecutor
+        )
+
+        loop.run(
+            userMessage = "Run with custom depth",
+            session = AgentSession(id = "session_depth"),
+            contextManager = ContextManager(),
+            currentModel = "test-model",
+            systemPrompt = "parent"
+        ).toList()
+
+        assertEquals(1, fakeSubAgentExecutor.spawnCallCount)
+        assertEquals(4, fakeSubAgentExecutor.lastMaxDepth, "max_depth=4 should be passed to spawn")
+    }
+
+    @Test
+    fun `delegate_task with max_depth out of range should return error and not spawn`() = runBlocking {
+        val parent = AgentCore()
+        parent.initialize(AgentConfig(defaultModel = "test-model", systemPrompt = "parent"))
+
+        val fakeSubAgentExecutor = FakeSubAgentExecutor(
+            parent,
+            SubAgentResult(true, "should not run", "x", 0, emptyList())
+        )
+
+        val gateway = createGatewayThatCallsDelegateTaskThenFinalizes(
+            arguments = """{"task_description":"Bad depth","toolset":"dev","max_depth":0}"""
+        )
+
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = ToolExecutor(null),
+            stateFlow = kotlinx.coroutines.flow.MutableStateFlow(AgentState.IDLE),
+            subAgentExecutor = fakeSubAgentExecutor
+        )
+
+        val events = loop.run(
+            userMessage = "Bad depth",
+            session = AgentSession(id = "session_bad_depth"),
+            contextManager = ContextManager(),
+            currentModel = "test-model",
+            systemPrompt = "parent"
+        ).toList()
+
+        assertEquals(0, fakeSubAgentExecutor.spawnCallCount, "Spawn should not be called for invalid max_depth")
+        val toolResults = events.filterIsInstance<AgentStreamEvent.ToolCallResult>()
+        val delegateResult = toolResults.firstOrNull { it.toolName == "delegate_task" }
+        assertNotNull(delegateResult, "Should have tool result for delegate_task")
+        assertFalse(delegateResult!!.success, "Should fail due to invalid max_depth")
+        assertTrue(
+            delegateResult.result.contains("max_depth") || delegateResult.result.contains("Invalid"),
+            "Error should mention invalid max_depth, got: ${delegateResult.result}"
+        )
+    }
+
+    /**
+     * 6.10.4: SubAgentStart 事件应携带解析到的 max_depth / allowed_tools / denied_tools，
+     * 供 UI 展示子 Agent 的递归深度预算和工具范围。
+     */
+    @Test
+    fun `SubAgentStart event should carry maxDepth allowedTools and deniedTools`() = runBlocking {
+        val parent = AgentCore()
+        parent.initialize(AgentConfig(defaultModel = "test-model", systemPrompt = "parent"))
+
+        val fakeSubAgentExecutor = FakeSubAgentExecutor(
+            parent,
+            SubAgentResult(true, "done", "x", 0, emptyList())
+        )
+
+        val gateway = createGatewayThatCallsDelegateTaskThenFinalizes(
+            arguments = """{"task_description":"Restricted tools","toolset":"coder","max_depth":4,"allowed_tools":["read_file","edit_file"],"denied_tools":["delete_file","delegate_task"]}"""
+        )
+
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = ToolExecutor(null),
+            stateFlow = kotlinx.coroutines.flow.MutableStateFlow(AgentState.IDLE),
+            subAgentExecutor = fakeSubAgentExecutor
+        )
+
+        val events = loop.run(
+            userMessage = "Run with restricted tools",
+            session = AgentSession(id = "session_start_meta"),
+            contextManager = ContextManager(),
+            currentModel = "test-model",
+            systemPrompt = "parent"
+        ).toList()
+
+        val start = events.filterIsInstance<AgentStreamEvent.SubAgentStart>().first()
+        assertEquals(4, start.maxDepth, "SubAgentStart.maxDepth should match delegate_task.max_depth")
+        assertEquals(listOf("read_file", "edit_file"), start.allowedTools)
+        assertEquals(listOf("delete_file", "delegate_task"), start.deniedTools)
+        assertTrue(start.delegationForbidden, "delegationForbidden should be true when delegate_task is denied")
+    }
+
+    /**
+     * 6.10.4: 旧调用方不传新字段时，SubAgentStart 仍应保持向后兼容的默认值。
+     */
+    @Test
+    fun `SubAgentStart default fields should be backward compatible`() = runBlocking {
+        val parent = AgentCore()
+        parent.initialize(AgentConfig(defaultModel = "test-model", systemPrompt = "parent"))
+
+        val fakeSubAgentExecutor = FakeSubAgentExecutor(
+            parent,
+            SubAgentResult(true, "done", "x", 0, emptyList())
+        )
+
+        val gateway = createGatewayThatCallsDelegateTaskThenFinalizes(
+            arguments = """{"task_description":"Legacy call","toolset":"dev"}"""
+        )
+
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = ToolExecutor(null),
+            stateFlow = kotlinx.coroutines.flow.MutableStateFlow(AgentState.IDLE),
+            subAgentExecutor = fakeSubAgentExecutor
+        )
+
+        val events = loop.run(
+            userMessage = "Legacy call",
+            session = AgentSession(id = "session_legacy"),
+            contextManager = ContextManager(),
+            currentModel = "test-model",
+            systemPrompt = "parent"
+        ).toList()
+
+        val start = events.filterIsInstance<AgentStreamEvent.SubAgentStart>().first()
+        assertEquals(SubAgentExecutor.DEFAULT_MAX_RECURSION_DEPTH, start.maxDepth)
+        assertTrue(start.allowedTools.isEmpty(), "allowedTools should default to empty")
+        assertTrue(start.deniedTools.isEmpty(), "deniedTools should default to empty")
+        assertEquals(0, start.depth, "depth should default to 0")
+        assertFalse(start.delegationForbidden, "delegationForbidden should default to false")
+    }
+
+    @Test
+    fun `delegate_task should pass allowed_tools and denied_tools to spawn`() = runBlocking {
+        val parent = AgentCore()
+        parent.initialize(AgentConfig(defaultModel = "test-model", systemPrompt = "parent"))
+
+        val fakeSubAgentExecutor = FakeSubAgentExecutor(
+            parent,
+            SubAgentResult(true, "done", "x", 0, emptyList())
+        )
+
+        val gateway = createGatewayThatCallsDelegateTaskThenFinalizes(
+            arguments = """{"task_description":"Restricted tools","toolset":"coder","allowed_tools":["read_file","edit_file"],"denied_tools":["delete_file"]}"""
+        )
+
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = ToolExecutor(null),
+            stateFlow = kotlinx.coroutines.flow.MutableStateFlow(AgentState.IDLE),
+            subAgentExecutor = fakeSubAgentExecutor
+        )
+
+        loop.run(
+            userMessage = "Run with restricted tools",
+            session = AgentSession(id = "session_tools"),
+            contextManager = ContextManager(),
+            currentModel = "test-model",
+            systemPrompt = "parent"
+        ).toList()
+
+        assertEquals(1, fakeSubAgentExecutor.spawnCallCount)
+        assertEquals(
+            listOf("read_file", "edit_file"),
+            fakeSubAgentExecutor.lastAllowedTools,
+            "allowed_tools should be passed to spawn"
+        )
+        assertEquals(
+            listOf("delete_file"),
+            fakeSubAgentExecutor.lastDeniedTools,
+            "denied_tools should be passed to spawn"
         )
     }
 
@@ -143,18 +426,13 @@ class EnhancedAgentLoopDelegateTaskTest {
     }
 
     /**
-     * P1 #1: delegate_task 工具的 tool result 现在是纯文本，不是 JSON
+     * 6.10.1: delegate_task 工具的 tool result 现在是结构化 JSON。
      *
-     * 老的实现把 sub-agent 的 output 包装成 JSON:
-     *   {"success":true,"output":"...","session_id":"...","iterations_used":3,"tools_used":[...]}
-     *
-     * 新实现（参考 Claude Code）直接返回 sub-agent 的自然语言最终 turn:
-     *   "Done. Result: ...\nFiles: ...\nBlockers: ..."
-     *
-     * 父 LLM 看到 tool result 时不再需要解析 JSON，可以直接当 user message 解读。
+     * JSON 包含从子 agent 最终 turn 中解析出的 result/files/blockers，
+     * 以及 iterations_used、tools_used、completed_tool_calls、session_id 等元数据。
      */
     @Test
-    fun `delegate_task tool result should be plain text not JSON`() = runBlocking {
+    fun `delegate_task tool result should be structured JSON`() = runBlocking {
         val parent = AgentCore()
         parent.initialize(AgentConfig(defaultModel = "test-model", systemPrompt = "parent"))
 
@@ -165,7 +443,10 @@ class EnhancedAgentLoopDelegateTaskTest {
             output = expectedFinalText,
             sessionId = "sub_test_plain",
             iterationsUsed = 3,
-            toolsUsed = listOf("read_file", "write_file")
+            toolsUsed = listOf("read_file", "write_file"),
+            completedToolCalls = listOf(
+                ToolCallRecord("read_file", "path: Foo.kt", 120, true)
+            )
         )
         val fakeSubAgentExecutor = FakeSubAgentExecutor(parent, expectedResult)
 
@@ -190,30 +471,37 @@ class EnhancedAgentLoopDelegateTaskTest {
             systemPrompt = "parent"
         ).toList()
 
-        // ToolCallResult 事件的 result 字段应当是子 agent 的纯文本，
-        // 不应以 "{" 开头（JSON 特征）
+        // ToolCallResult 事件的 result 字段应当是 JSON
         val toolResults = events.filterIsInstance<AgentStreamEvent.ToolCallResult>()
         val delegateResult = toolResults.firstOrNull { it.toolName == "delegate_task" }
         assertNotNull(delegateResult, "Should have tool result for delegate_task")
-        assertFalse(
-            delegateResult!!.result.trim().startsWith("{"),
-            "delegate_task tool result should NOT be JSON, got: ${delegateResult.result.take(200)}"
+        val json = Json.parseToJsonElement(delegateResult!!.result).jsonObject
+
+        assertEquals(true, json["success"]?.jsonPrimitive?.booleanOrNull)
+        assertEquals("implemented the feature", json["result"]?.jsonPrimitive?.content)
+        assertEquals(listOf("Foo.kt"), json["files"]?.jsonArray?.map { it.jsonPrimitive.content })
+        assertEquals("none", json["blockers"]?.jsonPrimitive?.content)
+        assertEquals(3, json["iterations_used"]?.jsonPrimitive?.intOrNull)
+        assertEquals(listOf("read_file", "write_file"), json["tools_used"]?.jsonArray?.map { it.jsonPrimitive.content })
+        assertEquals(1, json["completed_tool_calls"]?.jsonArray?.size)
+        assertEquals(
+            fakeSubAgentExecutor.lastSubSessionIdOverride,
+            json["session_id"]?.jsonPrimitive?.content
         )
-        // 应当包含子 agent 的最终 turn 文本
-        assertTrue(
-            delegateResult.result.contains("**Result**"),
-            "delegate_task tool result should contain the sub-agent's final turn markdown, got: ${delegateResult.result}"
-        )
-        // 父 LLM 视角下，loop.run 结束后 contextManager 里的 tool_message 应当持有纯文本
+        assertTrue(json["raw_output"]?.jsonPrimitive?.content?.contains("**Result**") == true)
+
+        // 父 LLM 视角下，loop.run 结束后 contextManager 里的 tool_message 也应当是 JSON
         val contextMessages = testContextManager.getContext()
         val toolMessages = contextMessages.filter { it.role == Role.TOOL }
         assertTrue(toolMessages.isNotEmpty(), "should have a tool message in context")
         val lastToolMessage = toolMessages.last()
-        assertFalse(
+        assertTrue(
             lastToolMessage.content.trim().startsWith("{"),
-            "tool_message content in parent context should NOT be JSON, got: ${lastToolMessage.content.take(200)}"
+            "tool_message content in parent context should be JSON, got: ${lastToolMessage.content.take(200)}"
         )
-        assertTrue(lastToolMessage.content.contains("**Result**"))
+        val contextJson = Json.parseToJsonElement(lastToolMessage.content).jsonObject
+        assertEquals(true, contextJson["success"]?.jsonPrimitive?.booleanOrNull)
+        assertEquals("Foo.kt", contextJson["files"]?.jsonArray?.firstOrNull()?.jsonPrimitive?.content)
     }
 
     /**
@@ -254,8 +542,10 @@ class EnhancedAgentLoopDelegateTaskTest {
         ).toList()
 
         val completion = events.filterIsInstance<AgentStreamEvent.SubAgentComplete>().first()
-        assertEquals(7, completion.iterationsUsed,
-            "SubAgentComplete event should carry iterationsUsed=7, got: ${completion.iterationsUsed}")
+        assertEquals(
+            7, completion.iterationsUsed,
+            "SubAgentComplete event should carry iterationsUsed=7, got: ${completion.iterationsUsed}"
+        )
         assertEquals(
             listOf("read_file", "grep_code", "write_file"),
             completion.toolsUsed,
@@ -351,6 +641,10 @@ class EnhancedAgentLoopDelegateTaskTest {
         var lastTaskDescription: String? = null
         var lastToolset: String? = null
         var lastSubSessionIdOverride: String? = null
+        var lastIsolatedWorktree: Boolean = false
+        var lastMaxDepth: Int? = null
+        var lastAllowedTools: List<String>? = null
+        var lastDeniedTools: List<String>? = null
 
         override suspend fun spawn(
             parentSessionId: String,
@@ -360,11 +654,19 @@ class EnhancedAgentLoopDelegateTaskTest {
             progressCallback: suspend (String) -> Unit,
             parentJob: kotlinx.coroutines.Job?,
             subSessionIdOverride: String?,
+            isolatedWorktree: Boolean,
+            maxDepth: Int,
+            allowedTools: List<String>,
+            deniedTools: List<String>,
         ): SubAgentResult {
             spawnCallCount++
             lastTaskDescription = taskDescription
             lastToolset = toolset
             lastSubSessionIdOverride = subSessionIdOverride
+            lastIsolatedWorktree = isolatedWorktree
+            lastMaxDepth = maxDepth
+            lastAllowedTools = allowedTools
+            lastDeniedTools = deniedTools
             // 通知一下 progress 回调，模拟一次进度
             progressCallback("[fake] sub-agent running...")
             // 返回时把 caller 传进来的 subSessionIdOverride 透传回去，让

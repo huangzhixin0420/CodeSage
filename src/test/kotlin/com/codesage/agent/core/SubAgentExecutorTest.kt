@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path
+import kotlin.reflect.full.declaredFunctions
+import kotlin.reflect.jvm.isAccessible
 
 /**
  * SubAgentExecutor 单元测试
@@ -93,13 +95,19 @@ class SubAgentExecutorTest {
         assertTrue(result.contains("depth=1"), "Should label the recursion depth")
         // 操作规则（不再用 "No new delegation"，新规则更明确）
         assertTrue(result.contains("Focus") || result.contains("focus"), "Should include focus rule")
-        assertTrue(result.contains("No delegation") || result.contains("delegation"), "Should include no-delegation rule")
+        assertTrue(
+            result.contains("No delegation") || result.contains("delegation"),
+            "Should include no-delegation rule"
+        )
         assertTrue(result.contains("No new tasks"), "Should include no-new-tasks rule")
         // 输出格式
         assertTrue(result.contains("Output Format") || result.contains("Output"), "Should specify output format")
         // 递归限制
         assertTrue(result.contains("Recursion") || result.contains("recursion"), "Should include recursion constraint")
-        assertTrue(result.contains("MAX_RECURSION_DEPTH") || result.contains("max="), "Should include max recursion depth value")
+        assertTrue(
+            result.contains("max="),
+            "Should include max recursion depth value"
+        )
     }
 
     @Test
@@ -254,7 +262,7 @@ class SubAgentExecutorTest {
     // ===== P2 #7: 递归深度限制 =====
 
     @Test
-    fun `spawn at depth equals MAX_RECURSION_DEPTH should refuse to run`() = runBlocking {
+    fun `spawn at depth equals DEFAULT_MAX_RECURSION_DEPTH should refuse to run`() = runBlocking {
         val parent = AgentCore()
         parent.initialize(
             AgentConfig(
@@ -263,7 +271,7 @@ class SubAgentExecutorTest {
             )
         )
         // 在 depth = MAX 处放一个 SubAgentExecutor
-        val executor = SubAgentExecutor(parent, depth = SubAgentExecutor.MAX_RECURSION_DEPTH)
+        val executor = SubAgentExecutor(parent, depth = SubAgentExecutor.DEFAULT_MAX_RECURSION_DEPTH)
         val result = executor.spawn(
             parentSessionId = "test",
             taskDescription = "Should be rejected",
@@ -278,13 +286,34 @@ class SubAgentExecutorTest {
     }
 
     @Test
-    fun `MAX_RECURSION_DEPTH should be 2 to allow parent to spawn one level`() {
+    fun `DEFAULT_MAX_RECURSION_DEPTH should be 2 to allow parent to spawn one level`() {
         // 设计约束：parent (depth=0) → sub (depth=1)，sub 在尝试 spawn 孙子时被拒
         // 即 sub-agent 本身可以存在（它不是被拒，它自己 spawn 才被拒）
-        assertEquals(2, SubAgentExecutor.MAX_RECURSION_DEPTH)
+        assertEquals(2, SubAgentExecutor.DEFAULT_MAX_RECURSION_DEPTH)
     }
 
-    // ===== 已有的小测试（保留向后兼容） =====
+    // ===== 6.6.3: worktree 隔离 =====
+
+    @Test
+    fun `spawn with isolatedWorktree true but no project should return error`() = runBlocking {
+        val parent = AgentCore()
+        val executor = SubAgentExecutor(parent, project = null, depth = 0)
+        val result = executor.spawn(
+            parentSessionId = "test",
+            taskDescription = "Should fail without project",
+            toolset = "dev",
+            isolatedWorktree = true
+        )
+        assertFalse(result.success, "Should fail when isolated_worktree=true but project is null")
+        assertTrue(
+            result.output.contains("requires a project with basePath"),
+            "Error should mention missing project basePath"
+        )
+        assertEquals(0, result.iterationsUsed)
+    }
+
+
+// ===== 已有的小测试（保留向后兼容） =====
 
     @Test
     fun `sub task config should have defaults`() {
@@ -305,13 +334,13 @@ class SubAgentExecutorTest {
 
     @Test
     fun `AgentCore should accept subAgentDepth for recursion limit`() {
-        val custom = AgentCore(subAgentDepth = SubAgentExecutor.MAX_RECURSION_DEPTH)
+        val custom = AgentCore(subAgentDepth = SubAgentExecutor.DEFAULT_MAX_RECURSION_DEPTH)
         assertNotNull(custom)
         // depth 由构造参数传入；subAgentExecutor 内部使用
         // (无法从外部直接断言，但能构造成功即为正向信号)
     }
 
-    // ===== P0 修复测试 =====
+// ===== P0 修复测试 =====
 
     /**
      * 创建一个不会触发真实 LLM 调用的 ModelGateway：
@@ -327,6 +356,7 @@ class SubAgentExecutorTest {
         override fun toVendorRequest(request: ChatRequest): String = "{}"
         override fun fromVendorResponse(response: String): ChatResponse =
             ChatResponse("", "", emptyList(), null)
+
         override fun parseStreamChunk(chunk: String): StreamChunk? = null
         override fun getStreamEndpoint(): String = "http://fake"
         override fun getChatEndpoint(): String = "http://fake"
@@ -471,7 +501,7 @@ class SubAgentExecutorTest {
         assertTrue(
             p1SessionId in restoredSessionIds,
             "parent agent should still restore its own persisted sessions; " +
-                "got: $restoredSessionIds, expected to contain: $p1SessionId"
+                    "got: $restoredSessionIds, expected to contain: $p1SessionId"
         )
     }
 
@@ -512,7 +542,7 @@ class SubAgentExecutorTest {
         assertEquals(
             parentSessionCountBefore, parentSessionCountAfter,
             "SubAgentExecutor.spawn must not write to parent's persistence; " +
-                "before=$parentSessionCountBefore, after=$parentSessionCountAfter"
+                    "before=$parentSessionCountBefore, after=$parentSessionCountAfter"
         )
 
         // 验证 2: 父的 session id 没出现在子 agent 的最终 result 里（防止父 session 泄漏到子 context）
@@ -534,7 +564,7 @@ class SubAgentExecutorTest {
         persistence.saveSessionSync(session, history)
     }
 
-    // ===== P1 修复测试 =====
+// ===== P1 修复测试 =====
 
     /**
      * P1 #1: buildSubAgentPrompt 强化为 "Final-Turn Output Contract"
@@ -546,8 +576,10 @@ class SubAgentExecutorTest {
     fun `buildSubAgentPrompt should enforce final-turn plain-text contract`() {
         val prompt = SubAgentExecutor.buildSubAgentPrompt("t", "dev", 0)
         // Final-Turn Contract 段
-        assertTrue(prompt.contains("Final-Turn Output Contract"),
-            "prompt should have a 'Final-Turn Output Contract' section, got: ${prompt.take(300)}...")
+        assertTrue(
+            prompt.contains("Final-Turn Output Contract"),
+            "prompt should have a 'Final-Turn Output Contract' section, got: ${prompt.take(300)}..."
+        )
         // 强约束词
         assertTrue(prompt.contains("Hard rules for the final turn"))
         assertTrue(prompt.contains("Plain text only"))
@@ -635,7 +667,7 @@ class SubAgentExecutorTest {
         assertEquals("Short summary", summary)
     }
 
-    // ===== P2 #1: extractToolCallArgSummary =====
+// ===== P2 #1: extractToolCallArgSummary =====
 
     /**
      * P2 #1: extractToolCallArgSummary — read_file 抽 path 字段
@@ -700,7 +732,7 @@ class SubAgentExecutorTest {
         assertEquals(args, summary)
     }
 
-    // ===== P2 #2: extractCancelledSummary =====
+// ===== P2 #2: extractCancelledSummary =====
 
     /**
      * P2 #6: extractCancelledSummary — marker 必出在第一行
@@ -773,7 +805,7 @@ class SubAgentExecutorTest {
         assertTrue(summary.contains("(0)"))
     }
 
-    // ===== P2 #3: buildSubAgentPrompt 应包含 Cancellation Semantics 段 =====
+// ===== P2 #3: buildSubAgentPrompt 应包含 Cancellation Semantics 段 =====
 
     /**
      * P2 #10: buildSubAgentPrompt — 包含 "Cancellation Semantics" 段
@@ -796,7 +828,7 @@ class SubAgentExecutorTest {
         )
     }
 
-    // ===== P2 #4: SubAgentResult cancelled 字段默认 false =====
+// ===== P2 #4: SubAgentResult cancelled 字段默认 false =====
 
     /**
      * P2 #11: SubAgentResult.cancelled 默认 false（向后兼容）
@@ -814,7 +846,7 @@ class SubAgentExecutorTest {
         assertTrue(r.completedToolCalls.isEmpty(), "Default completedToolCalls should be empty")
     }
 
-    // ===== P3: 工具集命名（coder / explorer / verifier / webfetcher + alias 兼容） =====
+// ===== P3: 工具集命名（coder / explorer / verifier / webfetcher + alias 兼容） =====
 
     /**
      * P3 #1: 新名 `coder` 保留全部 IDE 工具（默认）
@@ -939,8 +971,10 @@ class SubAgentExecutorTest {
         assertTrue(toolsetDesc.contains("verifier"), "toolset description should mention new name 'verifier'")
         assertTrue(toolsetDesc.contains("webfetcher"), "toolset description should mention new name 'webfetcher'")
         assertTrue(toolsetDesc.contains("dev"), "toolset description should mention old alias 'dev'")
-        assertTrue(toolsetDesc.contains("deprecated") || toolsetDesc.contains("WARN"),
-            "toolset description should warn about old aliases")
+        assertTrue(
+            toolsetDesc.contains("deprecated") || toolsetDesc.contains("WARN"),
+            "toolset description should warn about old aliases"
+        )
     }
 
     /**
@@ -966,19 +1000,230 @@ class SubAgentExecutorTest {
         }
     }
 
-    // ===== 工具方法 =====
+// ===== 6.10.2: 递归深度可配置 =====
+
+    @Test
+    fun `buildSubAgentPrompt should use dynamic maxDepth`() {
+        val prompt = SubAgentExecutor.buildSubAgentPrompt(
+            taskDescription = "t",
+            toolset = "dev",
+            depth = 1,
+            maxDepth = 5
+        )
+        assertTrue(
+            prompt.contains("depth=1 of max=5"),
+            "Prompt should reflect the configured maxDepth. Got: ${prompt.take(300)}"
+        )
+    }
+
+    @Test
+    fun `spawn with maxDepth=0 should return validation error without running`() = runBlocking {
+        val parent = AgentCore()
+        val executor = SubAgentExecutor(parent, depth = 0, maxDepth = 0)
+        val result = executor.spawn(
+            parentSessionId = "test",
+            taskDescription = "Should be rejected by validation",
+            toolset = "dev"
+        )
+        assertFalse(result.success, "maxDepth=0 should fail validation")
+        assertTrue(
+            result.output.contains("Invalid max_depth") || result.output.contains("must be between 1 and 5"),
+            "Error should mention invalid max_depth range, got: ${result.output}"
+        )
+        assertEquals(0, result.iterationsUsed, "Should not consume any iterations")
+    }
+
+    @Test
+    fun `spawn with maxDepth=3 allows depth 2 and refuses depth 3`() = runBlocking {
+        val parent = AgentCore(gateway = createNonStreamingFakeGateway())
+        parent.initialize(
+            AgentConfig(
+                defaultModel = "test-model",
+                systemPrompt = "parent prompt"
+            )
+        )
+
+        // depth=2 with maxDepth=3 should NOT be refused by the depth guard
+        val executorAtDepth2 = SubAgentExecutor(parent, depth = 2, maxDepth = 3)
+        val resultDepth2 = executorAtDepth2.spawn(
+            parentSessionId = "test",
+            taskDescription = "Third layer task",
+            toolset = "dev"
+        )
+        assertFalse(
+            resultDepth2.output.contains("Max sub-agent recursion depth"),
+            "depth=2 with maxDepth=3 should not be refused by depth guard"
+        )
+
+        // depth=3 with maxDepth=3 should be refused (would spawn depth=4)
+        val executorAtDepth3 = SubAgentExecutor(parent, depth = 3, maxDepth = 3)
+        val resultDepth3 = executorAtDepth3.spawn(
+            parentSessionId = "test",
+            taskDescription = "Fourth layer task",
+            toolset = "dev"
+        )
+        assertFalse(resultDepth3.success, "depth=3 with maxDepth=3 should be refused")
+        assertTrue(
+            resultDepth3.output.contains("Max sub-agent recursion depth (3)"),
+            "Failure output should mention configured maxDepth, got: ${resultDepth3.output}"
+        )
+        assertEquals(0, resultDepth3.iterationsUsed, "Refused spawn should consume 0 iterations")
+    }
 
     /**
-     * 通过反射调用 SubAgentExecutor 的 private fun createToolRegistryForToolset，
+     * 创建一个 chatStream 直接返回空流的 Gateway，避免深度测试触发真实网络请求。
+     */
+    private fun createNonStreamingFakeGateway(): ModelGateway = object : ModelGateway() {
+        override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
+        override fun chatStream(request: ChatRequest): kotlinx.coroutines.flow.Flow<StreamChunk> =
+            kotlinx.coroutines.flow.emptyFlow()
+    }
+
+// ===== 6.10.3: 工具 allow/deny 白名单 =====
+
+    @Test
+    fun `allowed_tools should intersect with toolset and keep delegate_task`() {
+        val parent = AgentCore()
+        val executor = SubAgentExecutor(parent)
+        val registry = invokeCreateToolRegistryForToolset(
+            executor,
+            toolset = "coder",
+            allowedTools = listOf("read_file", "edit_file")
+        )
+        val names = registry.getAllTools().map { it.name }.toSet()
+
+        assertTrue(names.contains("read_file"), "allowed_tools should keep read_file")
+        assertTrue(names.contains("edit_file"), "allowed_tools should keep edit_file")
+        assertTrue(names.contains("delegate_task"), "delegate_task should always be retained")
+        assertFalse(names.contains("write_file"), "write_file should be removed by whitelist")
+        assertFalse(names.contains("run_command"), "run_command should be removed by whitelist")
+    }
+
+    @Test
+    fun `allowed_tools without toolset should fallback to coder then whitelist`() {
+        val parent = AgentCore()
+        val executor = SubAgentExecutor(parent)
+        val registry = invokeCreateToolRegistryForToolset(
+            executor,
+            toolset = "unknown-toolset",
+            allowedTools = listOf("read_file")
+        )
+        val names = registry.getAllTools().map { it.name }.toSet()
+
+        assertTrue(names.contains("read_file"), "whitelist should keep read_file")
+        assertTrue(names.contains("delegate_task"), "delegate_task should be retained")
+        assertFalse(names.contains("write_file"), "whitelist should remove write_file")
+    }
+
+    @Test
+    fun `denied_tools should take precedence over allowed_tools`() {
+        val parent = AgentCore()
+        val executor = SubAgentExecutor(parent)
+        val registry = invokeCreateToolRegistryForToolset(
+            executor,
+            toolset = "coder",
+            allowedTools = listOf("read_file", "edit_file"),
+            deniedTools = listOf("edit_file")
+        )
+        val names = registry.getAllTools().map { it.name }.toSet()
+
+        assertTrue(names.contains("read_file"), "read_file should survive deny")
+        assertFalse(names.contains("edit_file"), "edit_file should be denied even though allowed")
+        assertTrue(names.contains("delegate_task"), "delegate_task should survive")
+    }
+
+    @Test
+    fun `denied_tools containing delegate_task should report delegation forbidden error`() {
+        val parent = AgentCore()
+        val executor = SubAgentExecutor(parent)
+        val message = invokeCreateToolRegistryForToolsetExpectFailure(
+            executor,
+            toolset = "coder",
+            deniedTools = listOf("delegate_task")
+        )
+        assertTrue(
+            message.contains("被禁止再委托") || message.contains("delegate_task"),
+            "Error should explain delegate_task is forbidden, got: $message"
+        )
+    }
+
+    @Test
+    fun `allowed_tools with nonexistent names should still keep delegate_task`() {
+        val parent = AgentCore()
+        val executor = SubAgentExecutor(parent)
+        val registry = invokeCreateToolRegistryForToolset(
+            executor,
+            toolset = "coder",
+            allowedTools = listOf("this_tool_does_not_exist")
+        )
+        val names = registry.getAllTools().map { it.name }.toSet()
+        assertTrue(
+            names.contains("delegate_task"),
+            "delegate_task must be retained even when allowed_tools only contains unknown names, got: $names"
+        )
+        assertEquals(
+            setOf("delegate_task"),
+            names,
+            "Only delegate_task (ALWAYS_AVAILABLE) should remain when whitelist has no matching tools"
+        )
+    }
+
+    @Test
+    fun `buildSubAgentPrompt should mention allowed and denied tools when provided`() {
+        val prompt = SubAgentExecutor.buildSubAgentPrompt(
+            taskDescription = "t",
+            toolset = "dev",
+            depth = 0,
+            allowedTools = listOf("read_file", "edit_file"),
+            deniedTools = listOf("delete_file"),
+            availableToolNames = listOf("read_file", "edit_file", "delegate_task")
+        )
+        assertTrue(prompt.contains("Allowed tools (whitelist)"), "Prompt should mention allowed tools")
+        assertTrue(prompt.contains("Denied tools (blacklist)"), "Prompt should mention denied tools")
+        assertTrue(prompt.contains("read_file"), "Prompt should list available/allowed tools")
+        assertTrue(prompt.contains("delete_file"), "Prompt should list denied tools")
+    }
+
+// ===== 工具方法 =====
+
+    /**
+     * 通过 Kotlin 反射调用 SubAgentExecutor 的 private fun createToolRegistryForToolset，
      * 避免为了测试而把方法暴露成 internal。
+     *
+     * 6.10.3: 方法返回类型为 [Result]（inline class），Java 方法名会被 Kotlin 编译器
+     * 混淆，因此改用 `kotlin.reflect.full.declaredFunctions` 按函数名匹配。
      */
     private fun invokeCreateToolRegistryForToolset(
         executor: SubAgentExecutor,
-        toolset: String
+        toolset: String,
+        allowedTools: List<String> = emptyList(),
+        deniedTools: List<String> = emptyList()
     ): ToolRegistry {
-        val method = SubAgentExecutor::class.java.declaredMethods
-            .first { it.name == "createToolRegistryForToolset" && it.parameterCount == 1 }
-        method.isAccessible = true
-        return method.invoke(executor, toolset) as ToolRegistry
+        val func = SubAgentExecutor::class.declaredFunctions
+            .first { it.name == "createToolRegistryForToolset" }
+        func.isAccessible = true
+        val result = func.call(executor, toolset, null, allowedTools, deniedTools) as Result<ToolRegistry>
+        assertTrue(
+            result.isSuccess,
+            "createToolRegistryForToolset should succeed, got: ${result.exceptionOrNull()?.message}"
+        )
+        return result.getOrThrow()
+    }
+
+    /**
+     * 通过 Kotlin 反射调用 createToolRegistryForToolset 并断言失败（用于白名单/黑名单错误路径）。
+     */
+    private fun invokeCreateToolRegistryForToolsetExpectFailure(
+        executor: SubAgentExecutor,
+        toolset: String,
+        allowedTools: List<String> = emptyList(),
+        deniedTools: List<String> = emptyList()
+    ): String {
+        val func = SubAgentExecutor::class.declaredFunctions
+            .first { it.name == "createToolRegistryForToolset" }
+        func.isAccessible = true
+        val result = func.call(executor, toolset, null, allowedTools, deniedTools) as Result<ToolRegistry>
+        assertTrue(result.isFailure, "createToolRegistryForToolset should fail")
+        return result.exceptionOrNull()?.message ?: ""
     }
 }

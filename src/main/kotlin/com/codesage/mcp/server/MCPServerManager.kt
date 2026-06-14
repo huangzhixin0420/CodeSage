@@ -23,6 +23,11 @@ open class MCPServerManager(
 
     // T2.2 修复：保存 server config 以便健康监控重连
     private val serverConfigs = ConcurrentHashMap<String, MCPServerConfig>()
+
+    // 6.11.1：保存每个 server 返回的完整工具列表，用于动态发现。
+    // SkillRegistry 中只注册了按 maxTools/allow/deny 过滤后的子集。
+    private val discoveredTools = ConcurrentHashMap<String, List<McpTool>>()
+
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     /**
@@ -41,9 +46,10 @@ open class MCPServerManager(
 
             // 同步工具列表到技能注册中心
             val tools = client.listTools()
+            discoveredTools[config.id] = tools
             syncToolsToRegistry(config.id, skillRegistry, tools)
 
-            logger.info("MCP server added: ${config.name}, tools: ${tools.size}")
+            logger.info("MCP server added: ${config.name}, tools: ${tools.size}, exposed: ${skillRegistry.count()}")
             MCPServerStatus.CONNECTED
         } else {
             MCPServerStatus.ERROR
@@ -56,6 +62,8 @@ open class MCPServerManager(
     suspend fun removeServer(serverId: String) {
         servers[serverId]?.disconnect()
         servers.remove(serverId)
+        serverConfigs.remove(serverId)
+        discoveredTools.remove(serverId)
 
         // 移除该服务器注册的所有技能
         skillRegistry.getAll()
@@ -93,10 +101,49 @@ open class MCPServerManager(
     }
 
     /**
-     * 获取服务器工具列表
+     * 获取服务器工具列表（实时从连接获取）
      */
     open suspend fun listTools(serverId: String): List<McpTool> {
         return servers[serverId]?.listTools() ?: emptyList()
+    }
+
+    /**
+     * 6.11.1：获取某个服务器已发现的所有工具（含未暴露给 LLM 的）。
+     */
+    fun listAllDiscoveredTools(serverId: String): List<McpTool> {
+        return discoveredTools[serverId] ?: emptyList()
+    }
+
+    /**
+     * 6.11.1：跨所有已连接服务器搜索可用工具。
+     *
+     * @param serverId 为空时搜索所有服务器
+     * @param query 按工具名或描述匹配（忽略大小写）
+     * @return 工具信息列表，包含是否已向 LLM 暴露
+     */
+    fun searchAvailableTools(serverId: String?, query: String): List<McpToolAvailability> {
+        val lowerQuery = query.lowercase()
+        val sourceServers = if (serverId != null) {
+            mapOf(serverId to (discoveredTools[serverId] ?: emptyList()))
+        } else {
+            discoveredTools.toMap()
+        }
+
+        return sourceServers.flatMap { (srvId, tools) ->
+            tools.filter { tool ->
+                lowerQuery.isBlank() ||
+                        tool.name.lowercase().contains(lowerQuery) ||
+                        tool.description.lowercase().contains(lowerQuery)
+            }.map { tool ->
+                val skillId = "mcp_${srvId}_${tool.name}"
+                McpToolAvailability(
+                    serverId = srvId,
+                    name = tool.name,
+                    description = tool.description,
+                    isExposed = skillRegistry.contains(skillId)
+                )
+            }
+        }
     }
 
     /**
@@ -132,7 +179,18 @@ open class MCPServerManager(
         registry: SkillRegistry,
         tools: List<McpTool>
     ) {
-        tools.forEach { tool ->
+        val config = serverConfigs[serverId]
+        val filteredTools = if (config != null) {
+            McpToolFilter.apply(tools, config)
+        } else {
+            // 无配置时按安全默认值处理：最多 40 个，无额外权限规则
+            McpToolFilter.apply(
+                tools,
+                MCPServerConfig(id = serverId, name = serverId, transportType = TransportType.StdIO("", emptyList()))
+            )
+        }
+
+        filteredTools.forEach { tool ->
             val skill = MCPDelegatingSkill(
                 id = "mcp_${serverId}_${tool.name}",
                 toolName = tool.name,
@@ -142,6 +200,30 @@ open class MCPServerManager(
             )
             registry.register(skill)
         }
-        logger.info("Synced ${tools.size} MCP tools from $serverId to registry")
+        logger.info("Synced ${filteredTools.size}/${tools.size} MCP tools from $serverId to registry")
     }
+
+    /**
+     * 6.11.1：测试/重连用重载，可显式传入配置完成过滤。
+     */
+    fun syncToolsToRegistry(
+        serverId: String,
+        registry: SkillRegistry,
+        tools: List<McpTool>,
+        config: MCPServerConfig
+    ) {
+        serverConfigs[serverId] = config
+        discoveredTools[serverId] = tools
+        syncToolsToRegistry(serverId, registry, tools)
+    }
+
+    /**
+     * 动态发现结果
+     */
+    data class McpToolAvailability(
+        val serverId: String,
+        val name: String,
+        val description: String,
+        val isExposed: Boolean
+    )
 }

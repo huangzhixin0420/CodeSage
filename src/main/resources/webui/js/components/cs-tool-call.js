@@ -367,6 +367,9 @@ export class ToolCall {
     this.collapsed = false;
     this.timerInterval = null;
     this.stream = "";
+    this.stdout = "";
+    this.stderr = "";
+    this.exitCode = null;
     this.stepIds = Array.isArray(opts.stepIds) ? [...opts.stepIds] : [];
 
     this.el = document.createElement("span");
@@ -501,11 +504,31 @@ export class ToolCall {
 
   _renderBody() {
     const argsHtml = renderArgsTable(this.arguments);
-    const resultHtml = this.result
-      ? renderResult(this.result)
-      : this.stream
-        ? renderResult({ kind: "text", content: this.stream })
-        : "";
+    let liveHtml = "";
+    if (this.stdout || this.stderr) {
+      const argCmd =
+        (this.arguments &&
+          (this.arguments.command ||
+            this.arguments.cmd ||
+            this.arguments.shell_command)) ||
+        "";
+      liveHtml = renderResult({
+        kind: "command",
+        command: argCmd,
+        stdout: this.stdout,
+        stderr: this.stderr,
+        exitCode: this.exitCode ?? 0,
+        summary:
+          this.status === "running"
+            ? "流式输出中…"
+            : this.exitCode !== 0
+              ? `exit ${this.exitCode}`
+              : "exit 0",
+      });
+    } else if (this.stream) {
+      liveHtml = renderResult({ kind: "text", content: this.stream });
+    }
+    const resultHtml = this.result ? renderResult(this.result) : liveHtml;
     if (!argsHtml && !resultHtml) {
       return `<div class="tool-section" style="color:var(--fg-tertiary);font-size:var(--text-xs);">无参数 / 等待结果…</div>`;
     }
@@ -517,6 +540,17 @@ export class ToolCall {
     if (this.status !== "running") {
       this._renderBodyToDom();
     }
+  }
+
+  appendCommandOutput(msg) {
+    if (msg.stdout) this.stdout += msg.stdout;
+    if (msg.stderr) this.stderr += msg.stderr;
+    if (msg.exitCode !== undefined) this.exitCode = msg.exitCode;
+    if (this.status === "running") {
+      // running 状态是 inline badge，不实时重绘 body；完成后一次性渲染
+      return;
+    }
+    this._renderBodyToDom();
   }
 
   _renderBodyToDom() {
@@ -532,7 +566,28 @@ export class ToolCall {
     this.success = !!success;
     this.status = success ? "completed" : "failed";
     this.elapsedMs = Date.now() - this.startTime;
-    this.result = normalizeResult(result, this.name, this.arguments);
+    // 若已经有流式累积的 stdout/stderr，优先用其构造命令结果；否则回退到 result
+    if (this.stdout || this.stderr) {
+      const argCmd =
+        (this.arguments &&
+          (this.arguments.command ||
+            this.arguments.cmd ||
+            this.arguments.shell_command)) ||
+        "";
+      const normalized = normalizeResult(result, this.name, this.arguments);
+      this.result = {
+        kind: "command",
+        command: argCmd,
+        stdout: this.stdout,
+        stderr: this.stderr,
+        exitCode:
+          this.exitCode ??
+          (normalized && normalized.exit_code) ??
+          (success ? 0 : 1),
+      };
+    } else {
+      this.result = normalizeResult(result, this.name, this.arguments);
+    }
     this._stopTimer();
     this._render();
     this.collapse();

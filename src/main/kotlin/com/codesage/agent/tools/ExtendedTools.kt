@@ -12,6 +12,7 @@ import kotlinx.serialization.json.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import java.util.Base64
@@ -31,6 +32,9 @@ class ExtendedTools(
     companion object {
         // Phase 3: 与 IDETools 对齐的单条命令输出上限
         const val MAX_COMMAND_OUTPUT_CHARS = 1_000_000
+
+        // 6.7.1：HTTP 响应默认内存上限 1MB
+        private const val DEFAULT_MAX_RESPONSE_BYTES = 1_048_576L
     }
 
     /**
@@ -83,6 +87,7 @@ class ExtendedTools(
         val workingDir = resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
         val cached = args["cached"]?.jsonPrimitive?.booleanOrNull ?: false
         val file = args["file"]?.jsonPrimitive?.content
+        val includeRaw = args["include_raw"]?.jsonPrimitive?.booleanOrNull ?: false
 
         val cmd = mutableListOf("git", "diff")
         if (cached) cmd.add("--cached")
@@ -92,14 +97,12 @@ class ExtendedTools(
             if (exitCode != 0 && stderr.isNotBlank()) {
                 ToolResult.Error("git diff failed: $stderr")
             } else {
-                ToolResult.Success(
-                    JsonObject(
-                        mapOf(
-                            "diff" to JsonPrimitive(stdout),
-                            "has_changes" to JsonPrimitive(stdout.isNotBlank())
-                        )
-                    )
-                )
+                val structured = GitDiffParser.parse(stdout)
+                val resultMap = structured.toJson().toMutableMap()
+                if (includeRaw) {
+                    resultMap["raw_diff"] = JsonPrimitive(stdout)
+                }
+                ToolResult.Success(JsonObject(resultMap))
             }
         }
     }
@@ -330,6 +333,10 @@ class ExtendedTools(
         val body = args["body"]?.jsonPrimitive?.content
         val timeout = args["timeout"]?.jsonPrimitive?.intOrNull?.coerceIn(1000, 60000) ?: 30000
         val headers = args["headers"]?.jsonObject
+        // 6.7.1：响应内存上限，默认 1MB；传 0 表示不限制（谨慎使用）
+        val maxSizeBytes = args["max_size_bytes"]?.jsonPrimitive?.longOrNull
+            ?.coerceIn(0L, 100L * 1024 * 1024) ?: DEFAULT_MAX_RESPONSE_BYTES
+        val outputFile = args["output_file"]?.jsonPrimitive?.content
 
         // C5 修复：使用 SsrfGuard 做 DNS 解析 + 段位检查，错误消息携带具体原因
         // ssrfProtectionEnabled 关闭时跳过（保持原有测试可绕过本地地址拦截的能力）
@@ -379,14 +386,36 @@ class ExtendedTools(
 
         try {
             client.newCall(requestBuilder.build()).execute().use { response ->
-                val responseBody = response.body?.string() ?: ""
                 val responseHeaders = JsonObject(response.headers.toMultimap().map { (k, v) ->
                     k to JsonPrimitive(v.joinToString(", "))
                 }.toMap())
+                val contentLength = response.header("Content-Length")?.toLongOrNull()
 
-                // 自动 JSON 格式化
-                val formattedBody = if (responseBody.isNotBlank() && response.header("Content-Type")
-                        ?.contains("application/json") == true
+                // 6.7.1：流式下载到文件，绕过内存限制
+                if (outputFile != null) {
+                    val bytesWritten = response.body?.let { saveBodyToFile(it, outputFile) } ?: 0L
+                    return@withContext ToolResult.Success(
+                        JsonObject(
+                            mapOf(
+                                "status_code" to JsonPrimitive(response.code),
+                                "status_text" to JsonPrimitive(response.message),
+                                "headers" to responseHeaders,
+                                "saved_to" to JsonPrimitive(outputFile),
+                                "size" to JsonPrimitive(bytesWritten),
+                                "is_successful" to JsonPrimitive(response.isSuccessful)
+                            )
+                        )
+                    )
+                }
+
+                // 6.7.1：限制内存中读取的最大字节数
+                val (responseBody, truncated, totalBytes) = response.body?.let {
+                    readBodyLimited(it, maxSizeBytes)
+                } ?: ReadBodyResult("", false, 0L)
+
+                // 自动 JSON 格式化（仅在未截断且为 JSON 时）
+                val formattedBody = if (!truncated && responseBody.isNotBlank() &&
+                    response.header("Content-Type")?.contains("application/json") == true
                 ) {
                     try {
                         json.encodeToString(JsonElement.serializer(), json.parseToJsonElement(responseBody))
@@ -397,17 +426,24 @@ class ExtendedTools(
                     responseBody
                 }
 
-                ToolResult.Success(
-                    JsonObject(
-                        mapOf(
-                            "status_code" to JsonPrimitive(response.code),
-                            "status_text" to JsonPrimitive(response.message),
-                            "headers" to responseHeaders,
-                            "body" to JsonPrimitive(formattedBody),
-                            "is_successful" to JsonPrimitive(response.isSuccessful)
-                        )
-                    )
+                val fields = mutableMapOf<String, JsonElement>(
+                    "status_code" to JsonPrimitive(response.code),
+                    "status_text" to JsonPrimitive(response.message),
+                    "headers" to responseHeaders,
+                    "body" to JsonPrimitive(formattedBody),
+                    "is_successful" to JsonPrimitive(response.isSuccessful),
+                    "body_size" to JsonPrimitive(totalBytes),
+                    "truncated" to JsonPrimitive(truncated),
+                    "max_size_bytes" to JsonPrimitive(maxSizeBytes)
                 )
+                if (truncated) {
+                    fields["original_length"] = JsonPrimitive(contentLength ?: totalBytes)
+                    fields["note"] = JsonPrimitive(
+                        "Response exceeded max_size_bytes; use output_file to download full content."
+                    )
+                }
+
+                ToolResult.Success(JsonObject(fields))
             }
         } catch (e: java.net.SocketTimeoutException) {
             // connect / read / write 三种 timeout 都会到这里
@@ -451,6 +487,57 @@ class ExtendedTools(
     private fun isBlockedUrl(url: String): Boolean {
         if (!ssrfProtectionEnabled) return false
         return !SsrfGuard.isSafe(url)
+    }
+
+    // 6.7.1：响应体读取结果
+    private data class ReadBodyResult(
+        val text: String,
+        val truncated: Boolean,
+        val totalBytes: Long
+    )
+
+    /**
+     * 6.7.1：把响应体完整流式写入指定文件，避免大响应进入内存。
+     */
+    private fun saveBodyToFile(body: ResponseBody, path: String): Long {
+        return body.byteStream().use { input ->
+            File(path).outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+    }
+
+    /**
+     * 6.7.1：流式读取响应体，最多只保留 maxBytes 字节到内存。
+     * @return text（已读取部分）、是否被截断、实际总字节数（含被丢弃部分）
+     */
+    private fun readBodyLimited(body: ResponseBody, maxBytes: Long): ReadBodyResult {
+        if (maxBytes == 0L) {
+            val bytes = body.bytes()
+            return ReadBodyResult(String(bytes, Charsets.UTF_8), false, bytes.size.toLong())
+        }
+        body.byteStream().use { input ->
+            val out = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            var total = 0L
+            var truncated = false
+            while (true) {
+                val read = input.read(buffer)
+                if (read == -1) break
+                if (total + read > maxBytes) {
+                    truncated = true
+                    val remaining = (maxBytes - total).toInt().coerceAtLeast(0)
+                    if (remaining > 0) out.write(buffer, 0, remaining)
+                    total += read
+                    break
+                }
+                out.write(buffer, 0, read)
+                total += read
+            }
+            val bytes = out.toByteArray()
+            val text = String(bytes, Charsets.UTF_8)
+            return ReadBodyResult(text, truncated, total)
+        }
     }
 
     // === Data Processing Tools ===

@@ -315,4 +315,121 @@ class CodeInsightExecutorTest {
         assertTrue(result is com.codesage.agent.tools.ToolResult.Error)
         assertTrue((result as com.codesage.agent.tools.ToolResult.Error).message.contains("No active project"))
     }
+
+    @Test
+    fun `analyze_symbol should include callers and callees arrays for methods`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+        symbolIndex.updateFileSymbolsForTest(
+            "/test/OrderService.kt", listOf(
+                PSIAnalyzer.SymbolInfo(
+                    name = "processOrder",
+                    type = PSIAnalyzer.SymbolType.METHOD,
+                    qualifiedName = null,
+                    filePath = "/test/OrderService.kt",
+                    lineNumber = 10,
+                    docComment = null,
+                    modifiers = listOf("public"),
+                    parameters = emptyList(),
+                    returnType = "Unit"
+                )
+            )
+        )
+
+        val executor = CodeInsightExecutor(project, symbolIndex, null, null)
+        val result = executor.analyzeSymbol(
+            kotlinx.serialization.json.JsonObject(
+                mapOf("symbol_name" to kotlinx.serialization.json.JsonPrimitive("processOrder"))
+            )
+        )
+
+        assertTrue(result is com.codesage.agent.tools.ToolResult.Success, "Expected Success but got $result")
+        val data = (result as com.codesage.agent.tools.ToolResult.Success).data as kotlinx.serialization.json.JsonObject
+        val matches = data["matches"]?.jsonArray
+        assertNotNull(matches)
+        assertEquals(1, matches!!.size)
+        val first = matches[0].jsonObject
+        assertTrue(first.containsKey("callers"), "Expected callers array")
+        assertTrue(first.containsKey("callees"), "Expected callees array")
+        assertTrue(first["callers"] is kotlinx.serialization.json.JsonArray)
+        assertTrue(first["callees"] is kotlinx.serialization.json.JsonArray)
+    }
+
+    @Test
+    fun `CallGraphExtractor should extract simple callee names from Kotlin and Java call texts`() {
+        assertEquals("map", CallGraphExtractor.extractCallName("list.map"))
+        assertEquals("map", CallGraphExtractor.extractCallName("list.map<String>"))
+        assertEquals("println", CallGraphExtractor.extractCallName("println"))
+        assertEquals("doWork", CallGraphExtractor.extractCallName("service.doWork"))
+        assertEquals("doWork", CallGraphExtractor.extractCallName("this.service.doWork"))
+        assertNull(CallGraphExtractor.extractCallName(""))
+        assertNull(CallGraphExtractor.extractCallName("1invalid"))
+        assertNull(CallGraphExtractor.extractCallName("obj.1invalid"))
+        assertTrue("if" in CallGraphExtractor.IGNORED_CALLEE_NAMES)
+        assertTrue("println" in CallGraphExtractor.IGNORED_CALLEE_NAMES)
+    }
+
+    @Test
+    fun `find_callers should return structured callers result`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+        symbolIndex.updateFileSymbolsForTest(
+            "/test/Service.kt", listOf(
+                PSIAnalyzer.SymbolInfo(
+                    name = "process",
+                    type = PSIAnalyzer.SymbolType.METHOD,
+                    qualifiedName = null,
+                    filePath = "/test/Service.kt",
+                    lineNumber = 5,
+                    docComment = null,
+                    modifiers = emptyList()
+                )
+            )
+        )
+
+        val executor = CodeInsightExecutor(project, symbolIndex, null, null)
+        val result = executor.findCallers(
+            kotlinx.serialization.json.JsonObject(
+                mapOf("symbol_name" to kotlinx.serialization.json.JsonPrimitive("process"))
+            )
+        )
+
+        assertTrue(result is com.codesage.agent.tools.ToolResult.Success, "Expected Success but got $result")
+        val data = (result as com.codesage.agent.tools.ToolResult.Success).data as kotlinx.serialization.json.JsonObject
+        assertEquals("process", data["symbol_name"]?.jsonPrimitive?.content)
+        assertTrue(data.containsKey("callers"))
+        assertTrue(data.containsKey("total"))
+    }
+
+    @Test
+    fun `find_callees should return structured callees result`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+        symbolIndex.updateFileSymbolsForTest(
+            "/test/Service.kt", listOf(
+                PSIAnalyzer.SymbolInfo(
+                    name = "process",
+                    type = PSIAnalyzer.SymbolType.METHOD,
+                    qualifiedName = null,
+                    filePath = "/test/Service.kt",
+                    lineNumber = 5,
+                    docComment = null,
+                    modifiers = emptyList()
+                )
+            )
+        )
+
+        val executor = CodeInsightExecutor(project, symbolIndex, null, null)
+        val result = executor.findCallees(
+            kotlinx.serialization.json.JsonObject(
+                mapOf("symbol_name" to kotlinx.serialization.json.JsonPrimitive("process"))
+            )
+        )
+
+        assertTrue(result is com.codesage.agent.tools.ToolResult.Success, "Expected Success but got $result")
+        val data = (result as com.codesage.agent.tools.ToolResult.Success).data as kotlinx.serialization.json.JsonObject
+        assertEquals("process", data["symbol_name"]?.jsonPrimitive?.content)
+        assertTrue(data.containsKey("callees"))
+        assertTrue(data.containsKey("total"))
+    }
 }

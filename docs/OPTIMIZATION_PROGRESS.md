@@ -4,6 +4,71 @@
 
 ---
 
+## Phase 5: P1 `delegate_task` 子 Agent 递归深度与工具白名单 — ✅ 已完成
+
+**完成时间**: 2026-06-14
+
+### 已交付组件
+
+| 文件 | 说明 |
+|------|------|
+| `src/main/kotlin/com/codesage/agent/core/SubAgentExecutor.kt` | 新增 `maxDepth` 实例属性；`spawn()` 支持 `max_depth` / `allowed_tools` / `denied_tools`；`createToolRegistryForToolset()` 按 allow/deny 过滤并返回 `Result<ToolRegistry>`；prompt 动态注入深度、白名单、黑名单、实际可用工具名 |
+| `src/main/kotlin/com/codesage/agent/core/EnhancedAgentLoop.kt` | `executeDelegateTask()` 解析并校验 `max_depth`（1-5）、`allowed_tools`、`denied_tools`；透传给 `SubAgentExecutor.spawn()`；越界直接返回 JSON 错误 |
+| `src/main/kotlin/com/codesage/agent/tools/ToolRegistry.kt` | `delegateTaskTool()` schema 新增 `max_depth` / `allowed_tools` / `denied_tools` 及描述 |
+| `src/test/kotlin/com/codesage/agent/core/SubAgentExecutorTest.kt` | 新增 6.10.2/6.10.3 单元测试：动态深度、maxDepth=0 校验、白名单过滤、黑名单优先、禁用 delegate_task 错误、非存在工具保留 delegate_task、prompt 注入限制说明 |
+| `src/test/kotlin/com/codesage/agent/core/EnhancedAgentLoopDelegateTaskTest.kt` | 新增测试：`max_depth` 透传、越界不 spawn、`allowed_tools`/`denied_tools` 透传 |
+
+### 关键设计决策
+
+1. **默认行为不变**：未传新参数时 `maxDepth` 默认 2，`allowedTools`/`deniedTools` 为空，行为与旧实现完全一致。
+2. **深度范围校验**：`max_depth` 在 `[1, 5]` 范围内才允许执行，越界在 `EnhancedAgentLoop` 层直接返回结构化 JSON 错误，不创建子 Agent。
+3. **最小权限 + 汇报能力平衡**：`allowed_tools` 白名单会与 `toolset` 取交集，但始终保留 `delegate_task`（除非显式加入 `denied_tools`），保证子 Agent 既能汇报也能继续委托；显式拒绝 `delegate_task` 时返回中文错误“子 Agent 被禁止再委托”。
+4. **黑名单优先于白名单**：过滤顺序为 `toolset → allowed_tools 交集 → denied_tools 移除`。
+5. **Prompt 自我约束**：子 Agent system prompt 的 Recursion 段显示实际 `maxDepth`；当存在 allow/deny 限制时，prompt 列出 Available/Allowed/Denied tools，帮助模型自我约束。
+
+### 测试状态
+
+```
+1243 tests completed, 0 failed ✅
+./gradlew check ✅
+```
+
+---
+
+## Phase 4: P0 多模态文档读取（read_document）— ✅ 已完成
+
+**完成时间**: 2026-06-14
+
+### 已交付组件
+
+| 文件 | 说明 |
+|------|------|
+| `src/main/kotlin/com/codesage/agent/tools/handlers/ReadDocumentTool.kt` | 新增 `read_document` UnifiedTool：支持图片 base64、PDF 文本提取、Jupyter Notebook 解析 |
+| `src/main/kotlin/com/codesage/shared/serialization/JsonArgDecoders.kt` | 新增 `intArgOrNull` 可空整型参数解码器 |
+| `src/main/kotlin/com/codesage/agent/tools/ToolRegistry.kt` | 注册 `ReadDocumentTool` |
+| `src/main/kotlin/com/codesage/tools/guardrails/ToolGuardrails.kt` | 将 `read_document` 加入已知安全工具白名单 |
+| `src/test/kotlin/com/codesage/agent/tools/ReadDocumentToolTest.kt` | 7 个单元测试：图片、PDF 分页、ipynb、错误路径 |
+| `build.gradle.kts` | 引入 `org.apache.pdfbox:pdfbox:3.0.2` 并加入打包清单 |
+
+### 关键设计决策
+
+1. **独立工具语义**：不扩展 `read_file`，新增 `read_document` 专门处理多模态/复杂文档，避免污染纯文本读取语义。
+2. **格式支持**：
+   - 图片：JDK `ImageIO` 解码，返回 `data:image/*;base64,...` 数据 URL、`mime_type`、宽高。
+   - PDF：Apache PDFBox 3.0.2，支持 `page` 单页（1-based）与 `max_pages` 批量返回，每页文本可截断。
+   - `.ipynb`：`kotlinx.serialization.json` 解析，提取 `cells`（cell_type / source / execution_count / outputs）。
+3. ** headless 兼容**：无 IntelliJ `Application` 时绕过 VFS，直接走 `java.io.File`，便于单元测试与无 IDE 环境。
+4. **安全与预算**：默认 20MB 文件大小上限、PDF 每页 10k 字符上限、`max_pages` 默认 10；工具为只读，已加入 Guardrails 安全白名单。
+
+### 测试状态
+
+```
+8 tests completed, 0 failed ✅
+./gradlew check ✅
+```
+
+---
+
 ## Phase 1: Agent Loop 健壮化 — ✅ 已完成
 
 **完成时间**: 2026-05-24
@@ -369,6 +434,39 @@
 
 ---
 
+## 优化11: git_worktree 与子 Agent 隔离（6.6.3） — ✅ 已完成
+
+**完成时间**: 2026-06-13
+
+### 已交付组件
+
+| 文件 | 说明 |
+|------|------|
+| `agent/core/ProjectProxy.kt` | 轻量级 Project 代理：仅覆盖 `getBasePath`，其余方法委托给原 Project，避免动态代理兼容性问题 |
+| `agent/core/WorktreeIsolation.kt` | worktree 生命周期管理：创建分支/worktree、基于 base commit 收集 diff、清理 worktree 与分支 |
+| `agent/core/SubAgentExecutor.kt` | `spawn()` / `spawnParallel()` / `SubTaskConfig` 新增 `isolated_worktree`；worktree 创建、子 Agent 在 worktree 中运行、diff 收集、finally 清理 |
+| `agent/core/EnhancedAgentLoop.kt` | `delegate_task` 解析 `isolated_worktree` 并透传给 `SubAgentExecutor` |
+| `agent/core/SubAgentResultFormatter.kt` | 结构化结果新增 `worktree_diff` / `worktree_changes` |
+| `agent/tools/ToolRegistry.kt` | `delegate_task` schema 新增 `isolated_worktree` 参数 |
+| `test/agent/core/WorktreeIsolationTest.kt` | worktree 创建/diff/清理/分支保留策略测试 |
+| `test/agent/core/SubAgentResultFormatterTest.kt` | worktree 字段 JSON 输出测试 |
+| `test/agent/core/EnhancedAgentLoopDelegateTaskTest.kt` | `isolated_worktree` 参数透传测试 |
+| `test/agent/core/SubAgentExecutorTest.kt` | `isolated_worktree=true` 但无 project 时错误处理测试 |
+
+### 关键设计决策
+1. **Project 代理而非替换**：用 Kotlin 接口委托实现 `ProjectProxy`，只覆盖 `getBasePath()`，子 Agent 的文件/命令工具无需修改即可在 worktree 中运行。
+2. **worktree 外置**：worktree 创建在 `<repoRoot>/../.codesage-worktrees/<repoName>/sub-<sessionId>`，避免嵌套在主 worktree 内部导致 git 限制与未跟踪文件污染。
+3. **base commit 快照**：创建 worktree 时记录 HEAD commit，diff 以此为基准，准确捕获子 Agent 在 worktree 中的所有变更。
+4. **结构化 + 原始 diff 双输出**：父 Agent 可直接消费 `worktree_changes` 中的文件/hunk/行级结构，也可查看 `worktree_diff` 原始文本。
+5. **默认自动清理**：子 Agent 完成后在 `finally` 中移除 worktree 并删除临时分支，避免磁盘泄漏。
+
+### 测试状态
+```
+./gradlew check 通过 ✅
+```
+
+---
+
 ## 总结
 
 | 阶段 | 目标 | 核心交付 |
@@ -387,8 +485,9 @@
 | **优化8** | 对话持久化 | ConversationPersistence + Exporter + SessionRestore |
 | **优化9** | 性能优化 | ResponseCache + ConcurrentLimiter + ConnectionWarmup |
 | **优化10** | 可观测性 | StructuredLogger + MetricsCollector + ExecutionTracer |
+| **优化11** | Worktree 隔离 | ProjectProxy + WorktreeIsolation + delegate_task 集成 |
 
-**总测试数：174，全部通过。**
+**总测试数：全部通过（`./gradlew check`）。**
 
 ---
 

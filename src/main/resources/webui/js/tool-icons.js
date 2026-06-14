@@ -20,6 +20,7 @@ export const TOOL_ICON_MAP = [
       "write_file",
       "apply_diff",
       "apply_patch",
+      "multi_edit",
       "create_file",
       "edit",
       "write",

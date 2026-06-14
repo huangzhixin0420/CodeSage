@@ -60,6 +60,7 @@ window.addEventListener("unhandledrejection", (e) => {
 //   thinking_start / thinking_update / thinking_complete
 //   model_reasoning_start / model_reasoning_delta / model_reasoning_complete
 //   tool_call_start / tool_call_delta / tool_call_complete / tool_call_error
+//   command_output_delta
 //   plan_generated / plan_approved / plan_rejected / plan_modified
 //   context_compressed / session_migrated / mode_suggestion
 //   error / done
@@ -114,6 +115,9 @@ function handleBridgeMessage(msg) {
         break;
       case "tool_call_delta":
         chat._onToolCallDelta(turnId, msg.toolId, msg.delta);
+        break;
+      case "command_output_delta":
+        chat._onCommandOutputDelta(turnId, msg);
         break;
       case "tool_call_complete":
         chat._onToolCallComplete(turnId, msg.toolId, msg.success, msg.result);

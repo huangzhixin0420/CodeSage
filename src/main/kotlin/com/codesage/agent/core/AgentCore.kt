@@ -121,6 +121,11 @@ open class AgentCore(
      */
     toolRegistryOverride: ToolRegistry? = null,
     /**
+     * 可选的 MCP 服务器管理器注入。
+     * 用于注册 `mcp_tool_search` 动态发现工具；为 null 时使用默认空管理器。
+     */
+    mcpServerManagerOverride: MCPServerManager? = null,
+    /**
      * 子 Agent 递归深度。
      * 0 = 顶层 Agent；>0 表示这是第 N 层子 Agent。
      * 用于防止 [delegate_task] 无限递归。
@@ -189,7 +194,8 @@ open class AgentCore(
     // 工具系统
     // 注意：override 优先于 createDefault()，供子 Agent 按 toolset 过滤使用。
     // initialize() 仍会向其注册 memory tools / skills / 插件贡献的 tools。
-    private val toolRegistry: ToolRegistry = toolRegistryOverride ?: ToolRegistry.createDefault(project)
+    private val toolRegistry: ToolRegistry = toolRegistryOverride
+        ?: ToolRegistry.createDefault(project, mcpServerManager = mcpServerManagerOverride)
     private val guardrails: ToolGuardrails? = project?.let {
         ToolGuardrails(
             projectRoot = it.basePath,
@@ -229,7 +235,7 @@ open class AgentCore(
     private val promptAssembler: PromptAssembler = PromptAssembler(toolRegistry = toolRegistry)
 
     // MCP 生态
-    private val mcpServerManager: MCPServerManager = MCPServerManager()
+    private val mcpServerManager: MCPServerManager = mcpServerManagerOverride ?: MCPServerManager()
 
     // 可观测性
     private val structuredLogger: StructuredLogger = StructuredLogger()
@@ -957,6 +963,7 @@ open class AgentCore(
                 is AgentStreamEvent.TextDelta -> result.append(event.delta)
                 is AgentStreamEvent.ToolCallStart -> result.appendLine("[调用工具: ${event.toolCall.name}]")
                 is AgentStreamEvent.ToolCallDelta -> result.appendLine("[工具进度: ${event.toolName}] ${event.delta}")
+                is AgentStreamEvent.CommandOutputStream -> result.appendLine("[命令输出: stdout=${event.stdout.length} stderr=${event.stderr.length} done=${event.done}]")
                 is AgentStreamEvent.ToolCallResult -> result.appendLine("[工具结果: ${event.toolName} ${if (event.success) "成功" else "失败"}]")
                 is AgentStreamEvent.ToolCallError -> result.appendLine("[工具错误: ${event.toolCallId}] ${event.error}")
                 is AgentStreamEvent.ToolConfirmationNeeded -> result.appendLine("[需要确认: ${event.toolName} - ${event.reason}]")

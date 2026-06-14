@@ -30,7 +30,7 @@ class ToolGuardrails(
      */
     private val KNOWN_SAFE_TOOLS = setOf(
         // 文件系统（只读）
-        "read_file", "read_multiple_files", "list_directory",
+        "read_file", "read_multiple_files", "read_document", "list_directory",
         "file_exists", "get_file_info", "get_project_structure",
         // 搜索 / 分析
         "search_code", "grep_code", "find_file",
@@ -44,10 +44,13 @@ class ToolGuardrails(
         "hash_md5", "hash_sha256",
         // 知识库
         "memory_search", "memory_get", "skill_list",
+        // MCP 动态发现（只读查询，不调用外部工具）
+        "mcp_tool_search",
         // CodeInsight(只读 AST 分析,2026-06 修复:这些工具是 agent 默认就会调用的项目洞察
         // 入口,被错放进 require-confirmation 分支会让 LLM 第一次想用就 User declined。
         // 全部只读、不写文件、不执行 shell、不访问网络,放行安全)
-        "analyze_symbol", "find_usages", "get_inheritance_chain",
+        "analyze_symbol", "find_usages", "find_callers", "find_callees",
+        "get_inheritance_chain",
         "get_file_summary", "get_project_stats"
         // 注:semantic_search 已在上面 搜索 / 分析 一组里
     )

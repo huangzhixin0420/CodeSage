@@ -6,6 +6,8 @@ import com.codesage.model.dto.ToolParameters
 import com.codesage.model.dto.ToolProperty
 import com.codesage.shared.utils.Logger
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.PreparedStatement
@@ -88,6 +90,8 @@ class BuiltInMemoryProvider : MemoryProvider {
         }
 
         connection?.let { conn ->
+            // 启用外键约束，使 memory_embeddings 的 CASCADE 生效
+            conn.createStatement().use { it.execute("PRAGMA foreign_keys = ON") }
             fts5Available = checkFts5Available(conn)
             if (!fts5Available) {
                 logger.warn("FTS5 extension not available, falling back to LIKE search")
@@ -233,7 +237,7 @@ class BuiltInMemoryProvider : MemoryProvider {
         return listOf(
             Tool(
                 name = "memory_search",
-                description = "Search persistent memory for relevant information from past conversations.",
+                description = "Search persistent memory for relevant information from past conversations. Combines FTS5 keyword search and local vector semantic recall.",
                 parameters = ToolParameters(
                     properties = mapOf(
                         "query" to ToolProperty("string", "Search query describing what you want to recall"),
@@ -312,9 +316,21 @@ class BuiltInMemoryProvider : MemoryProvider {
     override fun onSessionEnd(messages: List<Message>) {
         val conn = connection ?: return
         try {
-            // 生成会话摘要（简化版：取前 500 字）
-            val summary = messages.takeLast(10).joinToString("\n") { "${it.role}: ${it.content.take(100)}" }
-            updateSessionSummary(conn, currentSessionId, summary)
+            // 6.9.2 自动生成结构化会话摘要并提取关键事实
+            val summary = SessionSummarizer.summarize(messages)
+            updateSessionSummary(conn, currentSessionId, summary.summary)
+
+            summary.keyFacts.forEach { fact ->
+                val similar = findSimilarMemory(conn, fact)
+                if (similar == null) {
+                    insertMemory(conn, currentSessionId, fact, "fact")
+                }
+            }
+
+            logger.info(
+                "Session end processed: session=$currentSessionId, " +
+                        "facts=${summary.keyFacts.size}, messages=${messages.size}"
+            )
         } catch (e: Exception) {
             logger.error("Session end processing failed", e)
         }
@@ -421,6 +437,25 @@ class BuiltInMemoryProvider : MemoryProvider {
             """.trimIndent()
             )
 
+            // 6.9.1 向量记忆：embedding 表
+            stmt.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_embeddings (
+                    memory_id INTEGER PRIMARY KEY,
+                    vector BLOB NOT NULL,
+                    FOREIGN KEY(memory_id) REFERENCES memories(id) ON DELETE CASCADE
+                )
+            """.trimIndent()
+            )
+
+            stmt.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS memory_embeddings_delete AFTER DELETE ON memories BEGIN
+                    DELETE FROM memory_embeddings WHERE memory_id = old.id;
+                END
+            """.trimIndent()
+            )
+
             // 索引
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id)")
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id)")
@@ -459,8 +494,27 @@ class BuiltInMemoryProvider : MemoryProvider {
             stmt.setString(3, type)
             stmt.executeUpdate()
             stmt.generatedKeys.use { rs ->
-                return if (rs.next()) rs.getLong(1) else -1
+                val id = if (rs.next()) rs.getLong(1) else -1
+                if (id > 0) {
+                    insertMemoryEmbedding(conn, id, content)
+                }
+                return id
             }
+        }
+    }
+
+    private fun insertMemoryEmbedding(conn: Connection, memoryId: Long, content: String) {
+        try {
+            val vector = MemoryEmbedding.embed(content)
+            conn.prepareStatement(
+                "INSERT INTO memory_embeddings(memory_id, vector) VALUES(?, ?)"
+            ).use { stmt ->
+                stmt.setLong(1, memoryId)
+                stmt.setBytes(2, vectorToBytes(vector))
+                stmt.executeUpdate()
+            }
+        } catch (e: Exception) {
+            logger.warn("Failed to store memory embedding for memory_id=$memoryId: ${e.message}")
         }
     }
 
@@ -475,15 +529,97 @@ class BuiltInMemoryProvider : MemoryProvider {
     }
 
     private fun searchMemories(conn: Connection, query: String, limit: Int): List<MemoryRecord> {
-        val results = mutableListOf<MemoryRecord>()
         val terms = query.split(Regex("""\s+""")).filter { it.length > 1 }
-        if (terms.isEmpty()) return results
-
-        return if (fts5Available) {
-            searchWithFts5(conn, terms, limit)
-        } else {
-            searchWithLike(conn, terms, limit)
+        if (terms.isEmpty()) {
+            // 无有效关键词时退化到纯向量语义召回
+            return searchMemoriesVector(conn, query, limit)
         }
+        return rankedSearch(conn, query, terms, limit)
+    }
+
+    /**
+     * 6.9.1 融合 FTS 关键词排名与向量语义相似度，返回综合排序后的记忆。
+     */
+    private fun rankedSearch(
+        conn: Connection,
+        query: String,
+        terms: List<String>,
+        limit: Int
+    ): List<MemoryRecord> {
+        val ftsResults =
+            if (fts5Available) searchWithFts5(conn, terms, limit * 3) else searchWithLike(conn, terms, limit * 3)
+        val vectorResults = searchMemoriesVector(conn, query, limit * 3)
+
+        val scores = mutableMapOf<Long, Pair<Float, MemoryRecord>>()
+
+        ftsResults.forEachIndexed { index, record ->
+            val ftsScore = 1.0f / (index + 1)
+            scores[record.id] = scores[record.id]?.let { (existing, rec) ->
+                Pair(existing + 0.35f * ftsScore, rec)
+            } ?: Pair(0.35f * ftsScore, record)
+        }
+
+        vectorResults.forEachIndexed { index, record ->
+            // vectorResults 已按 cosine similarity 降序排列
+            val vectorScore = 1.0f / (index + 1)
+            scores[record.id] = scores[record.id]?.let { (existing, rec) ->
+                Pair(existing + 0.65f * vectorScore, rec)
+            } ?: Pair(0.65f * vectorScore, record)
+        }
+
+        return scores.values
+            .sortedByDescending { it.first }
+            .take(limit)
+            .map { it.second }
+    }
+
+    /**
+     * 6.9.1 向量语义召回：按 query embedding 与记忆 embedding 的余弦相似度排序。
+     */
+    private fun searchMemoriesVector(conn: Connection, query: String, limit: Int): List<MemoryRecord> {
+        val queryVector = MemoryEmbedding.embed(query)
+        val results = mutableListOf<Pair<Float, MemoryRecord>>()
+
+        conn.prepareStatement(
+            """
+            SELECT m.id, m.content, m.type, m.created_at, e.vector
+            FROM memories m
+            JOIN memory_embeddings e ON m.id = e.memory_id
+            """.trimIndent()
+        ).use { stmt ->
+            stmt.executeQuery().use { rs ->
+                while (rs.next()) {
+                    val vectorBytes = rs.getBytes("vector") ?: continue
+                    val memoryVector = bytesToVector(vectorBytes)
+                    val similarity = MemoryEmbedding.cosineSimilarity(queryVector, memoryVector)
+                    if (similarity > 0.0f) {
+                        results.add(
+                            similarity to MemoryRecord(
+                                id = rs.getLong("id"),
+                                content = rs.getString("content"),
+                                type = rs.getString("type"),
+                                createdAt = rs.getLong("created_at")
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        return results.sortedByDescending { it.first }.take(limit).map { it.second }
+    }
+
+    private fun vectorToBytes(vector: FloatArray): ByteArray {
+        val buffer = ByteBuffer.allocate(vector.size * 4).order(ByteOrder.LITTLE_ENDIAN)
+        vector.forEach { buffer.putFloat(it) }
+        return buffer.array()
+    }
+
+    private fun bytesToVector(bytes: ByteArray): FloatArray {
+        val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+        val floats = FloatArray(bytes.size / 4)
+        buffer.asFloatBuffer().get(floats)
+        return floats
     }
 
     private fun searchWithFts5(conn: Connection, terms: List<String>, limit: Int): List<MemoryRecord> {
@@ -809,8 +945,8 @@ class BuiltInMemoryProvider : MemoryProvider {
     companion object {
         /** 单条 memory 注入的最大字符数（H1 修复） */
         private const val PREFETCH_ITEM_MAX_LEN: Int = 4 * 1024
+
         /** prefetch 整段的最大字符数（H1 修复） */
         private const val PREFETCH_TOTAL_MAX_LEN: Int = 16 * 1024
     }
 }
-

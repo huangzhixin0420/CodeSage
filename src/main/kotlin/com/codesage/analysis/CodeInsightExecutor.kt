@@ -151,7 +151,7 @@ class CodeInsightExecutor(
         // 调用者
         val callers = if (includeCallGraph) findPsiReferences(sym.name, "method") + findPsiReferences(sym.name, "class")
         else emptyList()
-        val callees = if (includeCallGraph) findCallees(sym)
+        val callees = if (includeCallGraph) collectCalleesForSymbol(sym)
         else emptyList()
 
         val extras = mutableMapOf<String, JsonElement>(
@@ -195,77 +195,118 @@ class CodeInsightExecutor(
     )
 
     /**
-     * T5.3 辅助：查找一个 symbol 调用的所有其它符号（callees）
-     * 启发式：扫描 symbol 所在文件，提取方法体内的 method/function call patterns
+     * 6.5.1 / 6.5.2：使用 PSI 遍历方法体，精确提取该符号调用的所有 callee。
+     * 替代原先基于正则的启发式扫描（避免把 if/for/println 等误判为调用目标，
+     * 并能正确处理扩展函数、带接收者调用、重载等场景）。
      */
-    private fun findCallees(sym: PSIAnalyzer.SymbolInfo): List<JsonElement> {
-        val results = mutableListOf<JsonElement>()
+    private fun collectCalleesForSymbol(sym: PSIAnalyzer.SymbolInfo): List<JsonObject> {
+        val results = mutableListOf<JsonObject>()
         try {
-            val file = LocalFileSystem.getInstance().findFileByPath(sym.filePath) ?: return emptyList()
-            val text = java.nio.file.Files.readString(java.nio.file.Paths.get(sym.filePath), StandardCharsets.UTF_8)
-            val lines = text.lines()
-            // 简化：在 sym.lineNumber 附近搜索
-            // 启发式：找紧跟 sym 的大括号内的方法调用
-            val startLine = (sym.lineNumber - 1).coerceAtLeast(0)
-            val endLine = (startLine + 50).coerceAtMost(lines.size)
-            if (startLine >= lines.size) return emptyList()
-            val bodyRegion = lines.subList(startLine, endLine).joinToString("\n")
-            // 简单正则：identifier 后跟 (
-            val callPattern = Regex("""\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(""")
-            val matches = callPattern.findAll(bodyRegion)
-            for (m in matches) {
-                val called = m.groupValues[1]
-                // 过滤掉常见的关键字
-                if (called in setOf(
-                        "if",
-                        "when",
-                        "for",
-                        "while",
-                        "do",
-                        "when",
-                        "return",
-                        "throw",
-                        "println",
-                        "print",
-                        "require",
-                        "check",
-                        "assert",
-                        "also",
-                        "let",
-                        "run",
-                        "apply",
-                        "with",
-                        "use",
-                        "synchronized",
-                        "lazy",
-                        "let",
-                        "takeIf",
-                        "takeUnless",
-                        "filter",
-                        "map",
-                        "forEach",
-                        "flatMap",
-                        "groupBy",
-                        "associate",
-                        "to",
-                        "until"
-                    )
-                ) continue
-                if (called == sym.name) continue  // 排除自己
-                results.add(
-                    JsonObject(
-                        mapOf(
-                            "name" to JsonPrimitive(called),
-                            "file_path" to JsonPrimitive(sym.filePath),
-                            "type" to JsonPrimitive("call")
-                        )
-                    )
-                )
-            }
+            val element = findPsiElement(sym.name, filePathHint = sym.filePath, typeHint = "method")
+                ?: return emptyList()
+
+            val seen = mutableSetOf<String>()
+            element.accept(object : com.intellij.psi.PsiRecursiveElementVisitor() {
+                override fun visitElement(child: com.intellij.psi.PsiElement) {
+                    val callee = CallGraphExtractor.extractCalleeName(child)
+                    if (callee != null && callee != sym.name && callee !in CallGraphExtractor.IGNORED_CALLEE_NAMES) {
+                        val file = child.containingFile?.virtualFile
+                        val path = file?.path ?: sym.filePath
+                        val line = getLineNumber(child)
+                        val key = "$path:$line:$callee"
+                        if (seen.add(key)) {
+                            results.add(
+                                JsonObject(
+                                    mapOf(
+                                        "name" to JsonPrimitive(callee),
+                                        "file_path" to JsonPrimitive(path),
+                                        "line" to JsonPrimitive(line),
+                                        "column" to JsonPrimitive(getColumn(child)),
+                                        "type" to JsonPrimitive("call")
+                                    )
+                                )
+                            )
+                        }
+                    }
+                    super.visitElement(child)
+                }
+            })
         } catch (e: Exception) {
             logger.debug("findCallees failed for ${sym.name}: ${e.message}")
         }
         return results
+    }
+
+    /**
+     * 在项目中定位与 symbol 定义对应的 PsiElement。
+     * 优先根据 typeHint 匹配 class/method/field 等 PSI 类型，提高后续
+     * ReferencesSearch / 调用图分析的准确性。
+     */
+    private fun findPsiElement(
+        symbolName: String,
+        filePathHint: String? = null,
+        typeHint: String? = null
+    ): com.intellij.psi.PsiElement? {
+        val symbols = symbolIndex?.findByName(symbolName) ?: emptyList()
+        val candidates = if (filePathHint != null) {
+            symbols.filter { it.filePath.contains(filePathHint) }
+        } else symbols
+
+        for (symbol in candidates.ifEmpty { symbols }) {
+            val vf = LocalFileSystem.getInstance().findFileByPath(symbol.filePath) ?: continue
+            val psiFile = PsiManager.getInstance(project!!).findFile(vf) ?: continue
+            val found = findNamedElementInFile(psiFile, symbolName, typeHint)
+            if (found != null) return found
+        }
+        return null
+    }
+
+    /**
+     * 在 PsiFile 中查找指定名称的元素；若给出 typeHint，优先返回类型匹配的候选。
+     */
+    private fun findNamedElementInFile(
+        psiFile: com.intellij.psi.PsiFile,
+        name: String,
+        typeHint: String? = null
+    ): com.intellij.psi.PsiElement? {
+        val matches = mutableListOf<com.intellij.psi.PsiElement>()
+        psiFile.accept(object : com.intellij.psi.PsiRecursiveElementVisitor() {
+            override fun visitElement(element: com.intellij.psi.PsiElement) {
+                if ((element as? com.intellij.psi.PsiNamedElement)?.name == name) {
+                    matches.add(element)
+                    if (typeHint != null && isTypeHintMatch(element, typeHint)) {
+                        return
+                    }
+                }
+                super.visitElement(element)
+            }
+        })
+        return if (typeHint != null) {
+            matches.find { isTypeHintMatch(it, typeHint) } ?: matches.firstOrNull()
+        } else {
+            matches.firstOrNull()
+        }
+    }
+
+    /**
+     * 判断 PSI 元素是否符合 typeHint 暗示的类型（class / method / field / property）。
+     * 使用 fully-qualified class name 匹配，避免测试 classpath 中缺少具体 PSI 类。
+     */
+    private fun isTypeHintMatch(element: com.intellij.psi.PsiElement, typeHint: String): Boolean {
+        val qName = element::class.qualifiedName ?: return false
+        return when (typeHint) {
+            "class" -> qName.endsWith(".PsiClass") || qName.endsWith(".KtClass") || qName.contains("ClassImpl")
+            "method" -> qName.endsWith(".PsiMethod") ||
+                    qName.endsWith(".KtNamedFunction") ||
+                    qName.contains("MethodImpl") ||
+                    qName.contains("Function")
+
+            "field", "property" -> qName.endsWith(".PsiField") ||
+                    qName.endsWith(".KtProperty") ||
+                    qName.contains("FieldImpl")
+
+            else -> false
+        }
     }
 
     //endregion
@@ -317,10 +358,126 @@ class CodeInsightExecutor(
     }
 
     /**
-     * 使用 ReferencesSearch（反射）查找符号引用
+     * 6.5.2：查找调用/引用目标符号的所有位置（callers）。
      */
-    private fun findPsiReferences(symbolName: String, typeHint: String?): List<JsonObject> {
-        val results = mutableListOf<JsonObject>()
+    fun findCallers(args: JsonObject): ToolResult {
+        val symbolName = args["symbol_name"]?.jsonPrimitive?.content
+            ?: return ToolResult.Error("Missing 'symbol_name' parameter")
+        val filePathHint = args["file_path"]?.jsonPrimitive?.content
+        val typeHint = args["type"]?.jsonPrimitive?.content
+        val limit = args["limit"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(1) ?: 50
+
+        if (project == null) {
+            return ToolResult.Error("No active project")
+        }
+
+        return runInReadAction {
+            try {
+                var locations = findReferenceLocations(symbolName, typeHint)
+                if (filePathHint != null) {
+                    locations = locations.filter { it.filePath.contains(filePathHint) }
+                }
+
+                val callers = locations.take(limit).map { loc ->
+                    JsonObject(
+                        mapOf(
+                            "file_path" to JsonPrimitive(loc.filePath),
+                            "line" to JsonPrimitive(loc.line),
+                            "column" to JsonPrimitive(getColumn(loc.element)),
+                            "caller_symbol" to JsonPrimitive(getContainingSymbolName(loc.element) ?: ""),
+                            "reference_type" to JsonPrimitive(loc.referenceType)
+                        )
+                    )
+                }
+
+                ToolResult.Success(
+                    JsonObject(
+                        mapOf(
+                            "symbol_name" to JsonPrimitive(symbolName),
+                            "callers" to JsonArray(callers),
+                            "total" to JsonPrimitive(callers.size)
+                        )
+                    )
+                )
+            } catch (e: Exception) {
+                logger.error("find_callers failed: $symbolName", e)
+                ToolResult.Error("Find callers failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * 6.5.2：查找目标符号调用的所有 callee。
+     */
+    fun findCallees(args: JsonObject): ToolResult {
+        val symbolName = args["symbol_name"]?.jsonPrimitive?.content
+            ?: return ToolResult.Error("Missing 'symbol_name' parameter")
+        val filePathHint = args["file_path"]?.jsonPrimitive?.content
+        val limit = args["limit"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(1) ?: 50
+
+        if (project == null) {
+            return ToolResult.Error("No active project")
+        }
+
+        return runInReadAction {
+            try {
+                var targets = symbolIndex?.findByName(symbolName) ?: emptyList()
+                if (filePathHint != null) {
+                    targets = targets.filter { it.filePath.contains(filePathHint) }
+                }
+
+                val allCallees = targets
+                    .flatMap { collectCalleesForSymbol(it) }
+                    .distinctBy {
+                        "${it["file_path"]?.jsonPrimitive?.content}:" +
+                                "${it["line"]?.jsonPrimitive?.int}:" +
+                                "${it["name"]?.jsonPrimitive?.content}"
+                    }
+                    .take(limit)
+                    .map { cal ->
+                        JsonObject(
+                            mapOf(
+                                "file_path" to cal["file_path"]!!,
+                                "line" to cal["line"]!!,
+                                "column" to cal["column"]!!,
+                                "callee_symbol" to cal["name"]!!,
+                                "call_type" to cal["type"]!!
+                            )
+                        )
+                    }
+
+                ToolResult.Success(
+                    JsonObject(
+                        mapOf(
+                            "symbol_name" to JsonPrimitive(symbolName),
+                            "callees" to JsonArray(allCallees),
+                            "total" to JsonPrimitive(allCallees.size)
+                        )
+                    )
+                )
+            } catch (e: Exception) {
+                logger.error("find_callees failed: $symbolName", e)
+                ToolResult.Error("Find callees failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * 内部数据结构：保存一次 PSI 引用的元素与位置信息。
+     */
+    private data class ReferenceLocation(
+        val element: com.intellij.psi.PsiElement,
+        val filePath: String,
+        val line: Int,
+        val text: String,
+        val referenceType: String
+    )
+
+    /**
+     * 使用 ReferencesSearch（反射）查找符号引用，返回带 PsiElement 的位置列表。
+     */
+    private fun findReferenceLocations(symbolName: String, typeHint: String?): List<ReferenceLocation> {
+        val results = mutableListOf<ReferenceLocation>()
         try {
             val scopeClass = Class.forName("com.intellij.psi.search.GlobalSearchScope")
             val scope = scopeClass.getMethod("projectScope", Project::class.java).invoke(null, project)
@@ -328,8 +485,8 @@ class CodeInsightExecutor(
             // 查找 PsiElement
             val psiElement = when (typeHint) {
                 "class" -> findPsiClass(symbolName, scope)
-                "method", "field" -> findPsiMember(symbolName, scope)
-                else -> findPsiClass(symbolName, scope) ?: findPsiMember(symbolName, scope)
+                "method", "field", "property" -> findPsiElement(symbolName, typeHint = typeHint)
+                else -> findPsiClass(symbolName, scope) ?: findPsiElement(symbolName, typeHint = typeHint)
             } ?: return emptyList()
 
             // 反射调用 ReferencesSearch.search(psiElement, scope)
@@ -348,23 +505,38 @@ class CodeInsightExecutor(
                 val line = element?.let { getLineNumber(it) } ?: 0
                 val text = element?.text?.take(200) ?: ""
 
-                if (file != null) {
+                if (file != null && element != null) {
                     results.add(
-                        JsonObject(
-                            mapOf(
-                                "file_path" to JsonPrimitive(file.path),
-                                "line" to JsonPrimitive(line),
-                                "text" to JsonPrimitive(text),
-                                "type" to JsonPrimitive("reference")
-                            )
+                        ReferenceLocation(
+                            element = element,
+                            filePath = file.path,
+                            line = line,
+                            text = text,
+                            referenceType = "reference"
                         )
                     )
                 }
             }
         } catch (e: Exception) {
-            logger.debug("ReferencesSearch unavailable for $symbolName, falling back to text search", e)
+            logger.debug("ReferencesSearch unavailable for $symbolName", e)
         }
         return results
+    }
+
+    /**
+     * 兼容旧 find_usages 的 JsonObject 返回格式。
+     */
+    private fun findPsiReferences(symbolName: String, typeHint: String?): List<JsonObject> {
+        return findReferenceLocations(symbolName, typeHint).map { loc ->
+            JsonObject(
+                mapOf(
+                    "file_path" to JsonPrimitive(loc.filePath),
+                    "line" to JsonPrimitive(loc.line),
+                    "text" to JsonPrimitive(loc.text),
+                    "type" to JsonPrimitive(loc.referenceType)
+                )
+            )
+        }
     }
 
     private fun findPsiClass(className: String, scope: Any?): Any? {
@@ -378,31 +550,6 @@ class CodeInsightExecutor(
         }
     }
 
-    private fun findPsiMember(symbolName: String, scope: Any?): Any? {
-        // 尝试从 SymbolIndex 获取定义位置，再定位 PsiElement
-        val symbols = symbolIndex?.findByName(symbolName) ?: emptyList()
-        for (symbol in symbols) {
-            val vf = LocalFileSystem.getInstance().findFileByPath(symbol.filePath) ?: continue
-            val psiFile = PsiManager.getInstance(project!!).findFile(vf) ?: continue
-            val found = findNamedElementInFile(psiFile, symbolName)
-            if (found != null) return found
-        }
-        return null
-    }
-
-    private fun findNamedElementInFile(psiFile: com.intellij.psi.PsiFile, name: String): com.intellij.psi.PsiElement? {
-        var result: com.intellij.psi.PsiElement? = null
-        psiFile.accept(object : com.intellij.psi.PsiRecursiveElementVisitor() {
-            override fun visitElement(element: com.intellij.psi.PsiElement) {
-                if (element is com.intellij.psi.PsiNamedElement && element.name == name) {
-                    result = element
-                    return
-                }
-                super.visitElement(element)
-            }
-        })
-        return result
-    }
 
     /**
      * 降级：文本级引用搜索（遍历项目文件内容）
@@ -672,6 +819,50 @@ class CodeInsightExecutor(
         val project = element.project
         val document = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(element.containingFile)
         return document?.getLineNumber(element.textOffset)?.plus(1) ?: 0
+    }
+
+    /**
+     * 6.5.2：计算元素在所在行中的列号（1-based）。
+     */
+    private fun getColumn(element: com.intellij.psi.PsiElement): Int {
+        return try {
+            val project = element.project
+            val document = com.intellij.psi.PsiDocumentManager.getInstance(project).getDocument(element.containingFile)
+            if (document != null) {
+                val line = document.getLineNumber(element.textOffset)
+                element.textOffset - document.getLineStartOffset(line) + 1
+            } else {
+                0
+            }
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    /**
+     * 6.5.2：向上查找包含该引用的方法/函数/类符号名。
+     */
+    private fun getContainingSymbolName(element: com.intellij.psi.PsiElement): String? {
+        var current = element.parent
+        while (current != null) {
+            val qName = current::class.qualifiedName ?: ""
+            val named = current as? com.intellij.psi.PsiNamedElement
+            if (named?.name != null && isCallableOrClassLike(qName)) {
+                return named.name
+            }
+            current = current.parent
+        }
+        return null
+    }
+
+    private fun isCallableOrClassLike(qName: String): Boolean {
+        return qName.endsWith(".PsiMethod") ||
+                qName.endsWith(".KtNamedFunction") ||
+                qName.contains("MethodImpl") ||
+                qName.contains("Function") ||
+                qName.endsWith(".PsiClass") ||
+                qName.endsWith(".KtClass") ||
+                qName.contains("ClassImpl")
     }
 
     /**

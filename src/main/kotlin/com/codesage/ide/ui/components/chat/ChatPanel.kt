@@ -80,6 +80,9 @@ class ChatPanel(
     private val turns = mutableListOf<AgentTurnPanel>()
     private var currentTurn: AgentTurnPanel? = null
 
+    // 6.10.4: 子 Agent 进度面板索引（用于 SubAgentProgress 实时更新）
+    private val subAgentPanels = mutableMapOf<String, SubAgentProgressPanel>()
+
     init {
         add(headerPanel, BorderLayout.NORTH)
         add(scrollPane, BorderLayout.CENTER)
@@ -159,26 +162,34 @@ class ChatPanel(
                             }
 
                             is AgentStreamEvent.SubAgentStart -> {
-                                // 子 Agent 作为特殊工具调用展示
-                                turn.startToolCall(
-                                    toolName = "subagent",
-                                    toolId = event.sessionId,
-                                    summary = event.taskDescription
+                                // 6.10.4: 子 Agent 使用专用进度面板，展示深度预算与工具权限
+                                val subAgentPanel = SubAgentProgressPanel(
+                                    sessionId = event.sessionId,
+                                    taskDescription = event.taskDescription,
+                                    toolset = event.toolset,
+                                    maxDepth = event.maxDepth,
+                                    allowedTools = event.allowedTools,
+                                    deniedTools = event.deniedTools,
+                                    depth = event.depth,
+                                    delegationForbidden = event.delegationForbidden
                                 )
+                                subAgentPanels[event.sessionId] = subAgentPanel
+                                turn.startSubAgent(subAgentPanel, event.sessionId)
                                 if (!isUserScrolling) scrollToBottom()
                             }
 
                             is AgentStreamEvent.SubAgentProgress -> {
-                                // 子 Agent 进度更新
-                                turn.updateThinking("[子Agent] ${event.message}")
+                                // 子 Agent 进度更新直接追加到对应面板
+                                subAgentPanels[event.sessionId]?.appendProgress(event.message)
                             }
 
                             is AgentStreamEvent.SubAgentComplete -> {
                                 turn.completeToolCall(
                                     toolId = event.sessionId,
                                     success = event.success,
-                                    result = event.output ?: ""
+                                    result = event.output
                                 )
+                                subAgentPanels.remove(event.sessionId)
                                 if (!isUserScrolling) scrollToBottom()
                             }
 

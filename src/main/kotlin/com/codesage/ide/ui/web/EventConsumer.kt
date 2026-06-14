@@ -92,7 +92,7 @@ class EventConsumer(
         if (flushed > 0 && logger.isDebugEnabled) {
             logger.debug(
                 "[EventConsumer] pre-terminal flush: count=$flushed, turnId=$turnId, " +
-                    "incomingType=${event::class.simpleName}"
+                        "incomingType=${event::class.simpleName}"
             )
         }
         val now = clock()
@@ -114,7 +114,7 @@ class EventConsumer(
             // 异常路径:除 Done 外,Terminal 事件应该 100% 能路由;null 视为 EventRouter bug
             logger.warn(
                 "[EventConsumer] eventRouter returned null for Terminal event: " +
-                    "type=${event::class.simpleName}, turnId=$turnId"
+                        "type=${event::class.simpleName}, turnId=$turnId"
             )
             return now
         }
@@ -125,7 +125,7 @@ class EventConsumer(
             // sendToJS 内部已 catch,这里双保险;不抛、不吞,只 WARN + 跳过当前事件
             logger.warn(
                 "[EventConsumer] sendToJS threw for Terminal: " +
-                    "type=${event::class.simpleName}, turnId=$turnId, msgType=${msg["type"]}",
+                        "type=${event::class.simpleName}, turnId=$turnId, msgType=${msg["type"]}",
                 e
             )
             return now
@@ -142,7 +142,7 @@ class EventConsumer(
             // 异常:Coalescable 语义事件必须有 coalesceKey;否则就是 classifier 与 coalesceKey 不一致
             logger.warn(
                 "[EventConsumer] Coalescable event has null coalesceKey: " +
-                    "type=${event::class.simpleName}, turnId=$turnId"
+                        "type=${event::class.simpleName}, turnId=$turnId"
             )
             return state.lastFlushTime
         }
@@ -163,7 +163,7 @@ class EventConsumer(
                 // 防御:Coalescable 事件同 key 应能合并;null 意味着 classifier / coalesceKey / mergeWith 三者不一致
                 logger.warn(
                     "[EventConsumer] mergeWith returned null: key=$key, turnId=$turnId, " +
-                        "existingType=${existing::class.simpleName}, newType=${event::class.simpleName}"
+                            "existingType=${existing::class.simpleName}, newType=${event::class.simpleName}"
                 )
                 event
             } else {
@@ -171,7 +171,7 @@ class EventConsumer(
                 if (logger.isDebugEnabled) {
                     logger.debug(
                         "[EventConsumer] coalesce merge: key=$key, turnId=$turnId, " +
-                            "bufferSize=${state.coalesceBuffer.size}, type=${event::class.simpleName}"
+                                "bufferSize=${state.coalesceBuffer.size}, type=${event::class.simpleName}"
                     )
                 }
                 m
@@ -180,7 +180,7 @@ class EventConsumer(
             if (logger.isDebugEnabled) {
                 logger.debug(
                     "[EventConsumer] coalesce buffer: key=$key, turnId=$turnId, " +
-                        "bufferSize=${state.coalesceBuffer.size}, type=${event::class.simpleName}"
+                            "bufferSize=${state.coalesceBuffer.size}, type=${event::class.simpleName}"
                 )
             }
             event
@@ -197,7 +197,8 @@ class EventConsumer(
      */
     private fun sendDoneExpansion(turnId: String, state: TurnState) {
         val thinkingMsg = mapOf<String, Any?>("type" to "thinking_complete", "turnId" to turnId, "elapsedMs" to 0)
-        val modelReasoningMsg = mapOf<String, Any?>("type" to "model_reasoning_complete", "turnId" to turnId, "elapsedMs" to 0)
+        val modelReasoningMsg =
+            mapOf<String, Any?>("type" to "model_reasoning_complete", "turnId" to turnId, "elapsedMs" to 0)
         val turnMsg = mapOf<String, Any?>("type" to "turn_complete", "turnId" to turnId)
         try {
             sendToJS(thinkingMsg)
@@ -231,7 +232,7 @@ class EventConsumer(
         if (logger.isDebugEnabled) {
             logger.debug(
                 "[EventConsumer] flush: reason=$reason, count=${snapshot.size}, " +
-                    "turnId=${state.turnId}, types=${snapshot.map { it::class.simpleName }}"
+                        "turnId=${state.turnId}, types=${snapshot.map { it::class.simpleName }}"
             )
         }
         for (event in snapshot) {
@@ -247,6 +248,7 @@ class EventConsumer(
                         rawMsg
                     }
                 }
+
                 is AgentStreamEvent.ModelReasoning -> {
                     if (!state.firstModelReasoningSent) {
                         state.firstModelReasoningSent = true
@@ -255,6 +257,7 @@ class EventConsumer(
                         rawMsg
                     }
                 }
+
                 else -> rawMsg
             }
             try {
@@ -263,7 +266,7 @@ class EventConsumer(
             } catch (e: Throwable) {
                 logger.warn(
                     "[EventConsumer] sendToJS threw during flush: " +
-                        "type=${event::class.simpleName}, turnId=${state.turnId}",
+                            "type=${event::class.simpleName}, turnId=${state.turnId}",
                     e
                 )
             }
@@ -278,69 +281,91 @@ class EventConsumer(
         when (event) {
             is AgentStreamEvent.ToolCallStart -> logger.info(
                 "[EventConsumer] delivered: type=ToolCallStart, turnId=$turnId, " +
-                    "toolId=${event.toolCall.id}, name=${event.toolCall.name}, msgType=$msgType"
+                        "toolId=${event.toolCall.id}, name=${event.toolCall.name}, msgType=$msgType"
             )
+
             is AgentStreamEvent.ToolCallResult -> logger.info(
                 "[EventConsumer] delivered: type=ToolCallResult, turnId=$turnId, " +
-                    "toolId=${event.toolCallId}, name=${event.toolName}, success=${event.success}, " +
-                    "resultLen=${event.result.length}, msgType=$msgType"
+                        "toolId=${event.toolCallId}, name=${event.toolName}, success=${event.success}, " +
+                        "resultLen=${event.result.length}, msgType=$msgType"
             )
+
             is AgentStreamEvent.ToolCallError -> logger.info(
                 "[EventConsumer] delivered: type=ToolCallError, turnId=$turnId, " +
-                    "toolId=${event.toolCallId}, error=${event.error.take(200)}, msgType=$msgType"
+                        "toolId=${event.toolCallId}, error=${event.error.take(200)}, msgType=$msgType"
             )
+
             is AgentStreamEvent.ToolConfirmationNeeded -> logger.info(
                 "[EventConsumer] delivered: type=ToolConfirmationNeeded, turnId=$turnId, " +
-                    "toolId=${event.toolCallId}, name=${event.toolName}, msgType=$msgType"
+                        "toolId=${event.toolCallId}, name=${event.toolName}, msgType=$msgType"
             )
+
+            is AgentStreamEvent.CommandOutputStream -> logger.info(
+                "[EventConsumer] delivered: type=CommandOutputStream, turnId=$turnId, " +
+                        "toolId=${event.toolCallId}, stdoutLen=${event.stdout.length}, " +
+                        "stderrLen=${event.stderr.length}, done=${event.done}, msgType=$msgType"
+            )
+
             is AgentStreamEvent.Error -> logger.warn(
                 "[EventConsumer] delivered: type=Error, turnId=$turnId, " +
-                    "message=${event.message.take(200)}, msgType=$msgType"
+                        "message=${event.message.take(200)}, msgType=$msgType"
             )
+
             is AgentStreamEvent.SubAgentStart -> logger.info(
                 "[EventConsumer] delivered: type=SubAgentStart, turnId=$turnId, " +
-                    "sessionId=${event.sessionId}, msgType=$msgType"
+                        "sessionId=${event.sessionId}, msgType=$msgType"
             )
+
             is AgentStreamEvent.SubAgentComplete -> logger.info(
                 "[EventConsumer] delivered: type=SubAgentComplete, turnId=$turnId, " +
-                    "sessionId=${event.sessionId}, success=${event.success}, msgType=$msgType"
+                        "sessionId=${event.sessionId}, success=${event.success}, msgType=$msgType"
             )
+
             is AgentStreamEvent.SubAgentProgress -> logger.debug(
                 "[EventConsumer] delivered: type=SubAgentProgress, turnId=$turnId, " +
-                    "sessionId=${event.sessionId}, message=${event.message.take(200)}"
+                        "sessionId=${event.sessionId}, message=${event.message.take(200)}"
             )
+
             is AgentStreamEvent.PlanGenerated -> logger.info(
                 "[EventConsumer] delivered: type=PlanGenerated, turnId=$turnId, " +
-                    "planId=${event.planId}, steps=${event.steps.size}, msgType=$msgType"
+                        "planId=${event.planId}, steps=${event.steps.size}, msgType=$msgType"
             )
+
             is AgentStreamEvent.PlanApproved -> logger.info(
                 "[EventConsumer] delivered: type=PlanApproved, turnId=$turnId, " +
-                    "planId=${event.planId}, msgType=$msgType"
+                        "planId=${event.planId}, msgType=$msgType"
             )
+
             is AgentStreamEvent.PlanModified -> logger.info(
                 "[EventConsumer] delivered: type=PlanModified, turnId=$turnId, " +
-                    "planId=${event.planId}, msgType=$msgType"
+                        "planId=${event.planId}, msgType=$msgType"
             )
+
             is AgentStreamEvent.PlanRejected -> logger.info(
                 "[EventConsumer] delivered: type=PlanRejected, turnId=$turnId, " +
-                    "planId=${event.planId}, msgType=$msgType"
+                        "planId=${event.planId}, msgType=$msgType"
             )
+
             is AgentStreamEvent.ContextCompressed -> logger.info(
                 "[EventConsumer] delivered: type=ContextCompressed, turnId=$turnId, " +
-                    "${event.originalTokens}→${event.compressedTokens} tokens, msgType=$msgType"
+                        "${event.originalTokens}→${event.compressedTokens} tokens, msgType=$msgType"
             )
+
             is AgentStreamEvent.SessionMigrated -> logger.info(
                 "[EventConsumer] delivered: type=SessionMigrated, turnId=$turnId, " +
-                    "${event.oldSessionId}→${event.newSessionId}, msgType=$msgType"
+                        "${event.oldSessionId}→${event.newSessionId}, msgType=$msgType"
             )
+
             is AgentStreamEvent.ModeSuggestion -> logger.info(
                 "[EventConsumer] delivered: type=ModeSuggestion, turnId=$turnId, " +
-                    "effective=${event.effective}, suggestion=${event.suggestion}, msgType=$msgType"
+                        "effective=${event.effective}, suggestion=${event.suggestion}, msgType=$msgType"
             )
+
             is AgentStreamEvent.Done -> {
                 // Done 在 processTerminal 里被 sendDoneExpansion 拦截了;此分支是防御性的
                 logger.warn("[EventConsumer] Done reached logTerminalDelivery (should have been expanded earlier): turnId=$turnId")
             }
+
             is AgentStreamEvent.TextDelta,
             is AgentStreamEvent.Thinking,
             is AgentStreamEvent.ModelReasoning,
@@ -349,7 +374,7 @@ class EventConsumer(
                 // 落到这里说明 classifier 与事件流不一致 — 立刻 WARN
                 logger.warn(
                     "[EventConsumer] delivered via Terminal path (classifier/state mismatch): " +
-                        "type=${event::class.simpleName}, turnId=$turnId, msgType=$msgType"
+                            "type=${event::class.simpleName}, turnId=$turnId, msgType=$msgType"
                 )
             }
         }
@@ -363,12 +388,14 @@ class EventConsumer(
         val coalesceBuffer: LinkedHashMap<String, AgentStreamEvent> = LinkedHashMap()
         var lastFlushTime: Long = 0L
         val metrics = TurnMetrics()
+
         /**
          * Thinking 事件首/续状态 — per-turn 隔离。
          * 首次 Thinking 路由为 "thinking_start",后续为 "thinking_update"。
          * 由 flushPending 在 sendToJS 前根据此标志改写 msg["type"]。
          */
         var firstThinkingSent: Boolean = false
+
         /**
          * ModelReasoning 事件首/续状态 — per-turn 隔离。
          * 首次 ModelReasoning 路由为 "model_reasoning_start",后续为 "model_reasoning_delta"。

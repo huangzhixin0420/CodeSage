@@ -56,7 +56,7 @@ class ExtendedToolsTest {
     }
 
     @Test
-    fun `git_diff should return diff output`(@TempDir tempDir: File) {
+    fun `git_diff should return structured diff output`(@TempDir tempDir: File) {
         initGitRepo(tempDir)
         File(tempDir, "test.txt").writeText("hello")
         exec(tempDir, "git", "add", ".")
@@ -69,9 +69,40 @@ class ExtendedToolsTest {
 
         assertTrue(result is ToolResult.Success, "Expected success but got: $result")
         val data = (result as ToolResult.Success).data.jsonObject
-        assertTrue(data.containsKey("diff"))
+        assertTrue(data.containsKey("files"), "Expected structured files array")
         assertTrue(data.containsKey("has_changes"))
+        assertTrue(data.containsKey("total_changes"))
         assertTrue(data["has_changes"]?.jsonPrimitive?.booleanOrNull == true)
+
+        val files = data["files"]?.jsonArray
+        assertNotNull(files)
+        assertTrue(files!!.isNotEmpty())
+        val firstFile = files[0].jsonObject
+        assertEquals("test.txt", firstFile["new_path"]?.jsonPrimitive?.content)
+        assertTrue(firstFile.containsKey("hunks"))
+        assertTrue(firstFile.containsKey("additions"))
+        assertTrue(firstFile.containsKey("deletions"))
+    }
+
+    @Test
+    fun `git_diff should include raw diff when include_raw is true`(@TempDir tempDir: File) {
+        initGitRepo(tempDir)
+        File(tempDir, "test.txt").writeText("hello")
+        exec(tempDir, "git", "add", ".")
+        exec(tempDir, "git", "commit", "-m", "initial")
+        File(tempDir, "test.txt").writeText("hello world")
+
+        val tools = ExtendedTools(project = null)
+        val args = makeArgs(
+            "working_dir" to JsonPrimitive(tempDir.absolutePath),
+            "include_raw" to JsonPrimitive(true)
+        )
+        val result = tools.gitDiff(args)
+
+        assertTrue(result is ToolResult.Success)
+        val data = (result as ToolResult.Success).data.jsonObject
+        assertTrue(data.containsKey("raw_diff"))
+        assertTrue(data["raw_diff"]?.jsonPrimitive?.content?.contains("diff --git") == true)
     }
 
     @Test
@@ -238,6 +269,59 @@ class ExtendedToolsTest {
     }
 
     @Test
+    fun `http_request should truncate response larger than max_size_bytes`() = runBlocking {
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("abcdefghij")
+                .addHeader("Content-Type", "text/plain")
+        )
+
+        val tools = ExtendedTools(project = null)
+        tools.ssrfProtectionEnabled = false
+        val args = makeArgs(
+            "url" to JsonPrimitive(mockServer.url("/large").toString()),
+            "max_size_bytes" to JsonPrimitive(5)
+        )
+        val result = tools.httpRequest(args)
+
+        assertTrue(result is ToolResult.Success, "Expected success but got: $result")
+        val data = (result as ToolResult.Success).data.jsonObject
+        assertTrue(data["truncated"]?.jsonPrimitive?.booleanOrNull == true)
+        assertEquals(5, data["max_size_bytes"]?.jsonPrimitive?.long)
+        assertTrue((data["body"]?.jsonPrimitive?.content?.length ?: 100) <= 5)
+        assertTrue((data["body_size"]?.jsonPrimitive?.long ?: 0L) >= 10L)
+    }
+
+    @Test
+    fun `http_request should stream full response to output_file`() = runBlocking {
+        mockServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("hello world via file")
+                .addHeader("Content-Type", "text/plain")
+        )
+
+        val tools = ExtendedTools(project = null)
+        tools.ssrfProtectionEnabled = false
+        val outputFile = File.createTempFile("codesage_http_test", ".txt")
+        outputFile.deleteOnExit()
+
+        val args = makeArgs(
+            "url" to JsonPrimitive(mockServer.url("/download").toString()),
+            "output_file" to JsonPrimitive(outputFile.absolutePath)
+        )
+        val result = tools.httpRequest(args)
+
+        assertTrue(result is ToolResult.Success, "Expected success but got: $result")
+        val data = (result as ToolResult.Success).data.jsonObject
+        assertEquals(outputFile.absolutePath, data["saved_to"]?.jsonPrimitive?.content)
+        assertEquals("hello world via file".length.toLong(), data["size"]?.jsonPrimitive?.long)
+        assertFalse(data.containsKey("body"))
+        assertEquals("hello world via file", outputFile.readText())
+    }
+
+    @Test
     fun `http_request should block internal URLs`() = runBlocking {
         val tools = ExtendedTools(project = null)
         val blockedUrls = listOf(
@@ -316,7 +400,10 @@ class ExtendedToolsTest {
         assertTrue(result is ToolResult.Error, "Expected error but got: $result")
         val msg = (result as ToolResult.Error).message
         assertTrue(
-            msg.contains("重定向", ignoreCase = true) || msg.contains("redirect", ignoreCase = true) || msg.contains("follow", ignoreCase = true),
+            msg.contains("重定向", ignoreCase = true) || msg.contains(
+                "redirect",
+                ignoreCase = true
+            ) || msg.contains("follow", ignoreCase = true),
             "应明确提到重定向循环,实际: $msg",
         )
         // 错误消息应包含 URL
@@ -344,10 +431,10 @@ class ExtendedToolsTest {
         // 我们的新 catch 会归类为"连接失败"或"超时"等(具体看 OS 返回哪种异常)
         assertTrue(
             msg.contains("连接失败", ignoreCase = true) ||
-                msg.contains("拒绝", ignoreCase = true) ||
-                msg.contains("timed out", ignoreCase = true) ||
-                msg.contains("connect", ignoreCase = true) ||
-                msg.contains("不可达", ignoreCase = true),
+                    msg.contains("拒绝", ignoreCase = true) ||
+                    msg.contains("timed out", ignoreCase = true) ||
+                    msg.contains("connect", ignoreCase = true) ||
+                    msg.contains("不可达", ignoreCase = true),
             "应明确说明连接失败,实际: $msg",
         )
     }

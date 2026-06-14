@@ -161,7 +161,7 @@ class ReadFileTest {
         assertFalse(out.contains("已截断"), "刚好 CHUNK_LINES 不应触发截断")
     }
 
-        @Test
+    @Test
     fun `large file over cap does not flush partial over-cap line`() {
         // 设计契约: hit CHUNK_LINES 时立即 break, 不读下一个字节。
         // 避免把半个 UTF-8 字符的字节推进 linePos(后续 String() 会乱码)。
@@ -179,7 +179,7 @@ class ReadFileTest {
         assertTrue(out.contains("已截断"), "应触发截断提示")
     }
 
-@Test
+    @Test
     fun `empty file returns empty string without hint`() {
         val out = tools.readLargeFileFromBuffer(bufOf(""), fileLength = 0)
         assertEquals("", out)
@@ -208,5 +208,91 @@ class ReadFileTest {
         }
         assertNull(args["offset"]?.jsonPrimitive?.intOrNull)
         assertNull(args["limit"]?.jsonPrimitive?.intOrNull)
+    }
+
+    // ========== addLineNumbers ==========
+
+    @Test
+    fun `addLineNumbers produces cat-n style output with tab separator`() {
+        val content = "alpha\nbeta\ngamma"
+        val numbered = tools.addLineNumbers(content, startLine = 0)
+        val lines = numbered.lines()
+        assertEquals(3, lines.size)
+        assertTrue(lines[0].matches(Regex("""\s+1\talpha""")))
+        assertTrue(lines[1].matches(Regex("""\s+2\tbeta""")))
+        assertTrue(lines[2].matches(Regex("""\s+3\tgamma""")))
+        assertTrue(numbered.contains('\t'), "行号与内容之间应使用 tab 分隔")
+    }
+
+    @Test
+    fun `addLineNumbers respects startLine offset`() {
+        val content = "L2\nL3"
+        val numbered = tools.addLineNumbers(content, startLine = 2)
+        val lines = numbered.lines()
+        assertEquals("     3\tL2", lines[0])
+        assertEquals("     4\tL3", lines[1])
+    }
+
+    @Test
+    fun `addLineNumbers handles empty content`() {
+        assertEquals("", tools.addLineNumbers(""))
+    }
+
+    @Test
+    fun `addLineNumbers widens padding for large line counts`() {
+        val content = (0 until 2000).joinToString("\n") { "x" }
+        val numbered = tools.addLineNumbers(content, startLine = 0)
+        val lastLine = numbered.lines().last()
+        assertTrue(lastLine.startsWith("  2000"), "2000 行时行号应至少 4 位宽: $lastLine")
+    }
+
+    // ========== countLines / readChunkFromBuffer (P0 6.1.2) ==========
+
+    @Test
+    fun `countLines matches String lines semantics`() {
+        assertEquals(0, tools.countLines(bufOf("")))
+        assertEquals(1, tools.countLines(bufOf("a")))
+        assertEquals(2, tools.countLines(bufOf("a\nb")))
+        assertEquals(3, tools.countLines(bufOf("a\nb\n")))
+    }
+
+    @Test
+    fun `readChunkFromBuffer reads requested range without loading whole content`() {
+        val text = "L0\nL1\nL2\nL3\nL4\n"
+        val chunk = tools.readChunkFromBuffer(bufOf(text), offset = 1, limit = 2)
+        assertEquals("L1\nL2\n", chunk.content)
+        // Kotlin String.lines() 将末尾换行视为一个空行
+        assertEquals(6, chunk.totalLines)
+        assertEquals(1, chunk.startLine)
+        assertEquals(3, chunk.endLine)
+    }
+
+    @Test
+    fun `readChunkFromBuffer offset equal to totalLines returns empty EOF`() {
+        val text = "a\nb\n"
+        val chunk = tools.readChunkFromBuffer(bufOf(text), offset = 2, limit = 10)
+        assertEquals("", chunk.content)
+        assertEquals(2, chunk.startLine)
+        assertEquals(2, chunk.endLine)
+    }
+
+    @Test
+    fun `readChunkFromBuffer offset beyond totalLines returns empty with total`() {
+        val text = "a\nb\n"
+        val chunk = tools.readChunkFromBuffer(bufOf(text), offset = 100, limit = 10)
+        assertEquals("", chunk.content)
+        assertEquals(3, chunk.totalLines)
+        assertEquals(3, chunk.startLine)
+        assertEquals(3, chunk.endLine)
+    }
+
+    @Test
+    fun `readChunkFromBuffer handles UTF-8 multibyte and last line without newline`() {
+        val text = "中文\n🎉emoji\n末行无换行"
+        val chunk = tools.readChunkFromBuffer(bufOf(text), offset = 0, limit = 10)
+        assertEquals(3, chunk.totalLines)
+        assertTrue(chunk.content.contains("中文"))
+        assertTrue(chunk.content.contains("🎉emoji"))
+        assertTrue(chunk.content.contains("末行无换行"))
     }
 }

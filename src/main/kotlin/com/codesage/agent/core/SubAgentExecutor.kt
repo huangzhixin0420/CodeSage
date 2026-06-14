@@ -5,6 +5,7 @@ import com.codesage.agent.memory.MemoryManager
 import com.codesage.agent.tools.SkillToolAdapter
 import com.codesage.agent.tools.ToolExecutor
 import com.codesage.agent.tools.ToolRegistry
+import kotlinx.serialization.json.JsonObject
 import com.codesage.model.dto.*
 import com.codesage.model.gateway.ModelGateway
 import com.codesage.persistence.ConversationPersistence
@@ -62,7 +63,11 @@ data class SubAgentResult(
     /** P2: 用户是否在执行途中 cancel 了子 Agent */
     val cancelled: Boolean = false,
     /** P2: 取消前已完成的 tool call 摘要（cancelled=true 时才有意义） */
-    val completedToolCalls: List<ToolCallRecord> = emptyList()
+    val completedToolCalls: List<ToolCallRecord> = emptyList(),
+    /** 6.6.3: worktree 隔离模式下产生的原始 diff */
+    val worktreeDiff: String? = null,
+    /** 6.6.3: worktree 隔离模式下产生的结构化 diff */
+    val worktreeChanges: JsonObject? = null
 )
 
 /**
@@ -75,7 +80,10 @@ data class SubAgentResult(
  * - 通过 progress callback 实时汇报进度给父 agent
  *
  * 防止无限递归：每个 SubAgentExecutor 知道自己所在的嵌套深度（[depth]），
- * 超过 [MAX_RECURSION_DEPTH] 时拒绝继续 spawn。
+ * 超过 [maxDepth] 时拒绝继续 spawn。
+ *
+ * @property maxDepth 本次子 Agent 允许的最大递归深度（默认 [DEFAULT_MAX_RECURSION_DEPTH]）。
+ *                   可由调用方按任务指定，有效范围为 [1, 5]。
  */
 open class SubAgentExecutor(
     private val parentAgent: AgentCore,
@@ -86,7 +94,12 @@ open class SubAgentExecutor(
      * 当前子 Agent 在嵌套树中的深度。
      * 0 = 顶层父 Agent；1 = 它直接 spawn 出的子 Agent；2 = 孙子；以此类推。
      */
-    private val depth: Int = 0
+    private val depth: Int = 0,
+    /**
+     * 6.10.2: 本次子 Agent 允许的最大递归深度，默认 2。
+     * 允许按任务在 [1, 5] 范围内覆盖。
+     */
+    private val maxDepth: Int = DEFAULT_MAX_RECURSION_DEPTH
 ) {
 
     private val logger = Logger.getLogger<SubAgentExecutor>()
@@ -112,17 +125,33 @@ open class SubAgentExecutor(
      */
     private fun generateSubAgentPrompt(
         taskDescription: String,
-        toolset: String
-    ): String = buildSubAgentPrompt(taskDescription, toolset, depth)
+        toolset: String,
+        allowedTools: List<String>,
+        deniedTools: List<String>,
+        availableToolNames: List<String>
+    ): String = buildSubAgentPrompt(
+        taskDescription = taskDescription,
+        toolset = toolset,
+        depth = depth,
+        maxDepth = maxDepth,
+        allowedTools = allowedTools,
+        deniedTools = deniedTools,
+        availableToolNames = availableToolNames
+    )
 
     /**
      * Spawn 一个隔离的子 Agent 执行任务
      *
      * @param parentSessionId 父会话 ID
      * @param taskDescription 任务描述
-     * @param toolset 工具集名称（dev, research, test, browser）
+     * @param toolset 工具集名称（coder/explorer/verifier/webfetcher 或旧别名 dev/research/test/browser）
      * @param contextFiles 子 Agent 需要访问的文件列表
      * @param progressCallback 进度回调（实时汇报给父 agent）
+     * @param maxDepth 6.10.2: 本次任务允许的最大递归深度，范围 [1, 5]，默认 [DEFAULT_MAX_RECURSION_DEPTH]。
+     *                 若越界则直接返回错误，不创建子 Agent。
+     * @param allowedTools 6.10.3: 显式白名单，非空时子 Agent 只能使用列表中的工具。
+     * @param deniedTools 6.10.3: 黑名单，优先于 allowedTools。若显式包含 `delegate_task`，
+     *                    则返回错误（子 Agent 被禁止再委托）。
      */
     open suspend fun spawn(
         parentSessionId: String,
@@ -145,11 +174,43 @@ open class SubAgentExecutor(
          * [spawnParallel] 等老调用方行为不变）。
          */
         subSessionIdOverride: String? = null,
+        /**
+         * 6.6.3: 是否在独立 git worktree 中运行子 Agent。为 true 时会在主项目
+         * 仓库外创建 worktree，子 Agent 的 project basePath 指向 worktree，
+         * 执行完成后自动收集 worktree diff 作为结果的一部分并清理 worktree。
+         */
+        isolatedWorktree: Boolean = false,
+        /**
+         * 6.10.2: 本次任务允许的最大递归深度，范围 [1, 5]，默认 [DEFAULT_MAX_RECURSION_DEPTH]。
+         */
+        maxDepth: Int = this.maxDepth,
+        /**
+         * 6.10.3: 显式工具白名单。
+         */
+        allowedTools: List<String> = emptyList(),
+        /**
+         * 6.10.3: 显式工具黑名单。
+         */
+        deniedTools: List<String> = emptyList(),
     ): SubAgentResult {
+        // 0. maxDepth 范围校验
+        if (maxDepth < 1 || maxDepth > 5) {
+            val msg = "Invalid max_depth=$maxDepth; must be between 1 and 5 inclusive"
+            logger.warn("[SubAgent] $msg")
+            progressCallback("[SubAgent] $msg")
+            return SubAgentResult(
+                success = false,
+                output = msg,
+                sessionId = "invalid_max_depth_${System.currentTimeMillis()}",
+                iterationsUsed = 0,
+                toolsUsed = emptyList()
+            )
+        }
+
         // 1. 递归深度检查
-        if (depth >= MAX_RECURSION_DEPTH) {
+        if (depth >= maxDepth) {
             val msg =
-                "Max sub-agent recursion depth ($MAX_RECURSION_DEPTH) reached at depth=$depth; refusing to spawn further sub-agents"
+                "Max sub-agent recursion depth ($maxDepth) reached at depth=$depth; refusing to spawn further sub-agents"
             logger.warn("[SubAgent] $msg")
             progressCallback("[SubAgent] $msg")
             return SubAgentResult(
@@ -161,7 +222,7 @@ open class SubAgentExecutor(
             )
         }
 
-        logger.info("[SubAgent] Spawning for task: ${taskDescription.take(80)} (depth=$depth)")
+        logger.info("[SubAgent] Spawning for task: ${taskDescription.take(80)} (depth=$depth, maxDepth=$maxDepth)")
 
         val subSessionId = subSessionIdOverride
             ?: "sub_${parentSessionId}_${System.currentTimeMillis()}"
@@ -169,13 +230,61 @@ open class SubAgentExecutor(
             logger.info("[SubAgent] using caller-supplied subSessionId=$subSessionId (events will share this id)")
         }
 
-        // 2. 按 toolset 过滤工具集
-        val subToolRegistry = createToolRegistryForToolset(toolset)
-        val toolCount = subToolRegistry.getAllTools().size
-        logger.info("[SubAgent] Toolset='$toolset' → $toolCount tools available")
+        // 2. 按 toolset + allow/deny 过滤工具集
+        val toolFilterResult = createToolRegistryForToolset(
+            toolset = toolset,
+            projectOverride = project,
+            allowedTools = allowedTools,
+            deniedTools = deniedTools
+        )
+        if (toolFilterResult.isFailure) {
+            val msg = toolFilterResult.exceptionOrNull()?.message
+                ?: "Toolset filter failed"
+            logger.warn("[SubAgent] $msg")
+            progressCallback("[SubAgent] $msg")
+            return SubAgentResult(
+                success = false,
+                output = msg,
+                sessionId = subSessionId,
+                iterationsUsed = 0,
+                toolsUsed = emptyList()
+            )
+        }
+        val subToolRegistry = toolFilterResult.getOrThrow()
+        val availableToolNames = subToolRegistry.getAllTools().map { it.name }
+        val toolCount = availableToolNames.size
+        logger.info("[SubAgent] Toolset='$toolset' → $toolCount tools available (allowed=$allowedTools, denied=$deniedTools)")
 
-        // 3. 构造子 Agent 的独立 system prompt（不再继承主 Agent 的 prompt）
-        val subSystemPrompt = generateSubAgentPrompt(taskDescription, toolset)
+        // 3. 6.6.3: 可选 worktree 隔离
+        var worktreeInfo: WorktreeIsolation.WorktreeInfo? = null
+        val effectiveProject = if (isolatedWorktree) {
+            val repoRoot = project?.basePath
+            if (repoRoot == null) {
+                val msg = "isolated_worktree=true requires a project with basePath"
+                logger.warn("[SubAgent] $msg")
+                progressCallback("[SubAgent] $msg")
+                return SubAgentResult(
+                    success = false,
+                    output = msg,
+                    sessionId = subSessionId,
+                    iterationsUsed = 0,
+                    toolsUsed = emptyList()
+                )
+            }
+            worktreeInfo = WorktreeIsolation.createWorktree(repoRoot, subSessionId)
+            ProjectProxy.create(project, worktreeInfo.worktreePath)
+        } else {
+            project
+        }
+
+        // 4. 构造子 Agent 的独立 system prompt（不再继承主 Agent 的 prompt）
+        val subSystemPrompt = generateSubAgentPrompt(
+            taskDescription = taskDescription,
+            toolset = toolset,
+            allowedTools = allowedTools,
+            deniedTools = deniedTools,
+            availableToolNames = availableToolNames
+        )
         // 日志：记录子 Agent 独立 prompt 的体积。历史曾因继承主 Agent 大 prompt
         // 累积到 152KB+ 触发 MiniMax 2013 错误，refactor 后 prompt 应 < 2KB。
         logger.info(
@@ -197,7 +306,7 @@ open class SubAgentExecutor(
             // 4a. 创建子 AgentCore（注入独立 persistence + 过滤后的 registry + 子深度）
             subAgent = AgentCore(
                 gateway = gateway,
-                project = project,
+                project = effectiveProject,
                 skillToolAdapter = skillToolAdapter,
                 toolRegistryOverride = subToolRegistry,
                 subAgentDepth = depth + 1,
@@ -224,7 +333,7 @@ open class SubAgentExecutor(
                         appendLine()
                         appendLine("### $filePath")
                         try {
-                            val content = readContextFile(filePath)
+                            val content = readContextFile(filePath, effectiveProject)
                             if (content != null) {
                                 appendLine("```")
                                 appendLine(content.take(8000))
@@ -251,6 +360,7 @@ open class SubAgentExecutor(
             var currentTurnText = StringBuilder()
             val toolsUsed = mutableSetOf<String>()
             val completedToolCalls = mutableListOf<ToolCallRecord>()
+
             /** 记录 in-flight tool 的关键参数（ToolCallStart 时抽，到 ToolCallResult 时合并） */
             val inflightToolArgs = mutableMapOf<String, String>()
             var iterationsUsed = 0
@@ -336,8 +446,8 @@ open class SubAgentExecutor(
                 success = false
                 logger.info(
                     "[SubAgent] Cancelled by parent job. " +
-                        "Completed tool calls=${completedToolCalls.size}, " +
-                        "iterationsUsed=$iterationsUsed"
+                            "Completed tool calls=${completedToolCalls.size}, " +
+                            "iterationsUsed=$iterationsUsed"
                 )
                 // 注意：不 appendLine，避免破坏 extractCancelledSummary 的解析
             } catch (e: Exception) {
@@ -364,6 +474,16 @@ open class SubAgentExecutor(
                 )
             }
 
+            // 6.6.3: worktree 隔离模式下收集 diff
+            val worktreeDiff = worktreeInfo?.let {
+                try {
+                    WorktreeIsolation.collectDiff(it)
+                } catch (e: Exception) {
+                    logger.warn("[SubAgent] Failed to collect worktree diff: ${e.message}")
+                    null
+                }
+            }
+
             val result = SubAgentResult(
                 success = success,
                 output = output,
@@ -371,10 +491,15 @@ open class SubAgentExecutor(
                 iterationsUsed = iterationsUsed,
                 toolsUsed = toolsUsed.toList(),
                 cancelled = cancelled,
-                completedToolCalls = completedToolCalls.toList()
+                completedToolCalls = completedToolCalls.toList(),
+                worktreeDiff = worktreeDiff?.rawDiff,
+                worktreeChanges = worktreeDiff?.structuredDiff
             )
 
-            logger.info("[SubAgent] Completed. Success=$success, Tools=${toolsUsed}, Depth=$depth")
+            logger.info(
+                "[SubAgent] Completed. Success=$success, Tools=${toolsUsed}, Depth=$depth, " +
+                        "worktree=${worktreeInfo != null}, hasDiff=${worktreeDiff?.rawDiff?.isNotBlank() == true}"
+            )
             return result
         } finally {
             // 2026-06 修复: 之前直接 deleteRecursively() 会与子 Agent 的异步 saveSession 抢目录 —
@@ -404,6 +529,15 @@ open class SubAgentExecutor(
             } catch (e: Exception) {
                 logger.warn("[SubAgent] Error cleaning up tmp persistence dir: ${e.message}")
             }
+
+            // 6.6.3: 清理 worktree（在 persistence 清理之后，确保子 Agent 写入已落盘）
+            worktreeInfo?.let {
+                try {
+                    WorktreeIsolation.cleanup(it)
+                } catch (e: Exception) {
+                    logger.warn("[SubAgent] Error cleaning up worktree: ${e.message}")
+                }
+            }
         }
     }
 
@@ -425,7 +559,11 @@ open class SubAgentExecutor(
                         taskDescription = config.description,
                         toolset = config.toolset,
                         contextFiles = config.contextFiles,
-                        progressCallback = { progress -> progressCallback(index, progress) }
+                        progressCallback = { progress -> progressCallback(index, progress) },
+                        isolatedWorktree = config.isolatedWorktree,
+                        maxDepth = config.maxDepth,
+                        allowedTools = config.allowedTools,
+                        deniedTools = config.deniedTools
                     )
                 }
             }
@@ -435,8 +573,8 @@ open class SubAgentExecutor(
     /**
      * 读取上下文文件内容
      */
-    private fun readContextFile(path: String): String? {
-        val base = project?.basePath
+    private fun readContextFile(path: String, projectOverride: Project? = null): String? {
+        val base = projectOverride?.basePath ?: project?.basePath
         val resolvedPath = if (base != null && !File(path).isAbsolute) {
             File(base, path).canonicalPath
         } else {
@@ -468,13 +606,29 @@ open class SubAgentExecutor(
      * - dev / research / test / browser
      * - 用 WARN 日志引导迁移到新名
      *
-     * 委托（delegate_task）、记忆（memory_*）始终保留，便于子 Agent 汇报和复用上下文。
+     * 6.10.3 扩展：
+     * - 先按 [toolset] 做原有过滤；
+     * - 若 [allowedTools] 非空，再取交集；
+     * - 最后移除 [deniedTools] 中的工具；
+     * - 若过滤后工具集为空，返回 [Result.failure]；
+     * - 若 [deniedTools] 显式包含 `delegate_task`，返回 [Result.failure]
+     *   （子 Agent 被禁止再委托）。
+     *
+     * 委托（delegate_task）在 toolset 过滤阶段始终保留，便于子 Agent 汇报；
+     * 记忆（memory_*）工具由 [AgentCore.initialize] 后续注入，不在本注册表内。
+     *
+     * @return 过滤后的 [ToolRegistry] 或包含错误信息的 [Result.failure]。
      */
-    private fun createToolRegistryForToolset(toolset: String): ToolRegistry {
+    private fun createToolRegistryForToolset(
+        toolset: String,
+        projectOverride: Project? = null,
+        allowedTools: List<String> = emptyList(),
+        deniedTools: List<String> = emptyList()
+    ): Result<ToolRegistry> {
         val resolved = resolveToolsetAlias(toolset)
-        val registry = ToolRegistry.createDefault(project)
+        val registry = ToolRegistry.createDefault(projectOverride ?: project)
 
-        val allowedNames: Set<String>? = when (resolved) {
+        val baseAllowedNames: Set<String>? = when (resolved) {
             "coder" -> null  // 全部 IDE 工具（默认，开放所有）
             "explorer" -> RESEARCH_TOOLS + ALWAYS_AVAILABLE
             "verifier" -> TEST_TOOLS + ALWAYS_AVAILABLE
@@ -482,17 +636,55 @@ open class SubAgentExecutor(
             else -> null  // 未知 toolset 退化为 coder（保留所有）
         }
 
-        if (allowedNames != null) {
+        if (baseAllowedNames != null) {
             val toRemove = registry.getAllTools()
                 .map { it.name }
-                .filter { it !in allowedNames }
+                .filter { it !in baseAllowedNames }
             toRemove.forEach { name ->
                 registry.unregister(name)
             }
             logger.info("[SubAgent] Toolset='$toolset' (resolved='$resolved') filtered out ${toRemove.size} tools; remaining=${registry.getAllTools().size}")
         }
 
-        return registry
+        // 6.10.3: allowed_tools 白名单再取交集。
+        // 始终保留 ALWAYS_AVAILABLE（delegate_task / memory_*），保证子 Agent 能汇报和继续委托，
+        // 除非后续 denied_tools 显式拒绝它们。
+        if (allowedTools.isNotEmpty()) {
+            val allowedSet = allowedTools.toSet() + ALWAYS_AVAILABLE
+            val toRemove = registry.getAllTools()
+                .map { it.name }
+                .filter { it !in allowedSet }
+            toRemove.forEach { name -> registry.unregister(name) }
+            logger.info("[SubAgent] allowed_tools intersection removed ${toRemove.size} tools; remaining=${registry.getAllTools().size}")
+        }
+
+        // 6.10.3: denied_tools 黑名单最后应用
+        if (deniedTools.isNotEmpty()) {
+            val deniedSet = deniedTools.toSet()
+            val toRemove = registry.getAllTools()
+                .map { it.name }
+                .filter { it in deniedSet }
+            toRemove.forEach { name -> registry.unregister(name) }
+            logger.info("[SubAgent] denied_tools removed ${toRemove.size} tools; remaining=${registry.getAllTools().size}")
+
+            if ("delegate_task" in deniedSet) {
+                return Result.failure(
+                    IllegalArgumentException(
+                        "子 Agent 被禁止再委托：denied_tools 显式包含 delegate_task"
+                    )
+                )
+            }
+        }
+
+        if (registry.getAllTools().isEmpty()) {
+            return Result.failure(
+                IllegalArgumentException(
+                    "Toolset filter resulted in an empty toolset (toolset='$toolset', allowedTools=$allowedTools, deniedTools=$deniedTools)"
+                )
+            )
+        }
+
+        return Result.success(registry)
     }
 
     /**
@@ -508,7 +700,7 @@ open class SubAgentExecutor(
         return if (newName != null) {
             logger.warn(
                 "[SubAgent] Toolset alias deprecated: '$toolset' → '$newName'. " +
-                    "Update your delegate_task call to use the new name."
+                        "Update your delegate_task call to use the new name."
             )
             newName
         } else {
@@ -518,22 +710,41 @@ open class SubAgentExecutor(
 
     /**
      * 子任务配置
+     *
+     * @property description 任务描述
+     * @property toolset 工具集名称
+     * @property contextFiles 子 Agent 需要访问的文件列表
+     * @property isolatedWorktree 6.6.3: 是否在独立 git worktree 中运行
+     * @property maxDepth 6.10.2: 最大递归深度，默认 [DEFAULT_MAX_RECURSION_DEPTH]
+     * @property allowedTools 6.10.3: 显式工具白名单
+     * @property deniedTools 6.10.3: 显式工具黑名单
      */
     data class SubTaskConfig(
         val description: String,
         val toolset: String = "dev",
-        val contextFiles: List<String> = emptyList()
+        val contextFiles: List<String> = emptyList(),
+        /** 6.6.3: 是否在独立 git worktree 中运行 */
+        val isolatedWorktree: Boolean = false,
+        /** 6.10.2: 本次任务允许的最大递归深度 */
+        val maxDepth: Int = DEFAULT_MAX_RECURSION_DEPTH,
+        /** 6.10.3: 显式工具白名单 */
+        val allowedTools: List<String> = emptyList(),
+        /** 6.10.3: 显式工具黑名单 */
+        val deniedTools: List<String> = emptyList()
     )
 
     companion object {
         /**
-         * 子 Agent 最大递归深度。
+         * 子 Agent 默认最大递归深度。
          *
          * 顶层 Agent (depth=0) 可 spawn 子 Agent (depth=1)；
-         * 子 Agent (depth=1) 在尝试 spawn 孙子 Agent 时被拒绝（>=MAX）。
+         * 子 Agent (depth=1) 在尝试 spawn 孙子 Agent 时被拒绝（>=默认深度）。
          * 即：parent → sub → sub-sub 这一层就被拦截。
+         *
+         * 可通过 [SubAgentExecutor.maxDepth] 或 [SubTaskConfig.maxDepth] / `delegate_task.max_depth`
+         * 在 [1, 5] 范围内按任务覆盖。
          */
-        const val MAX_RECURSION_DEPTH: Int = 2
+        const val DEFAULT_MAX_RECURSION_DEPTH: Int = 2
 
         /**
          * 纯函数版：提取子 Agent 的"最终 turn"输出文本。
@@ -559,11 +770,12 @@ open class SubAgentExecutor(
             allText.isNotBlank() -> {
                 logger.warn(
                     "[SubAgent] final turn was empty after ${iterationsUsed} iterations; " +
-                        "falling back to all accumulated text (length=${allText.length}). " +
-                        "Sub-agent did not honor the Final-Turn Output Contract."
+                            "falling back to all accumulated text (length=${allText.length}). " +
+                            "Sub-agent did not honor the Final-Turn Output Contract."
                 )
                 allText
             }
+
             else -> "(sub-agent produced no output)"
         }
 
@@ -585,9 +797,11 @@ open class SubAgentExecutor(
                 "read_file", "write_file", "edit_file", "delete_file", "find_file",
                 "get_file_info", "get_file_summary", "find_usages", "analyze_symbol",
                 "get_inheritance_chain" -> listOf("path", "file_path")
+
                 "grep_code", "search_code", "semantic_search", "symbol_search" -> listOf(
                     "pattern", "query", "path", "directory"
                 )
+
                 "run_command", "run_tests", "exec_shell" -> listOf("command", "cmd", "shell_command")
                 "http_request", "web_scraper" -> listOf("url", "uri")
                 "list_directory" -> listOf("path", "directory")
@@ -688,12 +902,27 @@ open class SubAgentExecutor(
          *
          * v2 重构：**不再继承主 Agent 的 prompt**。子 Agent 拥有自己的最小化
          * system prompt（~1.2KB），专注于"我是谁、要做什么、有什么工具、输出什么"。
+         *
+         * 6.10.2/6.10.3 扩展：支持动态 [maxDepth]、白名单 [allowedTools]、黑名单 [deniedTools]
+         * 以及实际可用工具名 [availableToolNames] 的注入。
+         *
+         * @param taskDescription 任务描述
+         * @param toolset 工具集名称
+         * @param depth 当前深度
+         * @param maxDepth 允许的最大递归深度
+         * @param allowedTools 显式白名单（空表示未限制）
+         * @param deniedTools 显式黑名单（空表示未限制）
+         * @param availableToolNames 实际可用工具名列表，用于提示模型
          */
         @JvmStatic
         fun buildSubAgentPrompt(
             taskDescription: String,
             toolset: String,
-            depth: Int
+            depth: Int,
+            maxDepth: Int = DEFAULT_MAX_RECURSION_DEPTH,
+            allowedTools: List<String> = emptyList(),
+            deniedTools: List<String> = emptyList(),
+            availableToolNames: List<String> = emptyList()
         ): String = buildString {
             appendLine("You are a specialized sub-agent in the CodeSage multi-agent system.")
             appendLine()
@@ -704,6 +933,18 @@ open class SubAgentExecutor(
             appendLine("## Tools")
             appendLine()
             appendLine("You have access to the `$toolset` toolset only. Tool names, descriptions, and parameter schemas are passed separately in the request. Do not attempt to use tools outside this set.")
+            if (availableToolNames.isNotEmpty()) {
+                appendLine()
+                appendLine("Available tools: ${availableToolNames.sorted().joinToString(", ")}")
+            }
+            if (allowedTools.isNotEmpty()) {
+                appendLine()
+                appendLine("Allowed tools (whitelist): ${allowedTools.sorted().joinToString(", ")}")
+            }
+            if (deniedTools.isNotEmpty()) {
+                appendLine()
+                appendLine("Denied tools (blacklist): ${deniedTools.sorted().joinToString(", ")}")
+            }
             appendLine()
             appendLine("## Operating Rules")
             appendLine()
@@ -736,7 +977,7 @@ open class SubAgentExecutor(
             appendLine()
             appendLine("## Recursion")
             appendLine()
-            appendLine("You are at depth=$depth of max=$MAX_RECURSION_DEPTH. Further delegation is not allowed.")
+            appendLine("You are at depth=$depth of max=$maxDepth. Further delegation is not allowed.")
         }.trimEnd()
 
         /**

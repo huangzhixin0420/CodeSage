@@ -68,6 +68,14 @@ object JsonArgDecoders {
         return prim.intOrNull ?: default
     }
 
+    /** 取可空 int 字段；字段不存在或类型不匹配时返回 null */
+    fun intArgOrNull(args: JsonObject, key: String): Int? {
+        val el = args[key] ?: return null
+        if (el is JsonNull) return null
+        val prim = el as? JsonPrimitive ?: return null
+        return prim.intOrNull
+    }
+
     /** 取 long 字段 */
     fun longArg(args: JsonObject, key: String, default: Long = 0L): Long {
         val el = args[key] ?: return default

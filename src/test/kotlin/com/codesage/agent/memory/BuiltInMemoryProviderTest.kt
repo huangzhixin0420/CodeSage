@@ -282,4 +282,50 @@ class BuiltInMemoryProviderTest {
         }
         assertNotNull(driverClass)
     }
+
+    // ===== 6.9.1 向量语义召回 =====
+
+    @Test
+    fun `vector semantic recall returns related memory without exact keywords`() {
+        // 记忆里没有 "language"，但向量召回应能通过 Kotlin/programming 语义关联
+        provider.syncTurn(
+            "I prefer Kotlin for all new code",
+            "Understood, I will use Kotlin.",
+            sessionId
+        )
+
+        val result = provider.handleToolCall(
+            "memory_search",
+            mapOf("query" to "What is the user's favorite programming language?", "limit" to 5)
+        )
+        assertTrue(result.contains("\"success\":true"), "Search should succeed")
+        assertTrue(
+            result.contains("Kotlin") || result.contains("prefer"),
+            "Vector recall should find Kotlin memory: $result"
+        )
+    }
+
+    // ===== 6.9.2 自动会话摘要与关键事实提取 =====
+
+    @Test
+    fun `onSessionEnd extracts key facts and persists them as memories`() {
+        val messages = listOf(
+            com.codesage.model.dto.Message.userMessage("I prefer dark theme for the IDE"),
+            com.codesage.model.dto.Message.assistantMessage("Got it, I'll use dark theme."),
+            com.codesage.model.dto.Message.userMessage("Let's use Kotlin for this project"),
+            com.codesage.model.dto.Message.assistantMessage("Kotlin it is.")
+        )
+
+        provider.onSessionEnd(messages)
+
+        val searchResult = provider.handleToolCall(
+            "memory_search",
+            mapOf("query" to "dark theme", "limit" to 5)
+        )
+        assertTrue(searchResult.contains("\"success\":true"))
+        assertTrue(
+            searchResult.contains("dark theme") || searchResult.contains("Preference"),
+            "Session end should persist dark theme fact: $searchResult"
+        )
+    }
 }

@@ -82,6 +82,9 @@ function stringToHslColor(str, s = 65, l = 48) {
   return `hsl(${h} ${s}% ${l}%)`;
 }
 
+/** 输入区最大字符数 */
+const MAX_INPUT_LENGTH = 4000;
+
 // ===== 简易 toast 兜底(若 cs-toast 没暴露) =====
 const _toast = window.CodeSage?.toast ||
   toast || {
@@ -127,6 +130,7 @@ class ChatView {
       this.inputAttachmentsEl = document.getElementById("input-attachments");
       this.contextChipsEl = document.getElementById("context-chips");
       this.inputContainer = document.getElementById("input-container");
+      this.charCountEl = document.getElementById("input-char-count");
       this.hintModel = document.getElementById("hint-model");
       this.sessionTitleEl = document.getElementById("session-title");
       this.appContainer = document.getElementById("app-container");
@@ -403,7 +407,51 @@ class ChatView {
       ta.style.height = "auto";
       ta.style.height = Math.min(ta.scrollHeight, 240) + "px";
     };
-    ta.addEventListener("input", autoResize);
+
+    // 字符计数与上限控制
+    const updateCharCount = () => {
+      const len = ta.value.length;
+      if (this.charCountEl) {
+        this.charCountEl.textContent = `${len} / ${MAX_INPUT_LENGTH}`;
+        this.charCountEl.classList.toggle(
+          "warning",
+          len >= 3600 && len < MAX_INPUT_LENGTH,
+        );
+        this.charCountEl.classList.toggle("error", len >= MAX_INPUT_LENGTH);
+      }
+    };
+    this._updateCharCount = updateCharCount;
+
+    const enforceMaxLength = () => {
+      if (ta.value.length > MAX_INPUT_LENGTH) {
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        ta.value = ta.value.substring(0, MAX_INPUT_LENGTH);
+        // 尽量保持光标/选区在合理位置
+        const newPos = Math.min(start, MAX_INPUT_LENGTH);
+        try {
+          ta.setSelectionRange(newPos, Math.min(end, MAX_INPUT_LENGTH));
+        } catch (e) {
+          /* ignore */
+        }
+        return true;
+      }
+      return false;
+    };
+
+    ta.addEventListener("input", (e) => {
+      const truncated = enforceMaxLength();
+      autoResize();
+      updateCharCount();
+      if (
+        truncated &&
+        e.inputType &&
+        e.inputType.startsWith("insertFromPaste")
+      ) {
+        _toast?.error?.(`已自动截断至 ${MAX_INPUT_LENGTH} 字符`);
+      }
+    });
+    updateCharCount();
 
     // 上下文 chip 区
     this._contextChips = new ContextChips({
@@ -422,6 +470,10 @@ class ChatView {
       const hasChips =
         this._contextChips && this._contextChips.getItems().length > 0;
       if (!v.trim() && this._inputAttachments.length === 0 && !hasChips) return;
+      if (v.length >= MAX_INPUT_LENGTH) {
+        _toast?.error?.(`已达到 ${MAX_INPUT_LENGTH} 字符上限`);
+        return;
+      }
       if (this._isGenerating) {
         this._interrupt();
         return;
@@ -654,6 +706,7 @@ class ChatView {
     const messageText = chipPayload.text ? `${chipPayload.text}\n${v}` : v;
     this.inputTextarea.value = "";
     this.inputTextarea.style.height = "auto";
+    this._updateCharCount?.();
     // attachments 通过 bridge 传给后端,不在前端渲染
     bridge.send({
       type: "send_message",
@@ -891,6 +944,7 @@ class ChatView {
         this.inputTextarea.value = prompt;
         this.inputTextarea.focus();
         this.inputTextarea.setSelectionRange(prompt.length, prompt.length);
+        this._updateCharCount?.();
       });
     });
   }
@@ -929,6 +983,7 @@ class ChatView {
     if (this.inputTextarea) {
       this.inputTextarea.value = "";
       this.inputTextarea.style.height = "auto";
+      this._updateCharCount?.();
     }
     this._inputAttachments = [];
     this._renderInputAttachments();
@@ -1420,6 +1475,13 @@ class ChatView {
     const tc = this.toolCalls.get(toolId);
     if (!tc || tc.hidden) return;
     tc.appendDelta(delta);
+  }
+
+  _onCommandOutputDelta(turnId, msg) {
+    const tc = this.toolCalls.get(msg.toolId);
+    if (!tc || tc.hidden) return;
+    tc.appendCommandOutput(msg);
+    this._maybeScrollToBottom(true);
   }
 
   _onToolCallComplete(turnId, toolId, success, result) {

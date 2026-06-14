@@ -2,10 +2,11 @@ package com.codesage.agent.tools.handlers
 
 import com.codesage.agent.tools.*
 import com.codesage.model.dto.Tool
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.*
 import java.io.File
+import java.nio.file.FileSystems
+import java.nio.file.Files
+import java.nio.file.Paths
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -27,6 +28,90 @@ object IDEFileHandlers {
 
     fun createFindFileHandler(ideTools: IDETools): ToolHandler =
         FunctionalToolHandler(findFileTool()) { ideTools.findFile(it) }
+
+    /**
+     * 6.3.2 新增：glob 模式批量定位文件/目录。
+     *
+     * 支持 `**` 递归匹配；默认排除常见生成目录；返回 `matches[]` 与 `truncated` 标记。
+     */
+    fun createGlobHandler(ideTools: IDETools): ToolHandler =
+        FunctionalToolHandler(globTool()) { args ->
+            val pattern = args["pattern"]?.jsonPrimitive?.content
+                ?: return@FunctionalToolHandler ToolResult.Error("Missing 'pattern' parameter")
+            val path = args["path"]?.jsonPrimitive?.content
+            val maxResults = (args["max_results"]?.jsonPrimitive?.intOrNull ?: 100).coerceIn(1, 1000)
+            val includeDirs = args["include_dirs"]?.jsonPrimitive?.booleanOrNull ?: false
+            val includeHidden = args["include_hidden"]?.jsonPrimitive?.booleanOrNull ?: false
+            val excludeDirs = args["exclude_dirs"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet()
+                ?: setOf("node_modules", ".git", "build", ".gradle", "target", "__pycache__", ".idea")
+
+            val searchPath = ideTools.resolveWorkingDir(path)
+
+            val rootFile = File(searchPath)
+            if (!rootFile.exists()) {
+                return@FunctionalToolHandler ToolResult.Error("Path not found: $searchPath")
+            }
+
+            try {
+                val matcher = FileSystems.getDefault().getPathMatcher("glob:$pattern")
+                val rootPath = rootFile.toPath()
+                val matches = mutableListOf<JsonObject>()
+                var truncated = false
+
+                Files.walk(rootPath).use { stream ->
+                    stream.forEach { p ->
+                        if (matches.size >= maxResults) {
+                            truncated = true
+                            return@forEach
+                        }
+
+                        val file = p.toFile()
+                        val relative = rootPath.relativize(p).toString().replace("\\", "/")
+                        if (relative.isEmpty()) return@forEach
+
+                        if (!includeHidden && (file.name.startsWith(".") || relative.split("/")
+                                .any { it.startsWith(".") })
+                        ) {
+                            return@forEach
+                        }
+                        if (excludeDirs.any { dir -> relative.split("/").contains(dir) }) {
+                            return@forEach
+                        }
+
+                        val isDirectory = Files.isDirectory(p)
+                        if (!includeDirs && isDirectory) return@forEach
+
+                        val fileNamePath = p.fileName ?: return@forEach
+                        if (matcher.matches(fileNamePath) || matcher.matches(Paths.get(relative))) {
+                            matches.add(
+                                JsonObject(
+                                    mapOf(
+                                        "name" to JsonPrimitive(fileNamePath.toString()),
+                                        "path" to JsonPrimitive(p.toString().replace("\\", "/")),
+                                        "is_directory" to JsonPrimitive(isDirectory)
+                                    )
+                                )
+                            )
+                        }
+                    }
+                }
+
+                ToolResult.Success(
+                    JsonObject(
+                        mapOf(
+                            "pattern" to JsonPrimitive(pattern),
+                            "path" to JsonPrimitive(searchPath),
+                            "matches" to JsonArray(matches),
+                            "total" to JsonPrimitive(matches.size),
+                            "truncated" to JsonPrimitive(truncated),
+                            "max_results" to JsonPrimitive(maxResults)
+                        )
+                    )
+                )
+            } catch (e: Exception) {
+                ToolResult.Error("glob failed: ${e.message}")
+            }
+        }
 
     fun createGrepCodeHandler(ideTools: IDETools): ToolHandler =
         FunctionalToolHandler(grepCodeTool()) { ideTools.grepCode(it) }
@@ -61,6 +146,11 @@ object IDEFileHandlers {
             override val tool: Tool = runCommandTool()
             override suspend fun execute(args: JsonObject): ToolResult =
                 ideTools.runCommand(args)
+
+            override suspend fun execute(
+                args: JsonObject,
+                onStream: suspend (com.codesage.agent.core.AgentStreamEvent) -> Unit
+            ): ToolResult = ideTools.runCommand(args, onStream = onStream)
         }
 
     fun createGetProjectStructureHandler(ideTools: IDETools): ToolHandler =

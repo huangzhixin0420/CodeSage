@@ -38,15 +38,22 @@ class ToolExecutor(
     private val codeInsightExecutor = CodeInsightExecutor(project)
 
     /**
-     * 执行单个工具调用（带重试）
-     * @return 工具执行结果的 JSON 字符串
-     *
-     * T7.2 修复：工具调用追踪关联
-     * - 如果提供了 tracer + traceContext，每次工具执行创建 child span
-     * - span 记录：tool name, args (摘要), duration, success/error
-     * - span 完成后写入 EventHistory 供 Observability 面板展示
+     * 执行单个工具调用（带重试，非流式）。
      */
-    suspend fun execute(toolCall: ToolCall): String {
+    suspend fun execute(toolCall: ToolCall): String = execute(toolCall) { }
+
+    private val noOpStream: suspend (com.codesage.agent.core.AgentStreamEvent) -> Unit = { }
+
+    /**
+     * 执行单个工具调用（带重试），支持流式事件回调。
+     *
+     * @param onStream 若工具支持流式执行，会通过该回调发送中间事件；
+     *                 回调接收的事件会被注入当前 [toolCall.id]。
+     */
+    suspend fun execute(
+        toolCall: ToolCall,
+        onStream: suspend (com.codesage.agent.core.AgentStreamEvent) -> Unit = noOpStream
+    ): String {
         logger.info("Executing tool: ${toolCall.name} with args: ${toolCall.arguments}")
         val startTime = System.currentTimeMillis()
 
@@ -108,7 +115,7 @@ class ToolExecutor(
             }
 
             // 3. 执行工具（带重试）
-            val result = executeToolWithRetry(toolCall, args)
+            val result = executeToolWithRetry(toolCall, args, onStream)
 
             // 4. Guardrails 后置处理（截断）
             val processedResult = guardrails?.postProcess(toolCall.name, result) ?: result
@@ -190,14 +197,18 @@ class ToolExecutor(
      * 执行工具（带重试机制）
      * 仅对瞬时错误（IO异常、超时、进程锁等）进行重试，永久性错误（文件不存在、未知工具等）不重试
      */
-    private suspend fun executeToolWithRetry(toolCall: ToolCall, args: JsonObject): ToolResult {
+    private suspend fun executeToolWithRetry(
+        toolCall: ToolCall,
+        args: JsonObject,
+        onStream: suspend (com.codesage.agent.core.AgentStreamEvent) -> Unit?
+    ): ToolResult {
         val maxRetries = 2
         val baseDelayMs = 500L
 
         var lastException: Exception? = null
         for (attempt in 0..maxRetries) {
             try {
-                return executeToolOnce(toolCall, args)
+                return executeToolOnce(toolCall, args, onStream)
             } catch (e: Exception) {
                 lastException = e
                 if (attempt < maxRetries && isRetryableError(e)) {
@@ -226,12 +237,29 @@ class ToolExecutor(
      * T6.1 修复：移除硬编码 when 路由。所有工具都应该通过 ToolRegistry 注册为 handler。
      * 如果遇到未注册的工具名，返回错误（不再走 fallback to 硬编码路径）。
      */
-    private suspend fun executeToolOnce(toolCall: ToolCall, args: JsonObject): ToolResult {
+    private suspend fun executeToolOnce(
+        toolCall: ToolCall,
+        args: JsonObject,
+        onStream: suspend (com.codesage.agent.core.AgentStreamEvent) -> Unit?
+    ): ToolResult {
         val handler = toolRegistry?.getHandler(toolCall.name)
             ?: return ToolResult.Error("Unknown tool: ${toolCall.name}. Tool must be registered via ToolRegistry.register() before use.")
 
         logger.debug("[ToolExecutor] Routing '${toolCall.name}' to ToolHandler")
-        return handler.execute(args)
+        return if (onStream != null) {
+            handler.execute(args) { event ->
+                // 为流式事件注入当前 toolCall.id，保证 UI 正确关联
+                val injected = when (event) {
+                    is com.codesage.agent.core.AgentStreamEvent.CommandOutputStream ->
+                        if (event.toolCallId.isEmpty()) event.copy(toolCallId = toolCall.id) else event
+
+                    else -> event
+                }
+                onStream(injected)
+            }
+        } else {
+            handler.execute(args)
+        }
     }
 
     /**
@@ -255,6 +283,7 @@ class ToolExecutor(
                 // 视为瞬时错误，可重试
                 true
             }
+
             else -> {
                 val msg = error.message?.lowercase() ?: ""
                 // Git 索引锁、文件被占用等临时错误

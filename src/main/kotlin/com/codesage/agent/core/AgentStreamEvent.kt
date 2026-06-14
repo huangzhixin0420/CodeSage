@@ -27,6 +27,28 @@ sealed class AgentStreamEvent {
     ) : AgentStreamEvent()
 
     /**
+     * 命令执行期间的流式输出增量。
+     *
+     * 与 [ToolCallDelta] 分离：后者用于 LLM 工具参数的 JSON 片段累积；
+     * 本事件承载结构化命令输出（stdout / stderr / exitCode / done）。
+     *
+     * @param toolCallId 关联的工具调用 ID（可能为空，由外层 ToolExecutor 注入）
+     * @param stdout 本批次 stdout 增量
+     * @param stderr 本批次 stderr 增量
+     * @param exitCode 进程最终退出码；仅在 [done] 为 true 时有效
+     * @param processId 后台进程 ID（同步命令为空）
+     * @param done 命令是否已结束
+     */
+    data class CommandOutputStream(
+        val toolCallId: String = "",
+        val stdout: String = "",
+        val stderr: String = "",
+        val exitCode: Int? = null,
+        val processId: String = "",
+        val done: Boolean = false
+    ) : AgentStreamEvent()
+
+    /**
      * 工具调用执行完成
      */
     data class ToolCallResult(
@@ -71,11 +93,25 @@ sealed class AgentStreamEvent {
 
     /**
      * 子 Agent 开始执行
+     *
+     * @param sessionId 子 Agent 会话 ID，用于 SubAgentComplete / SubAgentProgress 路由
+     * @param taskDescription 子任务描述
+     * @param toolset 子 Agent 使用的工具集名称
+     * @param maxDepth 6.10.4: 子 Agent 允许的最大递归深度，默认 [SubAgentExecutor.DEFAULT_MAX_RECURSION_DEPTH]
+     * @param allowedTools 6.10.4: 显式允许的工具白名单（空表示未限制）
+     * @param deniedTools 6.10.4: 显式拒绝的工具黑名单
+     * @param depth 6.10.4: 当前递归深度（用于 UI 展示 "当前/最大"）
+     * @param delegationForbidden 6.10.4: 当 [deniedTools] 包含 "delegate_task" 时为 true，UI 可显示红色警示
      */
     data class SubAgentStart(
         val sessionId: String,
         val taskDescription: String,
-        val toolset: String
+        val toolset: String,
+        val maxDepth: Int = SubAgentExecutor.DEFAULT_MAX_RECURSION_DEPTH,
+        val allowedTools: List<String> = emptyList(),
+        val deniedTools: List<String> = emptyList(),
+        val depth: Int = 0,
+        val delegationForbidden: Boolean = false
     ) : AgentStreamEvent()
 
     /**

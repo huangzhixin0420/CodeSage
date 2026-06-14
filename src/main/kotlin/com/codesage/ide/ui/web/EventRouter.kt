@@ -98,6 +98,18 @@ class EventRouter {
                 "delta" to e.delta,
             )
         }
+        register<AgentStreamEvent.CommandOutputStream> { e, turnId ->
+            mapOf(
+                "type" to "command_output_delta",
+                "turnId" to turnId,
+                "toolId" to e.toolCallId,
+                "stdout" to e.stdout,
+                "stderr" to e.stderr,
+                "exitCode" to e.exitCode,
+                "processId" to e.processId,
+                "done" to e.done,
+            )
+        }
         register<AgentStreamEvent.ToolCallResult> { e, turnId ->
             mapOf(
                 "type" to "tool_call_complete",
@@ -137,7 +149,15 @@ class EventRouter {
                 "toolId" to e.sessionId,
                 "toolName" to "subagent",
                 "summary" to e.taskDescription,
-                "arguments" to mapOf("toolset" to e.toolset, "task" to e.taskDescription),
+                "arguments" to mapOf(
+                    "toolset" to e.toolset,
+                    "task" to e.taskDescription,
+                    "maxDepth" to e.maxDepth,
+                    "allowedTools" to e.allowedTools,
+                    "deniedTools" to e.deniedTools,
+                    "depth" to e.depth,
+                    "delegationForbidden" to e.delegationForbidden,
+                ),
                 "startTimeMs" to System.currentTimeMillis(),
             )
         }
@@ -148,8 +168,8 @@ class EventRouter {
             if (!lastSubAgentStart.containsKey(e.sessionId)) {
                 logger.warn(
                     "[EventRouter] SubAgentComplete.sessionId=${e.sessionId} has no matching " +
-                        "SubAgentStart; task/toolset/elapsedMs will be empty/0. " +
-                        "Check EnhancedAgentLoop.executeDelegateTask sessionId unification."
+                            "SubAgentStart; task/toolset/elapsedMs will be empty/0. " +
+                            "Check EnhancedAgentLoop.executeDelegateTask sessionId unification."
                 )
             }
             mapOf(

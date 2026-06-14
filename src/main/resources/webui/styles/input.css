@@ -131,12 +131,37 @@
     border: none;
     outline: none;
     resize: none;
-    padding: 0;
+    padding: 0 0 18px;
     word-break: break-word;
 }
 
 .input-textarea::placeholder {
     color: var(--fg-tertiary);
+}
+
+/* Character counter — positioned at textarea bottom-right */
+.input-char-count {
+    position: absolute;
+    right: var(--space-3);
+    bottom: 0;
+    padding: 2px 6px;
+    font-size: var(--text-2xs);
+    line-height: 1;
+    color: var(--fg-tertiary);
+    background: var(--surface-raised);
+    border-radius: var(--radius-md);
+    user-select: none;
+    pointer-events: none;
+    transition: color var(--duration-fast) var(--ease-out);
+    z-index: var(--z-elevated);
+}
+
+.input-char-count.warning {
+    color: var(--warning);
+}
+
+.input-char-count.error {
+    color: var(--error);
 }
 
 .input-toolbar {

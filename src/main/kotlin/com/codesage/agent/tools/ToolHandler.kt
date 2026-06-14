@@ -1,5 +1,6 @@
 package com.codesage.agent.tools
 
+import com.codesage.agent.core.AgentStreamEvent
 import com.codesage.model.dto.Tool
 import kotlinx.serialization.json.JsonObject
 
@@ -21,6 +22,21 @@ interface ToolHandler {
      * @return 工具执行结果
      */
     suspend fun execute(args: JsonObject): ToolResult
+
+    /**
+     * 执行支持流式事件发射的工具调用。
+     *
+     * 默认实现直接调用 [execute(args)]，忽略流式回调。需要流式输出能力的工具
+     * （如 [run_command]）可重写此方法，在执行过程中通过 [onStream] 发射
+     * [AgentStreamEvent.CommandOutputStream] 等事件。
+     *
+     * @param args AI 模型传入的参数
+     * @param onStream 流式事件发射回调；实现方应保证不抛异常，避免中断工具执行
+     * @return 工具执行结果
+     */
+    suspend fun execute(args: JsonObject, onStream: suspend (AgentStreamEvent) -> Unit): ToolResult {
+        return execute(args)
+    }
 
     /**
      * 工具名称（从 tool 中派生，便于快速访问）
@@ -47,4 +63,23 @@ class FunctionalToolHandler(
     private val executor: (JsonObject) -> ToolResult
 ) : ToolHandler {
     override suspend fun execute(args: JsonObject): ToolResult = executor(args)
+}
+
+/**
+ * 函数式工具处理器（支持流式回调）。
+ *
+ * 当工具被 [ToolExecutor] 以流式方式调用时，会走 [executorStreaming]；
+ * 非流式调用或 handler 未提供流式闭包时，回退到普通 [executor]。
+ */
+class StreamingFunctionalToolHandler(
+    override val tool: Tool,
+    private val executor: (JsonObject) -> ToolResult,
+    private val executorStreaming: suspend (JsonObject, suspend (AgentStreamEvent) -> Unit) -> ToolResult
+) : ToolHandler {
+    override suspend fun execute(args: JsonObject): ToolResult = executor(args)
+
+    override suspend fun execute(
+        args: JsonObject,
+        onStream: suspend (AgentStreamEvent) -> Unit
+    ): ToolResult = executorStreaming(args, onStream)
 }

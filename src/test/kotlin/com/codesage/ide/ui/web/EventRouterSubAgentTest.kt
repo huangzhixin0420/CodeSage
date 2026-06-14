@@ -1,6 +1,7 @@
 package com.codesage.ide.ui.web
 
 import com.codesage.agent.core.AgentStreamEvent
+import com.codesage.agent.core.SubAgentExecutor
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 
@@ -32,6 +33,12 @@ class EventRouterSubAgentTest {
         assertNotNull(args)
         assertEquals("code-search", args!!["toolset"])
         assertEquals("搜索代码", args["task"])
+        // 6.10.4: 默认字段也应透传到 Web UI 参数
+        assertEquals(SubAgentExecutor.DEFAULT_MAX_RECURSION_DEPTH, args["maxDepth"])
+        assertEquals(emptyList<String>(), args["allowedTools"])
+        assertEquals(emptyList<String>(), args["deniedTools"])
+        assertEquals(0, args["depth"])
+        assertEquals(false, args["delegationForbidden"])
     }
 
     @Test

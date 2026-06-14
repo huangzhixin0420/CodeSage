@@ -129,11 +129,31 @@ data class McpServerEntry(
     val url: String = "",                    // for http/websocket
     val enabled: Boolean = true,
     val env: Map<String, String> = emptyMap(),
+    /**
+     * 6.11.1：覆盖全局的每服务器工具数量上限。null 表示使用 McpSection.maxToolsPerServer。
+     */
+    val maxTools: Int? = null,
+    /**
+     * 6.11.2：该服务器允许暴露的工具白名单（支持 `*` / `?` 通配符）。空列表表示不限制。
+     */
+    val allowedTools: List<String> = emptyList(),
+    /**
+     * 6.11.2：该服务器拒绝暴露的工具黑名单（支持 `*` / `?` 通配符）。优先于 allowedTools。
+     */
+    val deniedTools: List<String> = emptyList(),
 )
 
 @Serializable
 data class McpSection(
     val servers: List<McpServerEntry> = emptyList(),
+    /**
+     * 6.11.1：每个 MCP 服务器默认向 LLM 暴露的最大工具数。
+     */
+    val maxToolsPerServer: Int = 40,
+    /**
+     * 6.11.1：是否启用 `mcp_tool_search` 动态工具发现。
+     */
+    val enableDynamicDiscovery: Boolean = true,
 )
 
 /**

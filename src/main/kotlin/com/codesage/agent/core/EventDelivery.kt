@@ -14,6 +14,7 @@ package com.codesage.agent.core
 sealed class EventDelivery {
     /** 状态变更 — 必须精确送达 */
     object Terminal : EventDelivery()
+
     /** 流式文本 — 同 key 可覆盖 */
     object Coalescable : EventDelivery()
 }
@@ -25,7 +26,8 @@ val AgentStreamEvent.delivery: EventDelivery
         is AgentStreamEvent.ModelReasoning -> EventDelivery.Coalescable
         is AgentStreamEvent.Thinking -> EventDelivery.Coalescable
         is AgentStreamEvent.ToolCallDelta -> EventDelivery.Coalescable
-        // 其余 21+ 种全部 Terminal:状态变更类,精确送达
+        is AgentStreamEvent.CommandOutputStream -> EventDelivery.Coalescable
+        // 其余全部 Terminal:状态变更类,精确送达
         else -> EventDelivery.Terminal
     }
 
@@ -42,6 +44,7 @@ val AgentStreamEvent.coalesceKey: String?
         is AgentStreamEvent.ModelReasoning -> "model_reasoning"
         is AgentStreamEvent.Thinking -> "thinking"
         is AgentStreamEvent.ToolCallDelta -> "tool_delta/${this.toolCallId}"
+        is AgentStreamEvent.CommandOutputStream -> "command_output/${this.toolCallId}"
         else -> null
     }
 
@@ -61,13 +64,27 @@ val AgentStreamEvent.coalesceKey: String?
 fun AgentStreamEvent.mergeWith(other: AgentStreamEvent): AgentStreamEvent? = when {
     this is AgentStreamEvent.TextDelta && other is AgentStreamEvent.TextDelta ->
         AgentStreamEvent.TextDelta(this.delta + other.delta)
+
     this is AgentStreamEvent.ModelReasoning && other is AgentStreamEvent.ModelReasoning ->
         // 拼接:模型推理内容是流式累积的
         AgentStreamEvent.ModelReasoning(this.delta + other.delta)
+
     this is AgentStreamEvent.Thinking && other is AgentStreamEvent.Thinking ->
         // latest-wins: Thinking 是状态指示,新值覆盖旧值
         other
+
     this is AgentStreamEvent.ToolCallDelta && other is AgentStreamEvent.ToolCallDelta ->
         AgentStreamEvent.ToolCallDelta(this.toolCallId, this.toolName, this.delta + other.delta)
+
+    this is AgentStreamEvent.CommandOutputStream && other is AgentStreamEvent.CommandOutputStream ->
+        AgentStreamEvent.CommandOutputStream(
+            this.toolCallId,
+            this.stdout + other.stdout,
+            this.stderr + other.stderr,
+            other.exitCode ?: this.exitCode,
+            other.processId.takeIf { it.isNotEmpty() } ?: this.processId,
+            other.done
+        )
+
     else -> null
 }

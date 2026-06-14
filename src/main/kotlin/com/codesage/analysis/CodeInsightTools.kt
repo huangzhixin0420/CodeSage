@@ -38,6 +38,37 @@ object CodeInsightTools {
         )
     )
 
+    fun findCallersTool() = Tool(
+        name = "find_callers",
+        description = "6.5.2: Find all callers of a symbol. Returns structured locations with file_path, line, column, and caller_symbol.",
+        parameters = ToolParameters(
+            properties = mapOf(
+                "symbol_name" to ToolProperty("string", "Symbol name to find callers for"),
+                "file_path" to ToolProperty("string", "Optional file path hint for disambiguation"),
+                "type" to ToolProperty(
+                    "string",
+                    "Symbol type: class, method, field, property",
+                    enum = listOf("class", "method", "field", "property")
+                ),
+                "limit" to ToolProperty("integer", "Maximum number of callers to return, default 50")
+            ),
+            required = listOf("symbol_name")
+        )
+    )
+
+    fun findCalleesTool() = Tool(
+        name = "find_callees",
+        description = "6.5.2: Find all callees of a method or function. Returns structured locations with file_path, line, column, and callee_symbol.",
+        parameters = ToolParameters(
+            properties = mapOf(
+                "symbol_name" to ToolProperty("string", "Symbol name to find callees for"),
+                "file_path" to ToolProperty("string", "Optional file path hint for disambiguation"),
+                "limit" to ToolProperty("integer", "Maximum number of callees to return, default 50")
+            ),
+            required = listOf("symbol_name")
+        )
+    )
+
     fun getInheritanceChainTool() = Tool(
         name = "get_inheritance_chain",
         description = "Get the full inheritance chain for a class (superclasses and interfaces).",
@@ -51,7 +82,7 @@ object CodeInsightTools {
 
     fun semanticSearchTool() = Tool(
         name = "semantic_search",
-        description = "Search for code symbols using natural language descriptions. Finds classes, methods, and fields matching the description.",
+        description = "Search for code symbols using natural language descriptions. Combines local vector semantic similarity, keyword matching, and fuzzy token indexing to find classes, methods, and fields matching the description.",
         parameters = ToolParameters(
             properties = mapOf(
                 "query" to ToolProperty("string", "Natural language description of what you're looking for"),
@@ -84,6 +115,8 @@ object CodeInsightTools {
     fun getAllTools(): List<Tool> = listOf(
         analyzeSymbolTool(),
         findUsagesTool(),
+        findCallersTool(),
+        findCalleesTool(),
         getInheritanceChainTool(),
         semanticSearchTool(),
         getFileSummaryTool(),

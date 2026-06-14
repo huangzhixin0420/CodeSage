@@ -25,9 +25,16 @@ import com.intellij.psi.search.PsiSearchHelper
 import com.intellij.psi.search.TextOccurenceProcessor
 import com.intellij.psi.search.UsageSearchContext
 import com.intellij.util.indexing.FileBasedIndex
+import com.codesage.agent.core.AgentStreamEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
 import java.io.File
@@ -96,6 +103,10 @@ class IDETools(
     /**
      * 读取文件内容
      * 优化：大文件使用 memory-mapped I/O，支持分块读取
+     *
+     * P0 优化 6.1.1：支持可选行号输出。当 `line_numbers=true` 时，
+     * 额外返回 `content_with_line_numbers`，格式与 `cat -n` 一致
+     *（行号右对齐 + tab + 内容），便于模型直接引用真实行号。
      */
     fun readFile(args: JsonObject): ToolResult {
         val path = args["path"]?.jsonPrimitive?.content
@@ -104,6 +115,7 @@ class IDETools(
         val resolvedPath = resolvePath(path)
         val offset = args["offset"]?.jsonPrimitive?.intOrNull
         val limit = args["limit"]?.jsonPrimitive?.intOrNull
+        val lineNumbersRequested = args["line_numbers"]?.jsonPrimitive?.booleanOrNull ?: false
 
         return ApplicationManager.getApplication().runReadAction(Computable {
             try {
@@ -119,10 +131,21 @@ class IDETools(
                     "size" to JsonPrimitive(virtualFile.length),
                 )
 
-                val content: String =
+                val (content, contentStartLine) =
                     if (virtualFile.length > LARGE_FILE_THRESHOLD && offset == null && limit == null) {
                         // 大文件使用 memory-mapped 读取(内部已截断到 CHUNK_LINES)
-                        readLargeFile(virtualFile)
+                        responseFields["total_lines"] = JsonPrimitive(countLines(virtualFile))
+                        readLargeFile(virtualFile) to 0
+                    } else if (virtualFile.length > LARGE_FILE_THRESHOLD && (offset != null || limit != null)) {
+                        // P0 优化 6.1.2：带 offset/limit 的大文件走流式分块，避免全量加载
+                        val chunk = readFileChunk(virtualFile, offset ?: 0, limit ?: Int.MAX_VALUE)
+                        if (offset != null && offset > chunk.totalLines) {
+                            return@Computable ToolResult.Error(pagedErrorMessage(offset, chunk.totalLines))
+                        }
+                        responseFields["total_lines"] = JsonPrimitive(chunk.totalLines)
+                        responseFields["start_line"] = JsonPrimitive(chunk.startLine)
+                        responseFields["end_line"] = JsonPrimitive(chunk.endLine)
+                        chunk.content to chunk.startLine
                     } else {
                         val raw = String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
                         val paged = computePagedContent(raw, offset, limit)
@@ -133,7 +156,7 @@ class IDETools(
                         responseFields["total_lines"] = JsonPrimitive(paged.totalLines)
                         if (paged.startLine != null) responseFields["start_line"] = JsonPrimitive(paged.startLine)
                         if (paged.endLine != null) responseFields["end_line"] = JsonPrimitive(paged.endLine)
-                        paged.content
+                        paged.content to (paged.startLine ?: 0)
                     }
 
                 // 与 readMultipleFiles 对齐: 全文读取路径用 MAX_CONTENT_LENGTH
@@ -146,6 +169,10 @@ class IDETools(
                     safeTruncate(content, MAX_CONTENT_LENGTH)
                 }
                 responseFields["content"] = JsonPrimitive(finalContent)
+                if (lineNumbersRequested) {
+                    responseFields["content_with_line_numbers"] =
+                        JsonPrimitive(addLineNumbers(finalContent, contentStartLine))
+                }
                 if (wasTruncated) {
                     responseFields["truncated"] = JsonPrimitive(true)
                     responseFields["original_length"] = JsonPrimitive(content.length)
@@ -219,6 +246,97 @@ class IDETools(
     }
 
     /**
+     * P0 优化 6.1.2：流式分页读取结果。
+     */
+    internal data class ChunkResult(
+        val content: String,
+        val totalLines: Int,
+        val startLine: Int,
+        val endLine: Int,
+    )
+
+    /**
+     * 统计 ByteBuffer 中的行数（按换行符分割，与 Kotlin String.lines() 语义一致）。
+     */
+    internal fun countLines(buffer: ByteBuffer): Int {
+        if (!buffer.hasRemaining()) return 0
+        var count = 0
+        while (buffer.hasRemaining()) {
+            if (buffer.get() == '\n'.code.toByte()) count++
+        }
+        // 与 Kotlin String.lines() 对齐：非空文件总有一行“最后一行”，
+        // 无论末尾是否有换行；末尾有换行时额外产生一个空行。
+        return count + 1
+    }
+
+    /**
+     * 在已 map 的 buffer 上读取 [offset, offset + limit) 行，不一次性加载整个文件。
+     *
+     * 行号约定：offset 为 0-based 行索引；返回的 [startLine, endLine) 亦为 0-based。
+     */
+    internal fun readChunkFromBuffer(buffer: ByteBuffer, offset: Int, limit: Int): ChunkResult {
+        val totalLines = countLines(buffer).also { buffer.rewind() }
+        if (offset >= totalLines) {
+            return ChunkResult("", totalLines, totalLines, totalLines)
+        }
+
+        val sb = StringBuilder()
+        var lineCount = 0
+        var collected = 0
+        var lineBuf = ByteArray(8192)
+        var linePos = 0
+        val target = limit.coerceAtLeast(0)
+
+        while (buffer.hasRemaining() && collected < target) {
+            val b = buffer.get()
+            if (b == '\n'.code.toByte()) {
+                lineCount++
+                if (lineCount > offset) {
+                    sb.append(String(lineBuf, 0, linePos, StandardCharsets.UTF_8))
+                    sb.append('\n')
+                    collected++
+                }
+                linePos = 0
+            } else {
+                if (linePos >= lineBuf.size) {
+                    lineBuf = lineBuf.copyOf(lineBuf.size * 2)
+                }
+                lineBuf[linePos++] = b
+            }
+        }
+
+        // EOF 且末行没有换行符
+        if (linePos > 0 && collected < target) {
+            lineCount++
+            if (lineCount > offset) {
+                sb.append(String(lineBuf, 0, linePos, StandardCharsets.UTF_8))
+                sb.append('\n')
+                collected++
+            }
+        }
+
+        val start = offset.coerceIn(0, totalLines)
+        val end = (start + collected).coerceIn(start, totalLines)
+        return ChunkResult(sb.toString(), totalLines, start, end)
+    }
+
+    private fun countLines(virtualFile: VirtualFile): Int {
+        val file = File(virtualFile.path)
+        FileChannel.open(file.toPath(), StandardOpenOption.READ).use { channel ->
+            val buffer: MappedByteBuffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size())
+            return countLines(buffer)
+        }
+    }
+
+    private fun readFileChunk(virtualFile: VirtualFile, offset: Int, limit: Int): ChunkResult {
+        val file = File(virtualFile.path)
+        FileChannel.open(file.toPath(), StandardOpenOption.READ).use { channel ->
+            val buffer: MappedByteBuffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size())
+            return readChunkFromBuffer(buffer, offset, limit)
+        }
+    }
+
+    /**
      * 分页读取 raw 文本内容(offset / limit → content)。
      * 返回 null 表示 offset 越界(由调用方构造明确错误信息)。
      *
@@ -238,6 +356,10 @@ class IDETools(
 
     internal fun pagedErrorMessage(offset: Int, raw: String): String {
         val totalLines = raw.lines().size
+        return "offset $offset out of range: file has $totalLines lines"
+    }
+
+    internal fun pagedErrorMessage(offset: Int, totalLines: Int): String {
         return "offset $offset out of range: file has $totalLines lines"
     }
 
@@ -274,6 +396,23 @@ class IDETools(
         var end = maxChars
         if (content[end - 1].isHighSurrogate()) end--
         return content.substring(0, end) to true
+    }
+
+    /**
+     * 为文本内容添加 `cat -n` 风格的行号。
+     *
+     * @param content 原始文本（可能已被截断）
+     * @param startLine 起始行的 0-based 索引，用于 offset/limit 分页时行号对齐
+     * @return 带行号的文本，每行格式为 `<padding><line_number>\t<content>`
+     */
+    internal fun addLineNumbers(content: String, startLine: Int = 0): String {
+        if (content.isEmpty()) return content
+        val lines = content.lines()
+        val totalDisplayLines = startLine + lines.size
+        val width = kotlin.math.max(6, totalDisplayLines.toString().length)
+        return lines.mapIndexed { index, line ->
+            String.format("%${width}d\t%s", startLine + index + 1, line)
+        }.joinToString("\n")
     }
 
     private data class BoundedRead(val content: String, val truncated: Boolean)
@@ -553,6 +692,9 @@ class IDETools(
         val searchPath = if (path != null) resolvePath(path) else project?.basePath
             ?: return ToolResult.Error("No project path available")
 
+        // P0 优化 6.3.1：优先尝试 ripgrep；失败或条件不满足时回退到 VFS 扫描。
+        RipgrepSearch.execute(args, RipgrepSearch.Mode.Search, searchPath)?.let { return it }
+
         return ApplicationManager.getApplication().runReadAction(Computable {
             try {
                 val matches = mutableListOf<JsonObject>()
@@ -682,15 +824,35 @@ class IDETools(
     }
 
     /**
-     * 执行系统命令。
+     * 执行系统命令（非流式，向后兼容）。
+     */
+    suspend fun runCommand(args: JsonObject): ToolResult = runCommand(args, onStream = {})
+
+    /**
+     * 执行系统命令，可选流式输出。
+     *
+     * P0 优化 6.4.1：统一 `run_command` 与 `exec_shell` 的超时语义：
+     * - 默认超时 120s，最大 600s，与 Claude Code Bash 对齐。
+     *
+     * P0 优化 6.4.2：支持 `run_in_background=true` 启动长期运行进程，
+     * 返回 `process_id`，可通过 `read_process_output` / `kill_process` 管理。
      *
      * Phase 3: 优先使用 OS 级沙箱执行；未注入沙箱时回退到旧版 ProcessBuilder。
+     * 后台命令当前不走 OS 级沙箱（沙箱不支持异步生命周期），但仍经过 ShellInjectionDetector。
+     *
+     * 6.4.3：当 `stream_output=true` 且 [onStream] 不为空时，同步命令会实时发射
+     * [AgentStreamEvent.CommandOutputStream] 事件。沙箱与后台路径暂保持非流式。
      */
-    suspend fun runCommand(args: JsonObject): ToolResult = withContext(Dispatchers.IO) {
+    suspend fun runCommand(
+        args: JsonObject,
+        onStream: suspend (AgentStreamEvent) -> Unit
+    ): ToolResult = withContext(Dispatchers.IO) {
         val command = args["command"]?.jsonPrimitive?.content
             ?: return@withContext ToolResult.Error("Missing 'command' parameter")
         val workingDir = resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
-        val timeout = args["timeout"]?.jsonPrimitive?.longOrNull ?: 30000L
+        val timeout = args["timeout"]?.jsonPrimitive?.longOrNull?.coerceIn(1000L, 600_000L) ?: 120_000L
+        val runInBackground = args["run_in_background"]?.jsonPrimitive?.booleanOrNull ?: false
+        val streamOutput = onStream !== {} && (args["stream_output"]?.jsonPrimitive?.booleanOrNull ?: false)
 
         // C6 修复：检测 shell 注入意图（Base64-eval / curl|sh / printf / 反弹 shell 等）
         val injectionReason = ShellInjectionDetector.detect(command)
@@ -698,9 +860,39 @@ class IDETools(
             return@withContext ToolResult.Error("Shell injection blocked: $injectionReason")
         }
 
+        if (runInBackground) {
+            val processId = BackgroundProcessManager.start(command, workingDir)
+            if (streamOutput) {
+                // 后台模式目前不支持 push 流式；发射一个携带 process_id 的 done 事件作为提示
+                onStream(
+                    AgentStreamEvent.CommandOutputStream(
+                        stdout = "",
+                        stderr = "",
+                        processId = processId,
+                        done = true
+                    )
+                )
+            }
+            return@withContext ToolResult.Success(
+                JsonObject(
+                    mapOf(
+                        "process_id" to JsonPrimitive(processId),
+                        "command" to JsonPrimitive(command),
+                        "working_dir" to JsonPrimitive(workingDir),
+                        "status" to JsonPrimitive("running")
+                    )
+                )
+            )
+        }
+
         val sandbox = commandSandbox
         if (sandbox != null) {
+            // 沙箱路径暂不支持流式；保持原行为
             return@withContext runCommandWithSandbox(command, workingDir, timeout, sandbox)
+        }
+
+        if (streamOutput) {
+            return@withContext runCommandLegacyStreaming(command, workingDir, timeout, onStream)
         }
 
         runCommandLegacy(command, workingDir, timeout)
@@ -733,6 +925,18 @@ class IDETools(
         workingDir: String,
         timeout: Long
     ): ToolResult {
+        return runCommandBlocking(command, workingDir, timeout).toToolResult()
+    }
+
+    /**
+     * 同步阻塞执行命令，返回原始输出与退出码。
+     * 供非流式路径与流式路径最终汇总共用。
+     */
+    private fun runCommandBlocking(
+        command: String,
+        workingDir: String,
+        timeout: Long
+    ): CommandRunData {
         return try {
             val processBuilder = ProcessBuilder(
                 if (System.getProperty("os.name").contains("Windows")) {
@@ -784,7 +988,7 @@ class IDETools(
                 process.destroyForcibly()
                 stdoutThread.interrupt()
                 stderrThread.interrupt()
-                return ToolResult.Error("Command timed out after ${timeout}ms")
+                return CommandRunData.Error("Command timed out after ${timeout}ms")
             }
 
             val exitCode = process.exitValue()
@@ -792,28 +996,252 @@ class IDETools(
             // 错误占位串，避免 LLM 看到空字符串误以为进程没产生输出。
             val stdoutRead = stdoutFuture.get()
             val stderrRead = stderrFuture.get()
-            val stdoutReadError = if (stdoutRead == null) "<stdout read failed>" else null
-            val stderrReadError = if (stderrRead == null) "<stderr read failed>" else null
 
-            ToolResult.Success(
+            CommandRunData.Success(
+                exitCode = exitCode,
+                stdout = stdoutRead?.content ?: "",
+                stderr = stderrRead?.content ?: "",
+                stdoutTruncated = stdoutRead?.truncated == true,
+                stderrTruncated = stderrRead?.truncated == true,
+                stdoutReadError = if (stdoutRead == null) "<stdout read failed>" else null,
+                stderrReadError = if (stderrRead == null) "<stderr read failed>" else null
+            )
+        } catch (e: Exception) {
+            logger.error("Command execution failed: $command", e)
+            CommandRunData.Error("Command execution failed: ${e.message}")
+        }
+    }
+
+    /**
+     * 命令流式执行路径。
+     *
+     * 通过两个独立协程实时读取 stdout/stderr，并通过 [onStream] 发送增量事件。
+     * 同时累积完整输出，用于最后返回 [ToolResult]（保持 LLM context 仍能得到完整结果）。
+     */
+    private suspend fun runCommandLegacyStreaming(
+        command: String,
+        workingDir: String,
+        timeout: Long,
+        onStream: suspend (AgentStreamEvent) -> Unit
+    ): ToolResult = coroutineScope {
+        val processBuilder = ProcessBuilder(
+            if (System.getProperty("os.name").contains("Windows")) {
+                listOf("cmd", "/c", command)
+            } else {
+                listOf("/bin/bash", "-c", command)
+            }
+        )
+        processBuilder.directory(File(workingDir))
+        processBuilder.redirectErrorStream(false)
+
+        val process = runInterruptible(Dispatchers.IO) { processBuilder.start() }
+
+        val stdoutChannel = Channel<String>(Channel.UNLIMITED)
+        val stderrChannel = Channel<String>(Channel.UNLIMITED)
+
+        val stdoutCollector = StringBuilder()
+        val stderrCollector = StringBuilder()
+
+        val stdoutJob = launch(Dispatchers.IO) {
+            try {
+                process.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        val chunk = line + "\n"
+                        stdoutCollector.append(chunk)
+                        stdoutChannel.trySend(chunk)
+                    }
+                }
+            } catch (_: InterruptedException) {
+                // 取消或超时，正常结束
+            } catch (e: Exception) {
+                logger.warn("Streaming stdout reader failed: ${e.message}")
+            } finally {
+                stdoutChannel.close()
+            }
+        }
+
+        val stderrJob = launch(Dispatchers.IO) {
+            try {
+                process.errorStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        val chunk = line + "\n"
+                        stderrCollector.append(chunk)
+                        stderrChannel.trySend(chunk)
+                    }
+                }
+            } catch (_: InterruptedException) {
+                // 取消或超时，正常结束
+            } catch (e: Exception) {
+                logger.warn("Streaming stderr reader failed: ${e.message}")
+            } finally {
+                stderrChannel.close()
+            }
+        }
+
+        // 发射器：从两个 channel 轮询，批量合并后发送 CommandOutputStream
+        val emitterJob = launch {
+            var stdoutClosed = false
+            var stderrClosed = false
+            var batchStdout = StringBuilder()
+            var batchStderr = StringBuilder()
+
+            suspend fun flushBatch() {
+                if (batchStdout.isNotEmpty() || batchStderr.isNotEmpty()) {
+                    onStream(
+                        AgentStreamEvent.CommandOutputStream(
+                            stdout = batchStdout.toString(),
+                            stderr = batchStderr.toString()
+                        )
+                    )
+                    batchStdout = StringBuilder()
+                    batchStderr = StringBuilder()
+                }
+            }
+
+            while (!stdoutClosed || !stderrClosed) {
+                val stdoutChunk = if (!stdoutClosed) stdoutChannel.tryReceive().getOrNull() else null
+                val stderrChunk = if (!stderrClosed) stderrChannel.tryReceive().getOrNull() else null
+
+                if (stdoutChunk == null && !stdoutClosed && stdoutChannel.isClosedForReceive) {
+                    stdoutClosed = true
+                } else if (stdoutChunk != null) {
+                    batchStdout.append(stdoutChunk)
+                }
+
+                if (stderrChunk == null && !stderrClosed && stderrChannel.isClosedForReceive) {
+                    stderrClosed = true
+                } else if (stderrChunk != null) {
+                    batchStderr.append(stderrChunk)
+                }
+
+                // 任意一端有关闭或累积到一定量时 flush，保证实时性
+                if ((stdoutClosed || stderrClosed || batchStdout.length + batchStderr.length >= 1024)) {
+                    flushBatch()
+                }
+
+                if ((!stdoutClosed || !stderrClosed) && stdoutChunk == null && stderrChunk == null) {
+                    delay(16)
+                }
+            }
+            flushBatch()
+        }
+
+        try {
+            val finished = runInterruptible(Dispatchers.IO) {
+                process.waitFor(timeout, TimeUnit.MILLISECONDS)
+            }
+
+            stdoutJob.cancel()
+            stderrJob.cancel()
+            emitterJob.join()
+
+            if (!finished) {
+                runInterruptible(Dispatchers.IO) { process.destroyForcibly() }
+                onStream(
+                    AgentStreamEvent.CommandOutputStream(
+                        stderr = "Command timed out after ${timeout}ms",
+                        done = true
+                    )
+                )
+                return@coroutineScope ToolResult.Error("Command timed out after ${timeout}ms")
+            }
+
+            val exitCode = runInterruptible(Dispatchers.IO) { process.exitValue() }
+
+            // 截断保护：若超过上限则截断收集器，避免返回给 LLM 时过大
+            val stdoutResult = safeTruncate(stdoutCollector.toString(), MAX_COMMAND_OUTPUT_CHARS).first
+            val stderrResult = safeTruncate(stderrCollector.toString(), MAX_COMMAND_OUTPUT_CHARS).first
+            val stdoutTruncated = stdoutCollector.length > MAX_COMMAND_OUTPUT_CHARS
+            val stderrTruncated = stderrCollector.length > MAX_COMMAND_OUTPUT_CHARS
+
+            onStream(
+                AgentStreamEvent.CommandOutputStream(
+                    stdout = "",
+                    stderr = "",
+                    exitCode = exitCode,
+                    done = true
+                )
+            )
+
+            return@coroutineScope ToolResult.Success(
                 JsonObject(
                     buildMap {
-                        put("stdout", JsonPrimitive(stdoutRead?.content ?: stdoutReadError ?: ""))
-                        put("stderr", JsonPrimitive(stderrRead?.content ?: stderrReadError ?: ""))
+                        put("stdout", JsonPrimitive(stdoutResult))
+                        put("stderr", JsonPrimitive(stderrResult))
                         put("exit_code", JsonPrimitive(exitCode))
-                        // M2: 透出截断标记 + 上限
-                        if (stdoutRead?.truncated == true) put("stdout_truncated", JsonPrimitive(true))
-                        if (stderrRead?.truncated == true) put("stderr_truncated", JsonPrimitive(true))
+                        if (stdoutTruncated) put("stdout_truncated", JsonPrimitive(true))
+                        if (stderrTruncated) put("stderr_truncated", JsonPrimitive(true))
                         put("max_output_chars", JsonPrimitive(MAX_COMMAND_OUTPUT_CHARS))
-                        // L4: 读异常明确告知
+                        put("streamed", JsonPrimitive(true))
+                    }
+                )
+            )
+        } catch (e: Exception) {
+            logger.error("Streaming command execution failed: $command", e)
+            stdoutJob.cancel()
+            stderrJob.cancel()
+            emitterJob.cancelAndJoin()
+            onStream(
+                AgentStreamEvent.CommandOutputStream(
+                    stderr = "Command execution failed: ${e.message}",
+                    done = true
+                )
+            )
+            return@coroutineScope ToolResult.Error("Command execution failed: ${e.message}")
+        }
+    }
+
+    /**
+     * 内部 API：按行/按块流式执行任意 shell 命令，供其它工具复用。
+     *
+     * 与 [runCommand] 的区别：本方法直接接收已解析好的 command/workingDir/timeout，
+     * 不经过参数解析、沙箱选择、后台模式分支；调用方自行保证注入检测等前置检查。
+     *
+     * @param onStream 每产生一段 stdout/stderr 时被调用；最终也会收到 done 事件
+     * @return 命令结果，包含完整 stdout/stderr/exit_code
+     */
+    internal suspend fun runCommandStreamingInternal(
+        command: String,
+        workingDir: String,
+        timeout: Long,
+        onStream: suspend (AgentStreamEvent) -> Unit
+    ): ToolResult = withContext(Dispatchers.IO) {
+        runCommandLegacyStreaming(command, workingDir, timeout, onStream)
+    }
+
+    /**
+     * 命令执行原始结果内部表示。
+     */
+    private sealed class CommandRunData {
+        data class Success(
+            val exitCode: Int,
+            val stdout: String,
+            val stderr: String,
+            val stdoutTruncated: Boolean,
+            val stderrTruncated: Boolean,
+            val stdoutReadError: String?,
+            val stderrReadError: String?
+        ) : CommandRunData()
+
+        data class Error(val message: String) : CommandRunData()
+
+        fun toToolResult(): ToolResult = when (this) {
+            is Success -> ToolResult.Success(
+                JsonObject(
+                    buildMap {
+                        put("stdout", JsonPrimitive(stdout))
+                        put("stderr", JsonPrimitive(stderr))
+                        put("exit_code", JsonPrimitive(exitCode))
+                        if (stdoutTruncated) put("stdout_truncated", JsonPrimitive(true))
+                        if (stderrTruncated) put("stderr_truncated", JsonPrimitive(true))
+                        put("max_output_chars", JsonPrimitive(MAX_COMMAND_OUTPUT_CHARS))
                         if (stdoutReadError != null) put("stdout_read_error", JsonPrimitive(stdoutReadError))
                         if (stderrReadError != null) put("stderr_read_error", JsonPrimitive(stderrReadError))
                     }
                 )
             )
-        } catch (e: Exception) {
-            logger.error("Command execution failed: $command", e)
-            ToolResult.Error("Command execution failed: ${e.message}")
+
+            is Error -> ToolResult.Error(message)
         }
     }
 
@@ -991,6 +1419,9 @@ class IDETools(
         val searchPath = if (path != null) resolvePath(path) else project?.basePath
             ?: return ToolResult.Error("No project path available")
 
+        // P0 优化 6.3.1：优先尝试 ripgrep；失败或条件不满足时回退到 VFS 扫描。
+        RipgrepSearch.execute(args, RipgrepSearch.Mode.Grep, searchPath)?.let { return it }
+
         return ApplicationManager.getApplication().runReadAction(Computable {
             try {
                 val root = LocalFileSystem.getInstance().findFileByPath(searchPath)
@@ -1156,10 +1587,14 @@ class IDETools(
 
     /**
      * 批量读取多个文件（优化：并行读取）
+     *
+     * P0 优化 6.1.1：支持 `line_numbers=true`，为每个成功读取的文件额外返回
+     * `content_with_line_numbers`。
      */
     suspend fun readMultipleFiles(args: JsonObject): ToolResult = withContext(Dispatchers.IO) {
         val paths = args["paths"]?.jsonArray
             ?: return@withContext ToolResult.Error("Missing 'paths' parameter")
+        val lineNumbersRequested = args["line_numbers"]?.jsonPrimitive?.booleanOrNull ?: false
 
         val results = mutableListOf<JsonObject>()
         val errors = mutableListOf<String>()
@@ -1185,6 +1620,10 @@ class IDETools(
                                 "content" to JsonPrimitive(sliced),
                                 "success" to JsonPrimitive(true),
                             )
+                            if (lineNumbersRequested) {
+                                fields["content_with_line_numbers"] =
+                                    JsonPrimitive(addLineNumbers(sliced, startLine = 0))
+                            }
                             // H4: 让 LLM 知道哪些文件被截断，而不是读到不完整
                             // content 却以为读全了。original_length 帮助 LLM
                             // 决定是否需要换 readFile + offset 续读。
@@ -1219,7 +1658,12 @@ class IDETools(
     }
 
     /**
-     * 基于行范围精确编辑文件
+     * 基于字符串或行范围编辑文件。
+     *
+     * P1 6.2.3：当 `old_string` 不唯一时，若传入 `fuzzy_match=true`，
+     * 会自动尝试：
+     * 1. 忽略行首/行尾空白差异进行匹配。
+     * 2. 用前后最多 2 行上下文去歧；若仍无法确定，返回所有候选位置。
      */
     fun editFile(args: JsonObject): ToolResult {
         val path = args["path"]?.jsonPrimitive?.content
@@ -1228,6 +1672,7 @@ class IDETools(
         val newString = args["new_string"]?.jsonPrimitive?.content
         val startLine = args["start_line"]?.jsonPrimitive?.intOrNull
         val endLine = args["end_line"]?.jsonPrimitive?.intOrNull
+        val fuzzyMatch = args["fuzzy_match"]?.jsonPrimitive?.booleanOrNull ?: false
 
         if (oldString == null && startLine == null) {
             return ToolResult.Error("Must provide either 'old_string' or 'start_line'")
@@ -1236,26 +1681,20 @@ class IDETools(
         val resolvedPath = resolvePath(path)
 
         return try {
-            val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByPath(resolvedPath)
+            val content = readFileText(resolvedPath)
                 ?: return ToolResult.Error("File not found: $path")
 
-            val content = ApplicationManager.getApplication().runReadAction(Computable {
-                String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
-            })
             val newContent = if (oldString != null && newString != null) {
-                if (!content.contains(oldString)) {
-                    return ToolResult.Error("old_string not found in file")
+                when (val result = EditMatchEngine.findReplacementRegion(content, oldString, fuzzyMatch)) {
+                    is EditMatchEngine.FindResult.NotFound ->
+                        return ToolResult.Error("old_string not found in file")
+
+                    is EditMatchEngine.FindResult.Ambiguous ->
+                        return ToolResult.Error(EditMatchEngine.formatAmbiguousMessage(result.candidates))
+
+                    is EditMatchEngine.FindResult.Unique ->
+                        EditMatchEngine.applyReplacement(content, result.match, newString)
                 }
-                // C2: old_string 多次出现时只替第一处会误导 LLM。强制要求
-                // 唯一匹配，提示用户提供更多上下文。
-                val occurrences = Regex.escape(oldString).toRegex().findAll(content).count()
-                if (occurrences > 1) {
-                    return ToolResult.Error(
-                        "old_string appears $occurrences times in file; " +
-                                "provide more surrounding context to make it unique"
-                    )
-                }
-                content.replaceFirst(oldString, newString)
             } else if (startLine != null && endLine != null && newString != null) {
                 // C5: 与 readFile 对齐——startLine/endLine 越界时显式报错，
                 // 避免静默 clamp 把 'endLine=9999' 当成 '删到末尾'。
@@ -1281,7 +1720,11 @@ class IDETools(
                 return ToolResult.Error("Invalid edit parameters")
             }
 
-            writeVirtualFile(virtualFile, newContent)
+            when (val writeResult = writeFileText(resolvedPath, newContent)) {
+                is ToolResult.Error -> return writeResult
+                is ToolResult.Success -> { /* continue */
+                }
+            }
 
             ToolResult.Success(
                 JsonObject(
@@ -1293,6 +1736,284 @@ class IDETools(
             )
         } catch (e: Exception) {
             ToolResult.Error("Edit failed: ${e.message}")
+        }
+    }
+
+    /**
+     * P1 6.2.2：一次调用对同一文件做多个 `old_string` -> `new_string` 替换。
+     *
+     * 参数：
+     * - path (string, required): 目标文件路径
+     * - edits (array of objects, required): 每个对象包含 `old_string` 和 `new_string`
+     *
+     * 行为：
+     * - 先校验所有 `old_string` 在文件中存在且唯一（支持 `fuzzy_match=true` 忽略空白差异并用上下文去歧）。
+     * - 在内存中按顺序全部替换。
+     * - 任一校验失败立即返回错误，不写入磁盘；全部成功才写回文件。
+     *
+     * 与 `edit_file` 的差异：
+     * - `edit_file` 单点替换；`multi_edit` 批量替换，减少同一文件多位置修改时的往返。
+     */
+    fun multiEdit(args: JsonObject): ToolResult {
+        val path = args["path"]?.jsonPrimitive?.content
+            ?: return ToolResult.Error("Missing 'path' parameter")
+        val editsArray = args["edits"]?.jsonArray
+            ?: return ToolResult.Error("Missing 'edits' parameter")
+        val fuzzyMatch = args["fuzzy_match"]?.jsonPrimitive?.booleanOrNull ?: false
+
+        if (editsArray.isEmpty()) {
+            return ToolResult.Error("'edits' array is empty")
+        }
+
+        val resolvedPath = resolvePath(path)
+        return try {
+            // 复用 readFileText / writeFileText，它们在 Application 不可用时自动回退到 File IO，
+            // 与 applyPatch 行为保持一致，避免无 IDE 上下文时 LocalFileSystem 初始化失败。
+            val originalContent = readFileText(resolvedPath)
+                ?: return ToolResult.Error("File not found: $path")
+
+            // 第一阶段：校验每个 edit
+            data class Edit(
+                val index: Int,
+                val oldString: String,
+                val newString: String,
+                val match: EditMatchEngine.MatchCandidate
+            )
+
+            val edits = mutableListOf<Edit>()
+            for ((index, element) in editsArray.withIndex()) {
+                val obj = element as? JsonObject
+                    ?: return ToolResult.Error("Edit at index $index is not an object")
+                val oldString = obj["old_string"]?.jsonPrimitive?.content
+                    ?: return ToolResult.Error("Missing 'old_string' in edit at index $index")
+                val newString = obj["new_string"]?.jsonPrimitive?.content
+                    ?: return ToolResult.Error("Missing 'new_string' in edit at index $index")
+
+                when (val result = EditMatchEngine.findReplacementRegion(originalContent, oldString, fuzzyMatch)) {
+                    is EditMatchEngine.FindResult.NotFound ->
+                        return ToolResult.Error("old_string not found in file at edit index $index")
+
+                    is EditMatchEngine.FindResult.Ambiguous ->
+                        return ToolResult.Error(
+                            "at edit index $index: ${EditMatchEngine.formatAmbiguousMessage(result.candidates)}"
+                        )
+
+                    is EditMatchEngine.FindResult.Unique ->
+                        edits.add(Edit(index, oldString, newString, result.match))
+                }
+            }
+
+            // 第二阶段：顺序应用替换（避免互相影响时按提交顺序处理）
+            var currentContent = originalContent
+            for (edit in edits) {
+                // 前一次替换可能改变后续候选的索引位置，因此每次都在当前内容中重新定位。
+                val currentResult = EditMatchEngine.findReplacementRegion(
+                    currentContent,
+                    edit.oldString,
+                    fuzzyMatch
+                )
+                when (currentResult) {
+                    is EditMatchEngine.FindResult.NotFound ->
+                        return ToolResult.Error(
+                            "old_string not found at apply time at edit index ${edit.index}; " +
+                                    "previous edits may have changed this region"
+                        )
+
+                    is EditMatchEngine.FindResult.Ambiguous ->
+                        return ToolResult.Error(
+                            "at apply time edit index ${edit.index} became ambiguous; " +
+                                    "provide more context"
+                        )
+
+                    is EditMatchEngine.FindResult.Unique ->
+                        currentContent = EditMatchEngine.applyReplacement(
+                            currentContent,
+                            currentResult.match,
+                            edit.newString
+                        )
+                }
+            }
+
+            when (val writeResult = writeFileText(resolvedPath, currentContent)) {
+                is ToolResult.Error -> return writeResult
+                is ToolResult.Success -> { /* continue */
+                }
+            }
+
+            ToolResult.Success(
+                JsonObject(
+                    mapOf(
+                        "path" to JsonPrimitive(path),
+                        "edits_applied" to JsonPrimitive(edits.size),
+                        "bytes_changed" to JsonPrimitive(
+                            kotlin.math.abs(originalContent.length - currentContent.length)
+                        )
+                    )
+                )
+            )
+        } catch (e: Exception) {
+            logger.error("multiEdit failed: $path", e)
+            ToolResult.Error("multiEdit failed: ${e.message}")
+        }
+    }
+
+    /**
+     * P0 优化 6.2.1：应用 Codex 风格的结构化 patch。
+     *
+     * 支持 Update / Add / Delete 三种文件操作，先完整解析并应用到内存，
+     * 全部成功后再写回磁盘，避免半成品状态。
+     *
+     * 参数：
+     * - patch (string, required): patch 文本
+     * - allow_overwrite (boolean, optional): Add File 时若目标已存在是否覆盖，默认 false
+     */
+    fun applyPatch(args: JsonObject): ToolResult {
+        val patch = args["patch"]?.jsonPrimitive?.content
+            ?: return ToolResult.Error("Missing 'patch' parameter")
+        val allowOverwrite = args["allow_overwrite"]?.jsonPrimitive?.booleanOrNull ?: false
+
+        val parseResult = ApplyPatchEngine.parse(patch)
+        if (parseResult is ApplyPatchEngine.PatchParseResult.Error) {
+            return ToolResult.Error("Patch parse error: ${parseResult.message}")
+        }
+        val plan = (parseResult as ApplyPatchEngine.PatchParseResult.Success).plan
+
+        // 收集 Update 操作所需的原始内容，并校验 Add/Delete 的前置条件。
+        val originals = mutableMapOf<String, String>()
+        for (op in plan.operations) {
+            when (op) {
+                is ApplyPatchEngine.PatchOperation.UpdateFile -> {
+                    val resolved = resolvePath(op.path)
+                    val content = readFileText(resolved)
+                        ?: return ToolResult.Error("File not found for update: ${op.path}")
+                    originals[op.path] = content
+                }
+
+                is ApplyPatchEngine.PatchOperation.AddFile -> {
+                    val resolved = resolvePath(op.path)
+                    val file = File(resolved)
+                    if (file.exists() && !allowOverwrite) {
+                        return ToolResult.Error(
+                            "File already exists: ${op.path} (pass allow_overwrite=true to replace)"
+                        )
+                    }
+                    originals[op.path] = ""
+                }
+
+                is ApplyPatchEngine.PatchOperation.DeleteFile -> {
+                    // 实际删除在应用成功后执行
+                }
+            }
+        }
+
+        val applyResult = ApplyPatchEngine.apply(plan, originals)
+        if (applyResult is ApplyPatchEngine.PatchApplyResult.Error) {
+            return ToolResult.Error("Patch apply error: ${applyResult.message}")
+        }
+        val success = applyResult as ApplyPatchEngine.PatchApplyResult.Success
+
+        // 写回变更
+        val changedFiles = mutableListOf<JsonObject>()
+        for ((path, content) in success.files) {
+            val resolved = resolvePath(path)
+            when (val writeResult = writeFileText(resolved, content)) {
+                is ToolResult.Error -> return writeResult
+                is ToolResult.Success -> { /* continue */
+                }
+            }
+            val opType = if (plan.operations.any { it.path == path && it is ApplyPatchEngine.PatchOperation.AddFile }) {
+                "added"
+            } else {
+                "updated"
+            }
+            changedFiles.add(
+                JsonObject(
+                    mapOf(
+                        "path" to JsonPrimitive(path),
+                        "type" to JsonPrimitive(opType)
+                    )
+                )
+            )
+        }
+
+        for (path in success.deletedFiles) {
+            val resolved = resolvePath(path)
+            when (val deleteResult = deleteFilePath(resolved)) {
+                is ToolResult.Error -> return deleteResult
+                is ToolResult.Success -> { /* continue */
+                }
+            }
+            changedFiles.add(
+                JsonObject(
+                    mapOf(
+                        "path" to JsonPrimitive(path),
+                        "type" to JsonPrimitive("deleted")
+                    )
+                )
+            )
+        }
+
+        return ToolResult.Success(
+            JsonObject(
+                mapOf(
+                    "changed_files" to JsonArray(changedFiles),
+                    "count" to JsonPrimitive(changedFiles.size)
+                )
+            )
+        )
+    }
+
+    private fun readFileText(resolvedPath: String): String? {
+        val app = ApplicationManager.getApplication()
+        return if (app != null) {
+            app.runReadAction(Computable {
+                val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByPath(resolvedPath)
+                if (virtualFile != null && !virtualFile.isDirectory) {
+                    String(virtualFile.contentsToByteArray(), StandardCharsets.UTF_8)
+                } else {
+                    File(resolvedPath).takeIf { it.isFile }?.readText(StandardCharsets.UTF_8)
+                }
+            })
+        } else {
+            File(resolvedPath).takeIf { it.isFile }?.readText(StandardCharsets.UTF_8)
+        }
+    }
+
+    private fun writeFileText(resolvedPath: String, content: String): ToolResult {
+        val app = ApplicationManager.getApplication()
+        return if (app != null) {
+            writeFile(
+                JsonObject(
+                    mapOf(
+                        "path" to JsonPrimitive(resolvedPath),
+                        "content" to JsonPrimitive(content)
+                    )
+                )
+            )
+        } else {
+            AtomicFileWriter.write(File(resolvedPath), content)
+            ToolResult.Success(JsonObject(mapOf("path" to JsonPrimitive(resolvedPath))))
+        }
+    }
+
+    private fun deleteFilePath(resolvedPath: String): ToolResult {
+        val app = ApplicationManager.getApplication()
+        return if (app != null) {
+            deleteFile(JsonObject(mapOf("path" to JsonPrimitive(resolvedPath))))
+        } else {
+            val deleted = File(resolvedPath).delete()
+            if (deleted) {
+                ToolResult.Success(
+                    JsonObject(
+                        mapOf(
+                            "path" to JsonPrimitive(resolvedPath),
+                            "deleted" to JsonPrimitive(true)
+                        )
+                    )
+                )
+            } else {
+                ToolResult.Error("Failed to delete file: $resolvedPath")
+            }
         }
     }
 

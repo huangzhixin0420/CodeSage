@@ -82,16 +82,18 @@ class CreatePullRequestTool : UnifiedTool(
 // region === 2. run_linter ===
 
 /**
- * 根据 build 系统自动运行 linter：
- * - Maven: `mvn checkstyle:check`
- * - Gradle: `gradle check` 或 `gradle lint`（取决于项目配置）
- * - npm: `npm run lint`
- * - pip: `flake8`（如果存在）
+ * 根据 build 系统自动运行 linter，并解析机器可读报告返回结构化问题列表：
+ * - Maven: `mvn checkstyle:check`，解析 `target/checkstyle-result.xml`
+ * - Gradle: `gradle check`，解析 `build/reports/checkstyle/` 目录下的 XML 报告
+ * - npm: `npm run lint`，解析 `eslint-report.json` / `report.json`
+ * - pip: `flake8`，解析 `flake8-report.json`
+ *
+ * 返回结果包含 `issues[]`（file/line/column/severity/message/rule）与 `issue_count`/`error_count`/`warning_count`。
  */
 class RunLinterTool : UnifiedTool(
     name = "run_linter",
     description = "Auto-detect the project's build system (Maven/Gradle/npm) and run the linter. " +
-            "Returns the lint output (truncated to 10k chars).",
+            "Returns the lint output and a structured issues[] list parsed from Checkstyle XML, ESLint JSON, or flake8 JSON reports.",
     parameters = ToolParameters(
         type = "object",
         properties = mapOf(
@@ -133,7 +135,7 @@ class RunLinterTool : UnifiedTool(
             )
         }
 
-        return runCommand(cmd, workingDir = dir, toolName = toolName)
+        return runLinterCommand(cmd, workingDir = dir, toolName = toolName)
     }
 }
 
@@ -170,8 +172,8 @@ class StartDebuggerTool(private val project: com.intellij.openapi.project.Projec
                 "No active project. start_debugger must be called from an IntelliJ context."
             )
         }
-        // 真实实现需要 IntelliJ 的 XDebuggerManager；这里返回占位
-        // C2 修复：用 JsonArgDecoders 安全反序列化
+// 真实实现需要 IntelliJ 的 XDebuggerManager；这里返回占位
+// C2 修复：用 JsonArgDecoders 安全反序列化
         val sessionName = JsonArgDecoders.stringArg(args, "session_name", default = "CodeSage session")
         return com.codesage.agent.tools.ToolResult.Success(
             buildJsonObject {
@@ -218,7 +220,7 @@ class DatabaseSchemaTool : UnifiedTool(
 
     override suspend fun execute(args: JsonObject): com.codesage.agent.tools.ToolResult {
         val jdbcUrl = JsonArgDecoders.stringArg(args, "jdbc_url")
-        // 当前实现：返回占位 JSON，因为没有具体 driver
+// 当前实现：返回占位 JSON，因为没有具体 driver
         return com.codesage.agent.tools.ToolResult.Success(
             buildJsonObject {
                 put("status", "introspection_stub")
@@ -368,6 +370,81 @@ class SymbolSearchTool(private val project: com.intellij.openapi.project.Project
 }
 
 // region === 共享的 runCommand 工具 ===
+
+/**
+ * Linter 专用执行 helper。
+ *
+ * 与普通命令不同：linter 的非零退出码通常表示发现代码问题，而不是执行失败。
+ * 因此先收集输出，再尝试解析机器可读报告；解析到 issues 时以 Success 返回结构化列表。
+ */
+private suspend fun runLinterCommand(
+    cmd: List<String>,
+    workingDir: String,
+    toolName: String
+): com.codesage.agent.tools.ToolResult = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+    try {
+        val process = ProcessBuilder(cmd)
+            .directory(File(workingDir))
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().readText()
+        val finished = process.waitFor(60, java.util.concurrent.TimeUnit.SECONDS)
+        if (!finished) {
+            process.destroyForcibly()
+            return@withContext com.codesage.agent.tools.ToolResult.Error(
+                "$toolName timed out after 60s"
+            )
+        }
+        val exitCode = process.exitValue()
+
+        val (source, issues) = LintResultParser.parseReports(workingDir)
+        val issueArray = kotlinx.serialization.json.JsonArray(
+            issues.map { issue ->
+                buildJsonObject {
+                    put("file", issue.file)
+                    put("line", issue.line)
+                    issue.column?.let { put("column", it) }
+                    put("severity", issue.severity)
+                    put("message", issue.message)
+                    issue.rule?.let { put("rule", it) }
+                }
+            }
+        )
+
+        if (issues.isNotEmpty()) {
+            return@withContext com.codesage.agent.tools.ToolResult.Success(
+                buildJsonObject {
+                    put("command", cmd.joinToString(" "))
+                    put("exit_code", exitCode)
+                    put("stdout", output.take(10_000))
+                    put("issue_count", issues.size)
+                    put("error_count", issues.count { it.severity == "error" })
+                    put("warning_count", issues.count { it.severity == "warning" })
+                    put("report_source", source)
+                    put("issues", issueArray)
+                }
+            )
+        }
+
+        if (exitCode != 0) {
+            return@withContext com.codesage.agent.tools.ToolResult.Error(
+                "$toolName exit code $exitCode: ${output.takeLast(2000)}"
+            )
+        }
+
+        com.codesage.agent.tools.ToolResult.Success(
+            buildJsonObject {
+                put("command", cmd.joinToString(" "))
+                put("exit_code", exitCode)
+                put("stdout", output.take(10_000))
+                put("issue_count", 0)
+                put("issues", issueArray)
+            }
+        )
+    } catch (e: Exception) {
+        com.codesage.agent.tools.ToolResult.Error("$toolName failed: ${e.message}")
+    }
+}
 
 /**
  * 共享 helper：用 ProcessBuilder 执行命令并收集输出。

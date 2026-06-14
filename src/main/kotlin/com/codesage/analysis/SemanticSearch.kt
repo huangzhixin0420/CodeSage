@@ -1,7 +1,9 @@
 package com.codesage.analysis
 
+import com.codesage.agent.memory.MemoryEmbedding
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.project.Project
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 语义搜索
@@ -26,13 +28,17 @@ class SemanticSearch(
     )
 
     enum class MatchType {
-        EXACT_NAME,      // 精确名称匹配
-        FUZZY_NAME,      // 模糊名称匹配
-        TYPE_MATCH,      // 类型匹配
-        SIGNATURE_MATCH, // 方法签名匹配
-        COMMENT_MATCH,   // 注释匹配
-        USAGE_MATCH      // 使用场景匹配
+        EXACT_NAME,       // 精确名称匹配
+        FUZZY_NAME,       // 模糊名称匹配
+        TYPE_MATCH,       // 类型匹配
+        SIGNATURE_MATCH,  // 方法签名匹配
+        COMMENT_MATCH,    // 注释匹配
+        USAGE_MATCH,      // 使用场景匹配
+        VECTOR_SIMILARITY // 6.3.3 向量语义相似度
     }
+
+    // 6.3.3 符号向量 embedding 缓存：key = "version:filePath:name:type"
+    private val symbolEmbeddingCache = ConcurrentHashMap<String, FloatArray>()
 
     // LRU 缓存：Key -> (timestamp, results)
     private val searchCache = object : LinkedHashMap<String, Pair<Long, List<SearchResult>>>(100, 0.75f, true) {
@@ -107,6 +113,9 @@ class SemanticSearch(
 
         // 4. 注释/文档搜索
         results.addAll(searchByDocumentation(query))
+
+        // 5. 6.3.3 向量语义召回
+        results.addAll(searchByVector(query, limit))
 
         // 去重并按相关度排序
         val finalResults = results
@@ -190,7 +199,7 @@ class SemanticSearch(
     }
 
     /**
-     * 根据自然语言描述搜索（简化版：基于关键词提取）
+     * 6.3.3 根据自然语言描述搜索：融合关键词匹配与本地向量语义相似度。
      */
     fun semanticQuery(description: String, limit: Int = 20): List<SearchResult> {
         val key = getCacheKey("semanticQuery", description, limit)
@@ -203,30 +212,36 @@ class SemanticSearch(
             .filter { it.length > 2 }
             .distinct()
 
-        if (keywords.isEmpty()) return emptyList()
-
         val allSymbols = symbolIndex.findByType(PSIAnalyzer.SymbolType.METHOD) +
                 symbolIndex.findByType(PSIAnalyzer.SymbolType.CLASS)
+
+        val queryVector = MemoryEmbedding.embed(description)
 
         val results = allSymbols.mapNotNull { symbol ->
             val nameTokens = symbol.name.lowercase().split(Regex("(?=[A-Z])|[_\\-]"))
             val docTokens = symbol.docComment?.lowercase()?.split(Regex("\\s+")) ?: emptyList()
 
-            var score = 0.0
+            var keywordScore = 0.0
             keywords.forEach { keyword ->
                 if (nameTokens.any { it.contains(keyword) || keyword.contains(it) }) {
-                    score += 0.5
+                    keywordScore += 0.5
                 }
                 if (docTokens.any { it.contains(keyword) }) {
-                    score += 0.3
+                    keywordScore += 0.3
                 }
             }
 
-            if (score > 0) {
+            val symbolVector = embedSymbol(symbol)
+            val vectorScore = MemoryEmbedding.cosineSimilarity(queryVector, symbolVector).toDouble()
+
+            // 融合：向量相似度占主导，关键词作为补充
+            val score = 0.65 * vectorScore + 0.35 * keywordScore
+
+            if (score > 0.05) {
                 SearchResult(
                     filePath = symbol.filePath,
                     symbol = symbol,
-                    matchType = MatchType.COMMENT_MATCH,
+                    matchType = if (vectorScore > keywordScore) MatchType.VECTOR_SIMILARITY else MatchType.COMMENT_MATCH,
                     relevanceScore = score.coerceAtMost(1.0)
                 )
             } else null
@@ -302,6 +317,42 @@ class SemanticSearch(
                 matchType = MatchType.COMMENT_MATCH,
                 relevanceScore = 0.6
             )
+        }
+    }
+
+    /**
+     * 6.3.3 向量语义召回：用本地 embedding 比较查询与符号（名称 + 文档）的相似度。
+     */
+    private fun searchByVector(query: String, limit: Int): List<SearchResult> {
+        val queryVector = MemoryEmbedding.embed(query)
+        val allSymbols = symbolIndex.findByType(PSIAnalyzer.SymbolType.METHOD) +
+                symbolIndex.findByType(PSIAnalyzer.SymbolType.CLASS)
+
+        return allSymbols.mapNotNull { symbol ->
+            val symbolVector = embedSymbol(symbol)
+            val similarity = MemoryEmbedding.cosineSimilarity(queryVector, symbolVector)
+            if (similarity > 0.15f) {
+                SearchResult(
+                    filePath = symbol.filePath,
+                    symbol = symbol,
+                    matchType = MatchType.VECTOR_SIMILARITY,
+                    relevanceScore = similarity.toDouble()
+                )
+            } else null
+        }.sortedByDescending { it.relevanceScore }.take(limit)
+    }
+
+    private fun embedSymbol(symbol: PSIAnalyzer.SymbolInfo): FloatArray {
+        val cacheKey = "${symbolIndex.version.get()}:${symbol.filePath}:${symbol.name}:${symbol.type}"
+        return symbolEmbeddingCache.getOrPut(cacheKey) {
+            val text = buildString {
+                append(symbol.name)
+                symbol.docComment?.let {
+                    append(" ")
+                    append(it)
+                }
+            }
+            MemoryEmbedding.embed(text)
         }
     }
 

@@ -53,6 +53,43 @@ class FindUsagesTool(private val executor: CodeInsightExecutor) : UnifiedTool(
     override suspend fun execute(args: JsonObject): ToolResult = executor.findUsages(args)
 }
 
+class FindCallersTool(private val executor: CodeInsightExecutor) : UnifiedTool(
+    name = "find_callers",
+    description = "6.5.2: Find all callers of a method, function, class, or field. Returns structured locations with file_path, line, column, and caller_symbol.",
+    parameters = ToolParameters(
+        type = "object",
+        properties = mapOf(
+            "symbol_name" to ToolProperty("string", "Symbol name to find callers for"),
+            "file_path" to ToolProperty("string", "Optional file path hint for disambiguation"),
+            "type" to ToolProperty(
+                "string",
+                "Symbol type: class, method, field, property",
+                enum = listOf("class", "method", "field", "property")
+            ),
+            "limit" to ToolProperty("integer", "Maximum number of callers to return, default 50")
+        ),
+        required = listOf("symbol_name")
+    )
+) {
+    override suspend fun execute(args: JsonObject): ToolResult = executor.findCallers(args)
+}
+
+class FindCalleesTool(private val executor: CodeInsightExecutor) : UnifiedTool(
+    name = "find_callees",
+    description = "6.5.2: Find all callees (methods/functions called) by a target method or function. Returns structured locations with file_path, line, column, and callee_symbol.",
+    parameters = ToolParameters(
+        type = "object",
+        properties = mapOf(
+            "symbol_name" to ToolProperty("string", "Symbol name to find callees for"),
+            "file_path" to ToolProperty("string", "Optional file path hint for disambiguation"),
+            "limit" to ToolProperty("integer", "Maximum number of callees to return, default 50")
+        ),
+        required = listOf("symbol_name")
+    )
+) {
+    override suspend fun execute(args: JsonObject): ToolResult = executor.findCallees(args)
+}
+
 class GetInheritanceChainTool(private val executor: CodeInsightExecutor) : UnifiedTool(
     name = "get_inheritance_chain",
     description = "Get the full inheritance chain for a class (superclasses and interfaces).",
@@ -115,6 +152,8 @@ fun List<UnifiedTool>.addAllCodeInsightTools(executor: CodeInsightExecutor): Lis
     this + listOf(
         AnalyzeSymbolTool(executor),
         FindUsagesTool(executor),
+        FindCallersTool(executor),
+        FindCalleesTool(executor),
         GetInheritanceChainTool(executor),
         SemanticSearchTool(executor),
         GetFileSummaryTool(executor),

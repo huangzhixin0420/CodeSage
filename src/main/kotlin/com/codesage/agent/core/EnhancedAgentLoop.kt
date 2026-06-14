@@ -31,7 +31,8 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.*
+import com.codesage.agent.core.SubAgentResultFormatter
 
 /**
  * 对话阶段枚举
@@ -707,7 +708,7 @@ class EnhancedAgentLoop(
             }
 
             else -> try {
-                toolExecutor.execute(toolCall)
+                toolExecutor.execute(toolCall, emit)
             } catch (e: com.codesage.tools.guardrails.ToolExecutionBlocked) {
                 val escapedMessage = e.message?.replace("\"", "\\\"") ?: "Execution blocked"
                 "{\"success\":false,\"error\":\"$escapedMessage\",\"reason\":\"${e.reason.name}\",\"tool\":\"${e.toolName ?: toolCall.name}\"}"
@@ -901,6 +902,27 @@ class EnhancedAgentLoop(
             is List<*> -> files.filterIsInstance<String>()
             else -> emptyList()
         }
+        // 6.6.3: 解析 isolated_worktree 参数（parseArguments 把 JSON primitive 转成 String）
+        val isolatedWorktree = (args["isolated_worktree"] as? String)
+            ?.toBooleanStrictOrNull()
+            ?: false
+
+        // 6.10.2: 解析 max_depth 参数，范围 [1, 5]
+        val maxDepth = (args["max_depth"] as? String)?.toIntOrNull()
+            ?: SubAgentExecutor.DEFAULT_MAX_RECURSION_DEPTH
+        if (maxDepth < 1 || maxDepth > 5) {
+            val err = "Invalid max_depth=$maxDepth; must be between 1 and 5 inclusive"
+            logger.warn("[DelegateTask] $err | parentSession=${session.id}")
+            return buildJsonObject {
+                put("success", false)
+                put("error", err)
+                put("session_id", "sub_${session.id}_${System.currentTimeMillis()}")
+            }.toString()
+        }
+
+        // 6.10.3: 解析 allowed_tools / denied_tools
+        val allowedTools = (args["allowed_tools"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+        val deniedTools = (args["denied_tools"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
 
         // 兼容老 LLM prompt / 老用户习惯：曾几何时 delegate_task 工具的 schema
         // 里有 `max_iterations` 参数（已被 f8000c7 移除），如果模型还在传，
@@ -930,7 +952,12 @@ class EnhancedAgentLoop(
                 AgentStreamEvent.SubAgentStart(
                     sessionId = subSessionId,
                     taskDescription = taskDescription,
-                    toolset = toolset
+                    toolset = toolset,
+                    maxDepth = maxDepth,
+                    allowedTools = allowedTools,
+                    deniedTools = deniedTools,
+                    depth = 0,
+                    delegationForbidden = "delegate_task" in deniedTools
                 )
             )
 
@@ -945,6 +972,10 @@ class EnhancedAgentLoop(
                 // 关键：把入口生成的 subSessionId 透传给 spawn，让 SubAgentComplete
                 // 用的 sessionId 跟 Start 是同一个串。
                 subSessionIdOverride = subSessionId,
+                isolatedWorktree = isolatedWorktree,
+                maxDepth = maxDepth,
+                allowedTools = allowedTools,
+                deniedTools = deniedTools,
                 progressCallback = { progress ->
                     try {
                         emit(
@@ -979,11 +1010,10 @@ class EnhancedAgentLoop(
                         "elapsedMs=${System.currentTimeMillis() - startTs}"
             )
 
-            // P1: 返回纯文本摘要（不再 JSON 包装）。
-            // 父 LLM 收到的是子 agent 的自然语言最终 turn（见 buildSubAgentPrompt 的
-            // "Final-Turn Output Contract"）。iterations / tools 等元数据通过
-            // SubAgentComplete 事件给 UI，不进父 LLM context。
-            result.output
+            // 6.10.1: delegate_task 返回结构化 JSON（不再只是纯文本）。
+            // 父 LLM 收到 { success, result, files, blockers, tools_used, ... }，
+            // 便于下游自动消费；UI 仍通过 SubAgentComplete 事件拿到完整自然语言 output。
+            SubAgentResultFormatter.toJson(result, subSessionId).toString()
         } catch (e: Exception) {
             // 关键修复：之前 catch 里 SubAgentComplete.sessionId = "sub_${session.id}"
             // （无时间戳），跟 Start 不匹配，UI 看到 start/complete 两个不同 sub-agent。
@@ -1001,8 +1031,12 @@ class EnhancedAgentLoop(
                         "elapsedMs=${System.currentTimeMillis() - startTs}",
                 e
             )
-            // P1: 失败也走纯文本兜底，不返回 JSON
-            "SubAgent execution failed: ${e.message}"
+            // 6.10.1: 失败也返回结构化 JSON，便于父 Agent 统一处理。
+            buildJsonObject {
+                put("success", false)
+                put("error", e.message ?: "Unknown error")
+                put("session_id", subSessionId)
+            }.toString()
         }
     }
 
@@ -1112,6 +1146,10 @@ class EnhancedAgentLoop(
                 element.mapValues { (_, value) ->
                     when (value) {
                         is kotlinx.serialization.json.JsonPrimitive -> value.content
+                        is kotlinx.serialization.json.JsonArray -> value.mapNotNull {
+                            (it as? kotlinx.serialization.json.JsonPrimitive)?.content
+                        }
+
                         else -> value.toString()
                     }
                 }

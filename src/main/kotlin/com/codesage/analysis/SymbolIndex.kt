@@ -38,6 +38,9 @@ class SymbolIndex(private val project: Project) {
     // 类型 -> 符号列表
     private val typeIndex = ConcurrentHashMap<PSIAnalyzer.SymbolType, MutableList<PSIAnalyzer.SymbolInfo>>()
 
+    // 6.3.4 前缀树优化：token -> 符号列表（按 camelCase/下划线分词）
+    private val tokenIndex = ConcurrentHashMap<String, MutableList<PSIAnalyzer.SymbolInfo>>()
+
     // 继承反向索引：superType -> 实现/继承该类型的符号列表
     private val inheritanceIndex = ConcurrentHashMap<String, CopyOnWriteArrayList<PSIAnalyzer.SymbolInfo>>()
 
@@ -60,7 +63,13 @@ class SymbolIndex(private val project: Project) {
     internal var fileAnalyzer: ((VirtualFile) -> List<PSIAnalyzer.SymbolInfo>)? = null
 
     private fun analyzeFile(file: VirtualFile): List<PSIAnalyzer.SymbolInfo> {
-        return fileAnalyzer?.invoke(file) ?: analyzer.analyzeFileDeep(file)
+        if (fileAnalyzer != null) return fileAnalyzer!!.invoke(file)
+        val ext = file.extension?.lowercase() ?: ""
+        return when (ext) {
+            in CONFIG_EXTENSIONS -> CrossLanguageSymbolExtractor.extractConfigSymbols(file)
+            in TEXT_EXTENSIONS -> CrossLanguageSymbolExtractor.extractTextSymbols(file)
+            else -> analyzer.analyzeFileDeep(file)
+        }
     }
 
     /**
@@ -175,7 +184,7 @@ class SymbolIndex(private val project: Project) {
     private fun collectProjectFiles(): Set<VirtualFile> {
         val scope = GlobalSearchScope.projectScope(project)
         return mutableSetOf<VirtualFile>().apply {
-            listOf("kt", "java", "scala", "py", "js", "ts", "go", "rs", "cpp", "c", "h").forEach { ext ->
+            (CODE_EXTENSIONS + CONFIG_EXTENSIONS + TEXT_EXTENSIONS).forEach { ext ->
                 try {
                     FilenameIndex.getAllFilesByExt(project, ext, scope).forEach { add(it) }
                 } catch (e: Exception) {
@@ -189,6 +198,9 @@ class SymbolIndex(private val project: Project) {
         fileIndex[path]?.forEach { symbol ->
             nameIndex[symbol.name]?.remove(symbol)
             typeIndex[symbol.type]?.remove(symbol)
+            tokenizeSymbolName(symbol.name).forEach { token ->
+                tokenIndex[token]?.remove(symbol)
+            }
             symbol.superTypes.forEach { superType ->
                 inheritanceIndex[superType]?.remove(symbol)
             }
@@ -201,10 +213,40 @@ class SymbolIndex(private val project: Project) {
         symbols.forEach { symbol ->
             nameIndex.getOrPut(symbol.name) { mutableListOf() }.add(symbol)
             typeIndex.getOrPut(symbol.type) { mutableListOf() }.add(symbol)
+            tokenizeSymbolName(symbol.name).forEach { token ->
+                tokenIndex.getOrPut(token) { CopyOnWriteArrayList() }.add(symbol)
+            }
             symbol.superTypes.forEach { superType ->
                 inheritanceIndex.getOrPut(superType) { CopyOnWriteArrayList() }.add(symbol)
             }
         }
+    }
+
+    /**
+     * 6.3.4 将符号名拆分为可前缀匹配的小写 token。
+     *
+     * 例如：
+     * - `UserService` → [userservice, user, service]
+     * - `get_user_by_id` → [get_user_by_id, get, user, by, id]
+     */
+    private fun tokenizeSymbolName(name: String): List<String> {
+        val tokens = mutableSetOf<String>()
+        val lower = name.lowercase()
+        tokens.add(lower)
+
+        // camelCase / PascalCase 拆分
+        Regex("(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+            .split(name)
+            .map { it.lowercase().trim() }
+            .filter { it.length > 1 }
+            .forEach { tokens.add(it) }
+
+        // 下划线 / 连字符 / 点号拆分
+        lower.split(Regex("[_.\\-]+"))
+            .filter { it.length > 1 }
+            .forEach { tokens.add(it) }
+
+        return tokens.toList()
     }
 
     /**
@@ -218,16 +260,42 @@ class SymbolIndex(private val project: Project) {
     }
 
     /**
-     * 模糊搜索符号
+     * 6.3.4 模糊搜索符号（token 前缀索引优化）。
+     *
+     * 先按 query 拆分出的 token 在前缀索引中命中候选，再按匹配 token 数量排序；
+     * 同时保留子串匹配作为兜底，避免 token 拆分遗漏。
      */
     fun fuzzySearch(query: String, limit: Int = 20): List<PSIAnalyzer.SymbolInfo> {
         ensureIndexed()
         return indexLock.readLock().withLock {
+            val scores = mutableMapOf<PSIAnalyzer.SymbolInfo, Double>()
             val lowerQuery = query.lowercase()
+            val queryTokens = tokenizeSymbolName(query)
+
+            // token 前缀匹配：命中 token 越多、token 本身越完整，分数越高
+            queryTokens.forEach { qt ->
+                tokenIndex.entries
+                    .filter { (token, _) -> token.startsWith(qt) || qt.startsWith(token) }
+                    .forEach { (token, symbols) ->
+                        val tokenScore = if (token == qt) 2.0 else 1.0 + qt.length.toDouble() / token.length
+                        symbols.forEach { symbol ->
+                            scores.merge(symbol, tokenScore) { existing, added -> existing + added }
+                        }
+                    }
+            }
+
+            // 兜底：名称子串匹配
             nameIndex.entries
                 .filter { it.key.lowercase().contains(lowerQuery) }
                 .flatMap { it.value }
+                .forEach { symbol ->
+                    scores.merge(symbol, 0.5) { existing, added -> existing + added }
+                }
+
+            scores.entries
+                .sortedByDescending { it.value }
                 .take(limit)
+                .map { it.key }
         }
     }
 
@@ -345,6 +413,7 @@ class SymbolIndex(private val project: Project) {
             nameIndex.clear()
             fileIndex.clear()
             typeIndex.clear()
+            tokenIndex.clear()
             inheritanceIndex.clear()
             indexedFileHashes.clear()
             buildSkipCount.set(0)
@@ -383,5 +452,23 @@ class SymbolIndex(private val project: Project) {
          * 过让 LLM 看到全 0; 真要等就用更长的 waitMs 显式调。
          */
         const val DEFAULT_STATS_WAIT_MS: Long = 3_000
+
+        /**
+         * 6.5.3：跨语言索引支持的代码文件扩展名。
+         */
+        val CODE_EXTENSIONS = setOf(
+            "kt", "kts", "java", "scala", "py", "js", "jsx", "ts", "tsx",
+            "go", "rs", "cpp", "c", "h", "vue", "svelte"
+        )
+
+        /**
+         * 6.5.3：配置文件扩展名，索引顶层 key 与文件名。
+         */
+        val CONFIG_EXTENSIONS = setOf("json", "yaml", "yml")
+
+        /**
+         * 6.5.3：文本类文件扩展名，索引标题 / SQL 对象 / 组件名。
+         */
+        val TEXT_EXTENSIONS = setOf("sql", "md")
     }
 }

@@ -48,7 +48,8 @@ class CodeSageProjectService(private val project: Project) {
             taskPlanner = taskPlanner,
             project = project,
             skillToolAdapter = skillToolAdapter,
-            confirmationCallback = confirmationCallback
+            confirmationCallback = confirmationCallback,
+            mcpServerManagerOverride = appService.mcpServerManager
         )
 
         val config = PluginConfig.getInstance()

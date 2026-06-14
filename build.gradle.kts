@@ -25,6 +25,7 @@ dependencies {
     }
     implementation("org.yaml:snakeyaml:2.2")
     implementation("org.xerial:sqlite-jdbc:3.45.1.0")
+    implementation("org.apache.pdfbox:pdfbox:3.0.2")
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.1")
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.1")
@@ -38,7 +39,7 @@ tasks {
     withType<Jar> {
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
         from({
-            configurations.runtimeClasspath.get().filter { it.name.contains("okhttp") || it.name.contains("okio") || it.name.contains("snakeyaml") || it.name.contains("kotlinx-serialization") || it.name.contains("sqlite") }
+            configurations.runtimeClasspath.get().filter { it.name.contains("okhttp") || it.name.contains("okio") || it.name.contains("snakeyaml") || it.name.contains("kotlinx-serialization") || it.name.contains("sqlite") || it.name.contains("pdfbox") || it.name.contains("fontbox") || it.name.contains("commons-logging") }
                 .map { if (it.isDirectory) it else zipTree(it) }
         })
     }

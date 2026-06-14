@@ -2,6 +2,7 @@ package com.codesage.agent.tools
 
 import com.codesage.agent.tools.handlers.*
 import com.codesage.analysis.CodeInsightTools
+import com.codesage.mcp.server.MCPServerManager
 import com.codesage.model.dto.Tool
 import com.codesage.model.dto.ToolParameters
 import com.codesage.model.dto.ToolProperty
@@ -84,6 +85,7 @@ class ToolRegistry {
         fun createDefault(
             project: com.intellij.openapi.project.Project? = null,
             auditLog: com.codesage.tools.guardrails.ToolAuditLog? = null,
+            mcpServerManager: MCPServerManager? = null,
         ): ToolRegistry {
             return ToolRegistry().apply {
                 // Phase 3: 为命令执行工具注入 OS 级沙箱（默认开启 workspace 写权限）
@@ -95,20 +97,29 @@ class ToolRegistry {
 
                 // === IDE 文件操作工具（通过 Handler 注册） ===
                 val ideTools = IDETools(project, auditLog, commandSandbox)
-                register(IDEFileHandlers.createReadFileHandler(ideTools))
+                val readFileHandler = IDEFileHandlers.createReadFileHandler(ideTools)
+                val runCommandHandler = IDEFileHandlers.createRunCommandHandler(ideTools)
+
+                register(readFileHandler)
+                register(ReadDocumentTool(ideTools))
                 register(IDEFileHandlers.createWriteFileHandler(ideTools))
                 register(IDEFileHandlers.createListDirectoryHandler(ideTools))
                 register(IDEFileHandlers.createFindFileHandler(ideTools))
+                register(IDEFileHandlers.createGlobHandler(ideTools))
                 register(IDEFileHandlers.createGrepCodeHandler(ideTools))
                 register(IDEFileHandlers.createGetFileInfoHandler(ideTools))
                 register(IDEFileHandlers.createReadMultipleFilesHandler(ideTools))
                 register(IDEFileHandlers.createEditFileHandler(ideTools))
+                register(ApplyPatchTool(ideTools))
+                register(MultiEditTool(ideTools))
                 register(IDEFileHandlers.createDeleteFileHandler(ideTools))
                 register(IDEFileHandlers.createCopyFileHandler(ideTools))
                 register(IDEFileHandlers.createMoveFileHandler(ideTools))
                 register(IDEFileHandlers.createSearchCodeHandler(ideTools))
-                register(IDEFileHandlers.createRunCommandHandler(ideTools))
+                register(runCommandHandler)
                 register(IDEFileHandlers.createGetProjectStructureHandler(ideTools))
+                register(KillProcessTool())
+                register(ReadProcessOutputTool())
 
                 // === 扩展工具（Git / Shell / HTTP / 数据处理） ===
                 val extendedTools = ExtendedTools(project, commandSandbox)
@@ -116,7 +127,7 @@ class ToolRegistry {
                 register(ExtendedToolHandlers.createGitDiffHandler(extendedTools))
                 register(ExtendedToolHandlers.createGitLogHandler(extendedTools))
                 register(ExtendedToolHandlers.createGitBranchHandler(extendedTools))
-                register(ExtendedToolHandlers.createExecShellHandler(extendedTools))
+                register(ExtendedToolHandlers.createExecShellHandler(extendedTools, ideTools))
                 register(ExtendedToolHandlers.createHttpRequestHandler(extendedTools))
                 register(ExtendedToolHandlers.createParseJsonHandler(extendedTools))
                 register(ExtendedToolHandlers.createEncodeBase64Handler(extendedTools))
@@ -130,6 +141,7 @@ class ToolRegistry {
                 register(ExtendedToolHandlers.createGitCommitHandler(extendedTools))
                 register(ExtendedToolHandlers.createGitStashHandler(extendedTools))
                 register(ExtendedToolHandlers.createGitBlameHandler(extendedTools))
+                register(ExtendedToolHandlers.createGitPushHandler(extendedTools))
 
                 // === 增强版文件操作工具 ===
                 register(IDEFileHandlers.createCreateDirectoryHandler(ideTools))
@@ -159,6 +171,8 @@ class ToolRegistry {
                 val codeInsightExecutor = com.codesage.analysis.CodeInsightExecutor(project)
                 register(AnalyzeSymbolTool(codeInsightExecutor))
                 register(FindUsagesTool(codeInsightExecutor))
+                register(FindCallersTool(codeInsightExecutor))
+                register(FindCalleesTool(codeInsightExecutor))
                 register(GetInheritanceChainTool(codeInsightExecutor))
                 register(SemanticSearchTool(codeInsightExecutor))
                 register(GetFileSummaryTool(codeInsightExecutor))
@@ -171,6 +185,9 @@ class ToolRegistry {
                 register(DatabaseSchemaTool())
                 register(GitWorktreeTool())
                 register(SymbolSearchTool(project))
+
+                // === 6.11.1 MCP 动态工具发现 ===
+                register(McpToolHandlers.createMcpToolSearchHandler(mcpServerManager))
 
                 // === 子 Agent 委托工具（特殊：分发由 EnhancedAgentLoop.executeTool 处理） ===
                 // 单独注册其 schema 让 LLM 看到可用工具。
@@ -189,9 +206,9 @@ class ToolRegistry {
 internal fun readFileTool() = Tool(
     name = "read_file",
     description = """
-        Summary: 读取单个文件内容，支持相对/绝对路径和 offset/limit 分页。
-        Args: path (string, required): 文件路径；offset (int): 起始行号（0-based）；limit (int): 最大读取行数。
-        Do: 大文件先不带 offset 读前 1000 行摘要；需要后续内容时用 offset 续读；读取前用 list_directory 确认路径。
+        Summary: 读取单个文件内容，支持相对/绝对路径、offset/limit 分页和可选行号输出。
+        Args: path (string, required): 文件路径；offset (int): 起始行号（0-based）；limit (int): 最大读取行数；line_numbers (boolean): 是否额外返回带行号的 content_with_line_numbers，默认 false。
+        Do: 大文件先不带 offset 读前 1000 行摘要；需要后续内容时用 offset 续读；读取前用 list_directory 确认路径。需要直接引用行号时传 line_numbers=true。
         Don't: 不要读取 node_modules/build/.gradle/target 等生成目录；不要一次性读取超大文件而不分页。
         Parallel: Yes，多个文件同时读取时用 read_multiple_files 更高效。
         Cap: 全文读取时内容超过 MAX_CONTENT_LENGTH 会被截断并标记 truncated；offset 越界返回明确错误。
@@ -209,6 +226,10 @@ internal fun readFileTool() = Tool(
             "limit" to ToolProperty(
                 type = "integer",
                 description = "最大读取行数，可选，默认读取整个文件"
+            ),
+            "line_numbers" to ToolProperty(
+                type = "boolean",
+                description = "是否额外返回带行号的内容（content_with_line_numbers），默认 false"
             )
         ),
         required = listOf("path")
@@ -313,12 +334,12 @@ internal fun searchCodeTool() = Tool(
 internal fun runCommandTool() = Tool(
     name = "run_command",
     description = """
-        Summary: 在工作目录下执行系统命令（shell），返回 stdout、stderr 和 exit_code。
-        Args: command (string, required): 要执行的命令；working_dir (string): 工作目录，默认项目根；timeout (int): 超时毫秒，默认 30000。
-        Do: 运行测试、构建、lint 等验证命令；用 `| head` 控制输出；命令前确认依赖已安装。
+        Summary: 在工作目录下执行系统命令（shell），返回 stdout、stderr 和 exit_code；支持后台运行。
+        Args: command (string, required): 要执行的命令；working_dir (string): 工作目录，默认项目根；timeout (int): 超时毫秒，默认 120000、最大 600000；run_in_background (boolean): 是否后台运行，默认 false。
+        Do: 运行测试、构建、lint 等验证命令；用 `| head` 控制输出；命令前确认依赖已安装。长期进程（如 dev server）用 run_in_background=true。
         Don't: 不要执行 rm -rf /、curl | sh、修改系统配置等危险命令；不要假设命令存在而不检查；不要在沙箱内尝试网络命令。
-        Parallel: Yes，多个相互独立的命令可并行执行。
-        Cap: 单流输出超过 1M 字符会被截断并标记 stdout_truncated/stderr_truncated；命令运行在 OS 级沙箱中（禁网络、禁项目外写入）。
+        Parallel: Yes，多个相互独立的命令可并行执行；后台进程之间也独立。
+        Cap: 单流输出超过 1M 字符会被截断并标记 stdout_truncated/stderr_truncated；命令运行在 OS 级沙箱中（禁网络、禁项目外写入）。后台命令当前不走 OS 级沙箱。
     """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
@@ -332,7 +353,15 @@ internal fun runCommandTool() = Tool(
             ),
             "timeout" to ToolProperty(
                 type = "integer",
-                description = "超时时间（毫秒），默认 30000"
+                description = "超时时间（毫秒），默认 120000，最大 600000"
+            ),
+            "run_in_background" to ToolProperty(
+                type = "boolean",
+                description = "是否在后台运行命令。为 true 时返回 process_id，可用 read_process_output / kill_process 管理。"
+            ),
+            "stream_output" to ToolProperty(
+                type = "boolean",
+                description = "是否流式输出命令的 stdout/stderr。为 true 时命令执行期间会实时发送 command_output_delta 事件（仅同步命令支持，后台命令与沙箱命令暂不支持）。默认 false。"
             )
         ),
         required = listOf("command")
@@ -363,12 +392,12 @@ internal fun getProjectStructureTool() = Tool(
 internal fun delegateTaskTool() = Tool(
     name = "delegate_task",
     description = """
-        Summary: 派生子 Agent 并行处理独立任务流，返回子 Agent 的最终自然语言总结。
-        Args: task_description (string, required): 子任务详细描述；toolset (string): 工具集（coder/explorer/verifier/webfetcher 或旧别名 dev/research/test/browser）；context_files (array): 子 Agent 需要访问的文件。
-        Do: 任务可拆分为独立子任务时使用；选择最小权限的 toolset；为子 Agent 提供清晰边界和必要上下文文件。
-        Don't: 不要用于高度耦合、必须连续沟通的任务；不要递归委托过深。
+        Summary: 派生子 Agent 并行处理独立任务流，返回结构化 JSON 结果（非纯文本）。
+        Args: task_description (string, required): 子任务详细描述；toolset (string): 工具集（coder/explorer/verifier/webfetcher 或旧别名 dev/research/test/browser）；context_files (array): 子 Agent 需要访问的文件；isolated_worktree (boolean): 是否在独立 git worktree 中运行，默认 false；max_depth (integer): 最大递归深度，范围 1-5，默认 2；allowed_tools (array of string): 显式白名单，子 Agent 只能使用列表中的工具；denied_tools (array of string): 黑名单，优先于 allowed_tools。
+        Do: 任务可拆分为独立子任务时使用；选择最小权限的 toolset；需要进一步限制工具时传 allowed_tools/denied_tools；为子 Agent 提供清晰边界和必要上下文文件；当子任务需要修改文件且父 Agent 希望保持主工作区干净时，设 isolated_worktree=true。
+        Don't: 不要用于高度耦合、必须连续沟通的任务；不要递归委托过深；不要把 delegate_task 加入 denied_tools（会报错）。
         Parallel: Yes，多个 delegate_task 可与其他工具并行（注意子 Agent 独立运行）。
-        Cap: 子 Agent 结果以纯文本总结返回，详细元数据通过流事件交付。
+        Cap: 返回 JSON 包含 success/result/files/blockers/tools_used/iterations_used/completed_tool_calls/session_id/raw_output/worktree_diff/worktree_changes；UI 仍通过事件流展示自然语言总结。
     """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
@@ -393,6 +422,34 @@ internal fun delegateTaskTool() = Tool(
             "context_files" to ToolProperty(
                 type = "array",
                 description = "Files the sub-agent needs access to"
+            ),
+            "isolated_worktree" to ToolProperty(
+                type = "boolean",
+                description = "Whether to run the sub-agent in an isolated git worktree. " +
+                        "When true, a temporary worktree is created from the current HEAD, " +
+                        "the sub-agent's project basePath points to the worktree, and after " +
+                        "completion the worktree diff is returned as worktree_diff/worktree_changes. " +
+                        "Default false."
+            ),
+            "max_depth" to ToolProperty(
+                type = "integer",
+                description = "Maximum sub-agent recursion depth for this task. " +
+                        "Range: 1-5. Default: 2. " +
+                        "depth=0 is the parent agent; the sub-agent may spawn further sub-agents " +
+                        "until depth reaches max_depth."
+            ),
+            "allowed_tools" to ToolProperty(
+                type = "array",
+                description = "Explicit allow-list of tool names the sub-agent may use. " +
+                        "When provided, the sub-agent's toolset is further restricted to the intersection " +
+                        "of this list and the selected toolset. `delegate_task` is always retained unless " +
+                        "explicitly listed in denied_tools."
+            ),
+            "denied_tools" to ToolProperty(
+                type = "array",
+                description = "Explicit deny-list of tool names. Takes precedence over allowed_tools. " +
+                        "Do NOT include `delegate_task` here unless you want to prevent the sub-agent from " +
+                        "delegating further, which will cause an error."
             )
         ),
         required = listOf("task_description")
@@ -414,6 +471,32 @@ internal fun findFileTool() = Tool(
             "pattern" to ToolProperty("string", "File name pattern to search for (e.g. '*.kt', 'build.gradle')"),
             "path" to ToolProperty("string", "Search root directory, defaults to project root"),
             "max_results" to ToolProperty("integer", "Maximum number of results to return, default 50")
+        ),
+        required = listOf("pattern")
+    )
+)
+
+internal fun globTool() = Tool(
+    name = "glob",
+    description = """
+        Summary: 按 glob 模式批量定位文件或目录，支持 `**` 递归匹配。
+        Args: pattern (string, required): glob 模式，如 `src/**/*.kt`、`*.md`；path (string): 搜索根目录，默认项目根；max_results (int): 最大结果数 1-1000，默认 100；include_dirs (boolean): 是否返回匹配的目录，默认 false；exclude_dirs (array): 要排除的目录名；include_hidden (boolean): 是否包含隐藏文件，默认 false。
+        Do: 需要批量读取某类文件时先用 glob 定位；比 find_file 更适合模式化批量匹配。
+        Don't: 不要用过宽模式（如 `**/*`）而不加 max_results；不要忽略 truncated=true。
+        Parallel: Yes，多个独立 glob 可并行。
+        Cap: 默认排除 node_modules/.git/build/.gradle/target/__pycache__/.idea；结果超过 max_results 会截断。
+    """.trimIndent(),
+    parameters = ToolParameters(
+        properties = mapOf(
+            "pattern" to ToolProperty("string", "Glob pattern to match (e.g. 'src/**/*.kt', '*.md')"),
+            "path" to ToolProperty("string", "Search root directory, defaults to project root"),
+            "max_results" to ToolProperty("integer", "Maximum number of results to return, default 100, max 1000"),
+            "include_dirs" to ToolProperty(
+                "boolean",
+                "Whether to include matching directories in results, default false"
+            ),
+            "exclude_dirs" to ToolProperty("array", "Directory names to skip"),
+            "include_hidden" to ToolProperty("boolean", "Whether to include hidden files/directories, default false")
         ),
         required = listOf("pattern")
     )
@@ -461,16 +544,20 @@ internal fun getFileInfoTool() = Tool(
 internal fun readMultipleFilesTool() = Tool(
     name = "read_multiple_files",
     description = """
-        Summary: 一次性读取多个文件，比多次 read_file 更高效。
-        Args: paths (array, required): 文件路径列表。
-        Do: 需要同时读取多个相关文件（如接口与实现、测试与被测代码）时使用。
+        Summary: 一次性读取多个文件，比多次 read_file 更高效，支持可选行号输出。
+        Args: paths (array, required): 文件路径列表；line_numbers (boolean): 是否为每个文件额外返回 content_with_line_numbers，默认 false。
+        Do: 需要同时读取多个相关文件（如接口与实现、测试与被测代码）时使用。需要直接引用行号时传 line_numbers=true。
         Don't: 不要用它读取生成目录或超大文件；单个文件过大时改用 read_file 分页。
         Parallel: Yes，内部并行读取。
         Cap: 每个文件内容超过 MAX_CONTENT_LENGTH 会被截断并标记 truncated 和 original_length。
     """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
-            "paths" to ToolProperty("array", "List of file paths to read")
+            "paths" to ToolProperty("array", "List of file paths to read"),
+            "line_numbers" to ToolProperty(
+                type = "boolean",
+                description = "是否为每个文件额外返回带行号的内容（content_with_line_numbers），默认 false"
+            )
         ),
         required = listOf("paths")
     )
@@ -480,11 +567,11 @@ internal fun editFileTool() = Tool(
     name = "edit_file",
     description = """
         Summary: 精确编辑文件，用 old_string 替换为 new_string，或按行范围替换。
-        Args: path (string, required): 文件路径；old_string (string): 要被替换的文本；new_string (string, required): 替换后的文本；start_line/end_line (int): 1-based 行范围。
+        Args: path (string, required): 文件路径；old_string (string): 要被替换的文本；new_string (string, required): 替换后的文本；start_line/end_line (int): 1-based 行范围；fuzzy_match (boolean): 为 true 时忽略行首/行尾空白差异，并在 old_string 不唯一时自动用上下文去歧。
         Do: 小范围修改时使用；old_string 提供足够上下文确保唯一匹配；修改后验证文件仍能编译/通过测试。
-        Don't: 不要在不确认上下文的情况下使用；old_string 必须精确匹配；不要用它做大规模重写（改用 write_file）。
+        Don't: 不要在不确认上下文的情况下使用；不要用它做大规模重写（改用 write_file）。
         Parallel: No，同一文件并发编辑会冲突。
-        Cap: start_line/end_line 越界会返回明确错误。
+        Cap: start_line/end_line 越界会明确报错；old_string 不唯一且无法去歧时返回候选位置。
     """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
@@ -492,7 +579,11 @@ internal fun editFileTool() = Tool(
             "old_string" to ToolProperty("string", "Text to replace (optional if using line range)"),
             "new_string" to ToolProperty("string", "Replacement text"),
             "start_line" to ToolProperty("integer", "Start line number for range replacement (1-based)"),
-            "end_line" to ToolProperty("integer", "End line number for range replacement (1-based)")
+            "end_line" to ToolProperty("integer", "End line number for range replacement (1-based)"),
+            "fuzzy_match" to ToolProperty(
+                "boolean",
+                "Ignore leading/trailing whitespace and use surrounding context to disambiguate non-unique old_string"
+            )
         ),
         required = listOf("path", "new_string")
     )
@@ -578,10 +669,11 @@ internal fun gitStatusTool() = Tool(
 internal fun gitDiffTool() = Tool(
     name = "git_diff",
     description = """
-        Summary: 查看 Git 文件差异，支持暂存区或指定文件。
-        Args: working_dir (string): 工作目录；cached (boolean): 是否查看暂存区；file (string): 指定文件路径。
-        Do: 提交前审查变更；查看特定文件改动。
-        Don't: 不要用于未跟踪文件；差异过大时用 `| head` 控制。
+        Summary: 查看 Git 文件差异，返回结构化结果（文件/hunk/行级增删）。
+        Args: working_dir (string): 工作目录；cached (boolean): 是否查看暂存区；file (string): 指定文件路径；include_raw (boolean): 是否额外返回原始 diff 文本，默认 false。
+        Returns: files[]（含 old_path/new_path/change_type/additions/deletions/hunks[]），以及 total_additions/total_deletions/total_changes/has_changes。
+        Do: 提交前审查变更；按文件和行号分析改动。
+        Don't: 不要用于未跟踪文件；差异过大时按 file 参数分批查询。
         Parallel: Yes。
         Cap: 只读工具。
     """.trimIndent(),
@@ -589,7 +681,8 @@ internal fun gitDiffTool() = Tool(
         properties = mapOf(
             "working_dir" to ToolProperty("string", "工作目录路径，默认为项目根目录"),
             "cached" to ToolProperty("boolean", "是否查看暂存区差异 (--cached)，默认为 false"),
-            "file" to ToolProperty("string", "指定查看差异的文件路径，可选")
+            "file" to ToolProperty("string", "指定查看差异的文件路径，可选"),
+            "include_raw" to ToolProperty("boolean", "是否额外返回原始 diff 文本，默认 false")
         ),
         required = listOf()
     )
@@ -637,20 +730,58 @@ internal fun gitBranchTool() = Tool(
 internal fun execShellTool() = Tool(
     name = "exec_shell",
     description = """
-        Summary: 执行 Shell 命令，返回 stdout、stderr 和 exit_code。
-        Args: command (string, required): 要执行的命令；working_dir (string): 工作目录；timeout (int): 超时毫秒，默认 60000、最大 300000。
-        Do: 运行构建、测试、lint、自定义脚本；用 `| head` 控制输出。
-        Don't: 不要执行 rm -rf /、curl | sh、修改系统配置等危险命令；沙箱内禁止网络和外项目写入。
-        Parallel: Yes，多个独立命令可并行。
-        Cap: 命令运行在 OS 级沙箱中；超时最大 300000ms。
+        Summary: [DEPRECATED] 已合并到 run_command。保留此工具仅用于兼容旧 prompt，内部会转发到 run_command。
+        Args: 与 run_command 相同：command (string, required)；working_dir (string)；timeout (int): 默认 120000、最大 600000；run_in_background (boolean)；stream_output (boolean)。
+        Do: 新实现请直接使用 run_command。
+        Don't: 不要在新建 workflow 中继续使用 exec_shell。
+        Parallel: Yes。
+        Cap: 同 run_command。
     """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "command" to ToolProperty("string", "要执行的 Shell 命令"),
             "working_dir" to ToolProperty("string", "工作目录路径，默认为项目根目录"),
-            "timeout" to ToolProperty("integer", "超时时间（毫秒），默认 60000，最大 300000")
+            "timeout" to ToolProperty("integer", "超时时间（毫秒），默认 120000，最大 600000"),
+            "run_in_background" to ToolProperty("boolean", "是否在后台运行命令")
         ),
         required = listOf("command")
+    )
+)
+
+internal fun killProcessTool() = Tool(
+    name = "kill_process",
+    description = """
+        Summary: 终止由 run_command --run_in_background 启动的后台进程。
+        Args: process_id (string, required): run_command 返回的进程 ID。
+        Do: 当后台任务不再需要，或在启动冲突进程前清理时使用。
+        Don't: 不要随意终止不了解的进程。
+        Parallel: Yes。
+        Cap: 若进程正在运行则返回 killed=true；exit_code 可能为 -1。
+    """.trimIndent(),
+    parameters = ToolParameters(
+        properties = mapOf(
+            "process_id" to ToolProperty("string", "run_command 返回的进程 ID")
+        ),
+        required = listOf("process_id")
+    )
+)
+
+internal fun readProcessOutputTool() = Tool(
+    name = "read_process_output",
+    description = """
+        Summary: 读取 run_command --run_in_background 启动的后台进程的最新 stdout/stderr。
+        Args: process_id (string, required): 进程 ID；max_output_chars (int): 单流最大字符数，默认 100000。
+        Do: 用于轮询长期运行的命令（如 dev server、test watcher）或捕获最终输出。
+        Don't: 不要对噪声很大的进程设置过大的 max_output_chars。
+        Parallel: Yes。
+        Cap: 进程存活时 running=true；退出前 exit_code 为 null。
+    """.trimIndent(),
+    parameters = ToolParameters(
+        properties = mapOf(
+            "process_id" to ToolProperty("string", "run_command 返回的进程 ID"),
+            "max_output_chars" to ToolProperty("integer", "单流最大字符数，默认 100000")
+        ),
+        required = listOf("process_id")
     )
 )
 
@@ -659,12 +790,12 @@ internal fun execShellTool() = Tool(
 internal fun httpRequestTool() = Tool(
     name = "http_request",
     description = """
-        Summary: 发送 HTTP 请求，支持 GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS，自动格式化 JSON 响应。
-        Args: url (string, required): 请求 URL；method (string): HTTP 方法，默认 GET；headers (object): 请求头；body (string): 请求体；timeout (int): 超时毫秒，默认 30000。
-        Do: 调用外部 API、下载文档、验证 webhook 时使用；明确 timeout。
-        Don't: 不要访问内网地址、localhost、file:// 等（会被 SSRF 防护拦截）；不要发送敏感凭证而不确认。
+        Summary: 发送 HTTP 请求，支持 GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS，自动格式化 JSON 响应；支持响应大小限制与流式下载到文件。
+        Args: url (string, required): 请求 URL；method (string): HTTP 方法，默认 GET；headers (object): 请求头；body (string): 请求体；timeout (int): 超时毫秒，默认 30000；max_size_bytes (int): 内存中最大响应字节数，默认 1MB，传 0 不限制；output_file (string): 若提供，完整响应流式写入该文件而不进入内存。
+        Do: 调用外部 API、下载文档；大文件用 output_file 保存到磁盘。
+        Don't: 不要访问内网地址、localhost、file:// 等（会被 SSRF 防护拦截）；不要发送敏感凭证而不确认；不要对超过 max_size_bytes 的响应忽略 truncated 标记。
         Parallel: Yes，多个独立请求可并行。
-        Cap: SSRF 防护默认开启；连接/读取超时会返回明确错误信息。
+        Cap: SSRF 防护默认开启；连接/读取超时会返回明确错误信息；响应超过 max_size_bytes 时 truncated=true 并提示用 output_file。
     """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
@@ -676,7 +807,9 @@ internal fun httpRequestTool() = Tool(
             ),
             "headers" to ToolProperty("object", "请求头键值对对象，可选"),
             "body" to ToolProperty("string", "请求体字符串，可选"),
-            "timeout" to ToolProperty("integer", "超时时间（毫秒），默认 30000")
+            "timeout" to ToolProperty("integer", "超时时间（毫秒），默认 30000"),
+            "max_size_bytes" to ToolProperty("integer", "内存中最大响应字节数，默认 1048576（1MB），传 0 表示不限制"),
+            "output_file" to ToolProperty("string", "将完整响应流式保存到该文件路径，可选")
         ),
         required = listOf("url")
     )
@@ -883,6 +1016,26 @@ internal fun gitBlameTool() = Tool(
     )
 )
 
+internal fun gitPushTool() = Tool(
+    name = "git_push",
+    description = """
+        Summary: 将当前分支推送到远程仓库；若分支尚无上游跟踪分支，则自动使用 `git push -u`。
+        Args: working_dir (string): 工作目录；remote (string): 远程名，默认 origin；branch (string): 要推送的分支，默认当前分支。
+        Do: 在 git_commit 后推送代码，为 create_pull_request 做准备。
+        Don't: 不要推送到错误的远程；推送前先确认分支和提交内容。
+        Parallel: No，会修改远程仓库状态。
+        Cap: 仅对 Git 仓库有效；无上游分支时自动设置上游。
+    """.trimIndent(),
+    parameters = ToolParameters(
+        properties = mapOf(
+            "working_dir" to ToolProperty("string", "工作目录路径，默认为项目根目录"),
+            "remote" to ToolProperty("string", "远程名，默认 origin"),
+            "branch" to ToolProperty("string", "要推送的分支，默认当前分支")
+        ),
+        required = listOf()
+    )
+)
+
 // 文件操作增强
 internal fun createDirectoryTool() = Tool(
     name = "create_directory",
@@ -986,19 +1139,23 @@ internal fun gradleTool() = Tool(
 internal fun runTestsTool() = Tool(
     name = "run_tests",
     description = """
-        Summary: 运行项目测试（JUnit/TestNG）。
-        Args: test_class (string): 测试类全限定名；test_method (string): 测试方法名（需同时指定 test_class）；package_path (string): 测试包路径；working_dir (string): 工作目录。
-        Do: 修改代码后运行相关测试验证；先跑最小相关集，再扩大。
+        Summary: 运行项目测试（JUnit/TestNG），返回 stdout/stderr 摘要以及 tests[] 结构化结果；支持流式输出。
+        Args: test_class (string): 测试类全限定名；test_method (string): 测试方法名（需同时指定 test_class）；package_path (string): 测试包路径；working_dir (string): 工作目录；stream_output (boolean): 是否实时流式输出 stdout/stderr，默认 false。
+        Do: 修改代码后运行相关测试验证；先跑最小相关集，再扩大。长时间测试建议开启 stream_output。
         Don't: 不要未修改就全量跑所有测试；注意测试可能依赖外部服务。
         Parallel: No，测试运行通常有状态。
-        Cap: 通过 IDE 测试运行器执行，结果格式与项目配置相关。
+        Cap: 解析 Gradle build/test-results/test/*.xml 或 Maven target/surefire-reports/*.xml；失败用例会补充 file_path/line 与 snippet；未找到 XML 时退回 stdout 摘要。
     """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
             "test_class" to ToolProperty("string", "测试类全限定名（可选）"),
             "test_method" to ToolProperty("string", "测试方法名（可选，需同时指定 test_class）"),
             "package_path" to ToolProperty("string", "测试包路径（可选）"),
-            "working_dir" to ToolProperty("string", "工作目录，默认为项目根目录")
+            "working_dir" to ToolProperty("string", "工作目录，默认为项目根目录"),
+            "stream_output" to ToolProperty(
+                "boolean",
+                "是否实时流式输出 stdout/stderr。为 true 时执行期间会实时发送 command_output_delta 事件，默认 false。"
+            )
         ),
         required = listOf()
     )

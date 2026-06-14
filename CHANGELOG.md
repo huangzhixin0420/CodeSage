@@ -1,5 +1,42 @@
 # Changelog
 
+## [Unreleased] — Agent 工具能力优化
+
+### P0 工具能力优化（基于 `docs/CODESAGE_TOOLS_RESEARCH_REPORT.md`）
+
+- `read_file` / `read_multiple_files` 新增 `line_numbers` 参数，可额外返回 `cat -n` 风格的 `content_with_line_numbers`，便于模型直接引用真实行号。
+- 新增 `apply_patch` 工具：支持 Codex 风格的结构化 patch，一次调用可完成多文件、多位置的 Update / Add / Delete 操作；解析或应用失败时不写盘，避免半成品。
+- 修复大文件带 `offset/limit` 分页时的全量加载问题：`read_file` 对超过阈值且带分页参数的文件走 memory-mapped 流式分块，避免一次性 `String(contentsToByteArray())` 导致 OOM；默认大文件读取也额外返回 `total_lines`。
+- `grep_code` / `search_code` 优先接入 ripgrep（`rg --json`），解析后返回统一格式；当 `rg` 不可用、执行失败或用户显式传入 `exclude_dirs`/`include_hidden` 时回退到原有 VFS 扫描。
+- 统一 `run_command` 与 `exec_shell`：`run_command` 默认超时 120s、最大 600s；`exec_shell` 标记为 deprecated 并内部转发到 `run_command`。
+- `run_command` 新增 `run_in_background` 参数，可启动长期进程并返回 `process_id`；新增 `kill_process` 与 `read_process_output` 工具管理后台进程。
+- `run_command` 新增 `stream_output` 参数（6.4.3）：同步命令执行期间实时发射 `command_output_delta` 事件，前端可实时渲染 stdout/stderr；最终仍返回完整结果给模型。后台命令与沙箱命令暂保持非流式。
+- 新增 `git_push` 工具：自动检测当前分支，无上游跟踪分支时使用 `git push -u`，成功返回 `pushed`/`branch`/`remote`/`upstream_set`。
+- `run_tests` 返回结构化测试结果：执行后扫描 Gradle `build/test-results/test/*.xml` 与 Maven `target/surefire-reports/*.xml`，返回 `tests[]` 列表（含 `classname`/`name`/`status`/`time`/`message`/`details`）与汇总计数；无 XML 时退回 stdout 摘要。
+- `run_linter` 返回结构化问题列表：执行后解析 Checkstyle XML、`eslint-report.json`、flake8 JSON，返回 `issues[]`（含 `file`/`line`/`column`/`severity`/`message`/`rule`）及 `issue_count`/`error_count`/`warning_count`；无报告且退出码非零时返回错误输出。
+- 新增 `glob` 工具（P1 6.3.2）：按 glob 模式（如 `src/**/*.kt`）批量定位文件/目录，支持 `**` 递归、`include_dirs`、`exclude_dirs`、`max_results` 截断，默认排除 node_modules/.git/build 等生成目录。
+- `delegate_task` 返回结构化元数据（P1 6.10.1）：tool result 从纯文本改为 JSON，包含 `success`/`cancelled`/`result`/`files`/`blockers`/`iterations_used`/`tools_used`/`completed_tool_calls`/`session_id`/`raw_output`；UI 仍通过 `SubAgentComplete` 事件展示自然语言总结。
+- `delegate_task` 递归深度可配置（P1 6.10.2）：新增 `max_depth` 参数（范围 1-5，默认 2），`SubAgentExecutor` 使用实例级 `maxDepth` 做拦截，prompt 中显示实际深度/上限；越界时直接返回结构化错误。
+- `delegate_task` 工具白名单（P1 6.10.3）：新增 `allowed_tools` / `denied_tools` 参数，`toolset` 过滤后再取交集/去黑名单，`delegate_task` 默认始终保留（除非显式 denied）；过滤为空或禁用委托时返回明确错误；prompt 注入实际可用工具名与限制说明。
+- 符号搜索增强（P1 6.3.3 / 6.3.4）：
+  - 6.3.3 `semantic_search` 向量语义召回：复用本地 128 维 embedding，比较查询与符号名称/文档的向量相似度，与关键词分融合排序。
+  - 6.3.4 `SymbolIndex.fuzzySearch` 前缀索引优化：按 camelCase/下划线构建 token→symbols 索引，支持多 token 前缀匹配与评分排序；保留子串匹配兜底。
+- 记忆系统增强（P1 6.9.1 / 6.9.2）：
+  - 6.9.1 向量记忆与语义召回：为每条记忆生成 128 维本地 embedding 并落盘 SQLite；`memory_search` 与 `prefetch` 融合 FTS5 关键词排名和向量余弦相似度，提升语义相关记忆召回。
+  - 6.9.2 自动会话摘要与关键事实提取：`onSessionEnd` 通过 `SessionSummarizer` 提取偏好/决策/技术栈/文件路径等关键事实，自动写入记忆表；会话摘要改为结构化文本。
+- 代码分析 PSI 调用图（P1 6.5.1 / 6.5.2）：
+  - 6.5.1 `CodeInsightExecutor.collectCalleesForSymbol` 改为基于 PSI 树遍历（`PsiMethodCallExpression` / `KtCallExpression` / `PsiNewExpression`），通过反射提取被调用符号名与精确行号，替代原先扫描 50 行文本的正则启发式；`find_usages` 的 PSI 元素定位增加 `typeHint` 偏好匹配，降低误定位概率。
+  - 6.5.2 新增独立 `find_callers` / `find_callees` 工具：`CodeInsightExecutor` 暴露 `findCallers()` / `findCallees()`，返回结构化列表（`file_path` / `line` / `column` / `caller_symbol` / `callee_symbol`），并在 `ToolRegistry` / `CodeInsightUnifiedTools` / `ToolGuardrails` 安全白名单中注册。
+- MCP 工具治理（P1 6.11.1 / 6.11.2）：
+  - 6.11.1 工具数量上限与动态发现：`MCPServerConfig` / `McpSection` 新增 `maxToolsPerServer`（默认 40）与 `McpServerEntry.maxTools`，`MCPServerManager` 按 allow/deny 过滤后再截断到上限；被隐藏的工具通过新增 `mcp_tool_search` 工具按 serverId/query 动态查询。
+  - 6.11.2 权限规则前置过滤：`McpServerEntry` 支持 `allowedTools` / `deniedTools`（`*` / `?` 通配符），在工具进入 `SkillRegistry` 与 LLM 视野前完成过滤，deny 优先于 allow。
+- Git 工具结构化（P1 6.6.2）：`git_diff` 返回结构化 diff（`files[]` / `hunks[]` / 行级 `add/remove/context` / `old_line_number` / `new_line_number` / 统计），新增可选 `include_raw` 参数保留原始 diff；新增 `GitDiffParser` 处理 modified / added / deleted / renamed / copied / binary 等 diff 类型。
+- HTTP 工具安全增强（P1 6.7.1）：`http_request` 新增 `max_size_bytes`（默认 1MB）限制内存中响应体大小，超出时 `truncated=true` 并提示用 `output_file`；新增 `output_file` 参数可把完整响应流式写入磁盘，避免大文件撑爆内存与上下文。
+- 跨语言符号索引（P1 6.5.3）：`SymbolIndex` 扩展索引文件类型至 Vue/Svelte/JSX/TSX/JSON/YAML/SQL/Markdown；新增 `CrossLanguageSymbolExtractor` 对配置文件提取顶层 key、SQL 提取 CREATE 对象、Markdown 提取标题、Vue/Svelte 提取组件名，提升多语言项目覆盖率。
+- 新增 `multi_edit` 工具（P1 6.2.2）：一次调用对同一文件提交多个 `old_string`/`new_string` 编辑，先批量校验唯一性与存在性，全部通过后再原子写回；任一失败整体回滚，避免半成品文件。
+- 编辑工具智能重试与模糊匹配（P1 6.2.3）：`edit_file` 与 `multi_edit` 新增可选 `fuzzy_match` 参数；当 `old_string` 不唯一时，自动用前后最多 2 行上下文去歧，仍失败则返回候选位置（行号 + 片段）辅助模型修正；同时忽略行首/行尾空白差异，降低缩进变化导致的失败率。
+- 新增 `read_document` 工具（P0 6.1.3）：支持多模态文档读取，包括图片（PNG/JPG/JPEG/WEBP/GIF/BMP，返回 base64 + mime_type + 尺寸）、PDF（Apache PDFBox 提取每页文本，支持 `page` 单页与 `max_pages` 限制）、Jupyter Notebook（解析 cells 列表与元数据）。文件大小受 `max_size_bytes` 限制，PDF 每页文本受 `max_chars_per_page` 限制；headless/测试场景自动绕过 VFS，走本地文件路径。
+
 ## [Unreleased] — 预算/轮次管理下线
 
 预算/轮次管理相关代码已整体下线(方案尚未成熟,等待重新设计)。

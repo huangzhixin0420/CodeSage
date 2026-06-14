@@ -25,11 +25,24 @@ object ExtendedToolHandlers {
     fun createGitBranchHandler(extended: ExtendedTools): ToolHandler =
         FunctionalToolHandler(gitBranchTool()) { extended.gitBranch(it) }
 
-    fun createExecShellHandler(extended: ExtendedTools): ToolHandler =
+    fun createExecShellHandler(
+        extended: ExtendedTools,
+        ideTools: IDETools
+    ): ToolHandler =
         object : ToolHandler {
             override val tool: Tool = execShellTool()
-            override suspend fun execute(args: JsonObject): ToolResult =
-                extended.execShell(args)
+            override suspend fun execute(args: JsonObject): ToolResult {
+                // P0 优化 6.4.1：exec_shell 已废弃，统一转发到 run_command 执行。
+                return ideTools.runCommand(args)
+            }
+
+            override suspend fun execute(
+                args: JsonObject,
+                onStream: suspend (com.codesage.agent.core.AgentStreamEvent) -> Unit
+            ): ToolResult {
+                // P0 优化 6.4.3：exec_shell 流式路径同样转发到 run_command。
+                return ideTools.runCommand(args, onStream)
+            }
         }
 
     fun createHttpRequestHandler(extended: ExtendedTools): ToolHandler =
@@ -251,6 +264,55 @@ object ExtendedToolHandlers {
             }
         }
 
+    /**
+     * 6.6.1 新增：将当前分支推送到远程仓库。
+     *
+     * 若分支尚无上游跟踪分支，自动使用 `git push -u origin <branch>`。
+     */
+    fun createGitPushHandler(extended: ExtendedTools): ToolHandler =
+        FunctionalToolHandler(gitPushTool()) { args ->
+            val workingDir = extended.resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
+            val remote = args["remote"]?.jsonPrimitive?.content ?: "origin"
+            val branchArg = args["branch"]?.jsonPrimitive?.content
+
+            val gitDir = File(workingDir, ".git")
+            if (!gitDir.exists()) {
+                return@FunctionalToolHandler ToolResult.Error("Not a Git repository: $workingDir")
+            }
+
+            val branch = branchArg ?: runGit(workingDir, listOf("git", "rev-parse", "--abbrev-ref", "HEAD"))
+                .stdout
+                .trim()
+                .takeIf { it.isNotBlank() && it != "HEAD" }
+            ?: return@FunctionalToolHandler ToolResult.Error("Cannot determine current branch (detached HEAD?)")
+
+            val upstream = runGit(workingDir, listOf("git", "rev-parse", "--abbrev-ref", "$branch@{upstream}"))
+            val setUpstream = upstream.exitCode != 0 || upstream.stdout.isBlank()
+
+            val cmd = mutableListOf("git", "push")
+            if (setUpstream) cmd.add("-u")
+            cmd.add(remote)
+            cmd.add(branch)
+
+            executeGitCommand(cmd, workingDir) { stdout, stderr, exitCode ->
+                if (exitCode != 0) {
+                    ToolResult.Error("git push failed: ${stderr.ifBlank { stdout }}")
+                } else {
+                    ToolResult.Success(
+                        JsonObject(
+                            mapOf(
+                                "pushed" to JsonPrimitive(true),
+                                "remote" to JsonPrimitive(remote),
+                                "branch" to JsonPrimitive(branch),
+                                "upstream_set" to JsonPrimitive(setUpstream),
+                                "output" to JsonPrimitive(stdout.ifBlank { stderr })
+                            )
+                        )
+                    )
+                }
+            }
+        }
+
     // endregion
 
     private fun executeGitCommand(
@@ -275,6 +337,24 @@ object ExtendedToolHandlers {
         } catch (e: Exception) {
             logger.error("Git command failed: $command", e)
             ToolResult.Error("Git command failed: ${e.message}")
+        }
+    }
+
+    private data class GitOutput(val stdout: String, val stderr: String, val exitCode: Int)
+
+    private fun runGit(workingDir: String, command: List<String>): GitOutput {
+        return try {
+            val process = ProcessBuilder(command)
+                .directory(File(workingDir))
+                .redirectErrorStream(false)
+                .start()
+            GitOutput(
+                stdout = process.inputStream.bufferedReader().readText(),
+                stderr = process.errorStream.bufferedReader().readText(),
+                exitCode = process.waitFor()
+            )
+        } catch (e: Exception) {
+            GitOutput("", e.message ?: "Git command failed", -1)
         }
     }
 }

@@ -85,8 +85,11 @@ class SymbolIndexTest {
     @Test
     fun `code insight tools are registered`() {
         val tools = CodeInsightTools.getAllTools()
-        assertEquals(6, tools.size)
+        assertEquals(8, tools.size)
         assertTrue(tools.any { it.name == "analyze_symbol" })
+        assertTrue(tools.any { it.name == "find_usages" })
+        assertTrue(tools.any { it.name == "find_callers" })
+        assertTrue(tools.any { it.name == "find_callees" })
         assertTrue(tools.any { it.name == "semantic_search" })
         assertTrue(tools.any { it.name == "get_file_summary" })
     }
@@ -364,4 +367,78 @@ class SymbolIndexTest {
         assertTrue(elapsed < 100, "已 build 后 getStats 应是 O(1), 实测 ${elapsed}ms")
         assertEquals(1, stats.indexedFiles)
         assertEquals(1, stats.methodCount)
-    }}
+    }
+
+    @Test
+    fun `fuzzySearch by token prefix returns relevant symbols`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+
+        symbolIndex.updateFileSymbolsForTest(
+            "/test/Search.kt", listOf(
+                PSIAnalyzer.SymbolInfo(
+                    name = "UserService",
+                    type = PSIAnalyzer.SymbolType.CLASS,
+                    qualifiedName = null,
+                    filePath = "/test/Search.kt",
+                    lineNumber = 1,
+                    docComment = null,
+                    modifiers = emptyList()
+                ),
+                PSIAnalyzer.SymbolInfo(
+                    name = "OrderRepository",
+                    type = PSIAnalyzer.SymbolType.CLASS,
+                    qualifiedName = null,
+                    filePath = "/test/Search.kt",
+                    lineNumber = 5,
+                    docComment = null,
+                    modifiers = emptyList()
+                ),
+                PSIAnalyzer.SymbolInfo(
+                    name = "getUserById",
+                    type = PSIAnalyzer.SymbolType.METHOD,
+                    qualifiedName = null,
+                    filePath = "/test/Search.kt",
+                    lineNumber = 10,
+                    docComment = null,
+                    modifiers = emptyList()
+                )
+            )
+        )
+
+        val userResults = symbolIndex.fuzzySearch("user", limit = 5)
+        assertTrue(userResults.any { it.name == "UserService" }, "Should find UserService by 'user' token")
+        assertTrue(userResults.any { it.name == "getUserById" }, "Should find getUserById by 'user' token")
+
+        val orderResults = symbolIndex.fuzzySearch("order repo", limit = 5)
+        assertTrue(orderResults.any { it.name == "OrderRepository" }, "Should find OrderRepository by tokens")
+    }
+
+    @Test
+    fun `fuzzySearch is fast on large symbol index`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+
+        val symbols = (1..10_000).map { i ->
+            PSIAnalyzer.SymbolInfo(
+                name = "SomeLongSymbolName$i",
+                type = PSIAnalyzer.SymbolType.CLASS,
+                qualifiedName = null,
+                filePath = "/test/Class$i.kt",
+                lineNumber = i,
+                docComment = null,
+                modifiers = emptyList()
+            )
+        }
+        symbols.chunked(100).forEachIndexed { idx, chunk ->
+            symbolIndex.updateFileSymbolsForTest("/test/batch$idx.kt", chunk)
+        }
+
+        val start = System.nanoTime()
+        val results = symbolIndex.fuzzySearch("symbolname500", limit = 10)
+        val durationMs = (System.nanoTime() - start) / 1_000_000.0
+
+        assertTrue(results.isNotEmpty(), "Should find matching symbol")
+        assertTrue(durationMs < 50.0, "fuzzySearch should be fast with token index, took ${durationMs}ms")
+    }
+}

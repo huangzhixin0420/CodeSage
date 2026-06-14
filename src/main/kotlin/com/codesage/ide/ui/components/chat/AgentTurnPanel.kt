@@ -99,6 +99,20 @@ class AgentTurnPanel(
         agentSection.addToolCall(toolName, toolId, summary)
     }
 
+    /**
+     * 6.10.4: 在轮次中嵌入一个子 Agent 进度面板。
+     *
+     * 与普通工具调用不同，子 Agent 使用 [SubAgentProgressPanel] 展示递归深度预算、
+     * 工具白名单和进度日志。
+     *
+     * @param subAgentPanel 已构造好的子 Agent 进度面板
+     * @param sessionId 子 Agent 会话 ID，用于后续 SubAgentComplete 匹配
+     */
+    fun startSubAgent(subAgentPanel: SubAgentProgressPanel, sessionId: String) {
+        turnState = TurnState.TOOL_CALLING
+        agentSection.addSubAgentPanel(subAgentPanel, sessionId)
+    }
+
     fun completeToolCall(toolId: String, success: Boolean, result: String) {
         agentSection.completeToolCall(toolId, success, result)
     }
@@ -265,6 +279,7 @@ class AgentTurnPanel(
         // --- 工具调用 ---
 
         private val toolCallPanels = mutableMapOf<String, EmbeddedToolCallPanel>()
+        private val subAgentPanels = mutableMapOf<String, SubAgentProgressPanel>()
 
         fun addToolCall(toolName: String, toolId: String, summary: String) {
             val panel = EmbeddedToolCallPanel(toolName, summary)
@@ -274,8 +289,19 @@ class AgentTurnPanel(
             toolCallsContainer.repaint()
         }
 
+        /**
+         * 6.10.4: 嵌入子 Agent 进度面板，并用 sessionId 索引以便 complete 时匹配。
+         */
+        fun addSubAgentPanel(panel: SubAgentProgressPanel, sessionId: String) {
+            subAgentPanels[sessionId] = panel
+            toolCallsContainer.add(panel)
+            toolCallsContainer.revalidate()
+            toolCallsContainer.repaint()
+        }
+
         fun completeToolCall(toolId: String, success: Boolean, result: String) {
             toolCallPanels[toolId]?.markComplete(success, result)
+            subAgentPanels[toolId]?.markComplete(success, result)
             toolCallsContainer.revalidate()
             toolCallsContainer.repaint()
         }

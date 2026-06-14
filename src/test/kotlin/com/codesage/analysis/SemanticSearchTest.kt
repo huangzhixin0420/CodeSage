@@ -168,4 +168,42 @@ class SemanticSearchTest {
         val (hits, _) = semanticSearch.getCacheStats()
         assertTrue(hits >= 1, "findRelatedClasses 应命中缓存")
     }
+
+    @Test
+    fun `semanticQuery recalls symbols by vector similarity without exact keyword`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+
+        symbolIndex.updateFileSymbolsForTest(
+            "/test/Auth.kt", listOf(
+                PSIAnalyzer.SymbolInfo(
+                    name = "AuthenticationManager",
+                    type = PSIAnalyzer.SymbolType.CLASS,
+                    qualifiedName = null,
+                    filePath = "/test/Auth.kt",
+                    lineNumber = 1,
+                    docComment = "Handles user login and session authentication",
+                    modifiers = emptyList()
+                ),
+                PSIAnalyzer.SymbolInfo(
+                    name = "PaymentGateway",
+                    type = PSIAnalyzer.SymbolType.CLASS,
+                    qualifiedName = null,
+                    filePath = "/test/Auth.kt",
+                    lineNumber = 10,
+                    docComment = "Processes credit card transactions",
+                    modifiers = emptyList()
+                )
+            )
+        )
+
+        val semanticSearch = SemanticSearch(project, symbolIndex)
+
+        // "login" 与 AuthenticationManager 的 doc 语义相关，但未必匹配名称关键词
+        val results = semanticSearch.semanticQuery("login", limit = 5)
+        assertTrue(
+            results.any { it.symbol?.name == "AuthenticationManager" },
+            "Vector semantic recall should find AuthenticationManager for 'login': $results"
+        )
+    }
 }
