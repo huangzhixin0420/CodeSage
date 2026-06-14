@@ -162,6 +162,7 @@ class ToolRegistry {
                 register(DatabaseToolHandlers.createSqlExecuteHandler(project))
                 register(DockerToolHandlers.createDockerHandler())
                 register(DependencyToolHandlers.createAnalyzeDependenciesHandler(project))
+                register(DependencyTreeTool(project))
                 register(WebScraperToolHandlers.createWebScraperHandler())
                 register(ClipboardToolHandlers.createClipboardHandler())
                 register(TimestampToolHandlers.createTimestampHandler())

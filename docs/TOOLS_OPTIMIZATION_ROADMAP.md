@@ -74,7 +74,7 @@
 | 6.3.3 | `semantic_search` **真实 embedding 向量召回** | ✅ 已完成 | 已新增 ONNX 本地 embedding provider、项目级 SQLite chunk 向量索引与 `reindex_semantic` 工具；模型文件需通过 `scripts/download-embedding-model.sh` 下载 | `EmbeddingProvider.kt` / `OnnxEmbeddingProvider` / `SemanticIndexRepository.kt` / `SemanticChunkIndexer.kt` / `SemanticSearch.kt` / `ReindexSemanticTool.kt` / `scripts/download-embedding-model.sh` | AI-Agent | 2026-06-14 |
 | 6.3.4 | `SymbolIndex.fuzzySearch` **前缀树/trie 优化** | ⚠️ 部分落地 | 已加 token 前缀索引，但仍保留 `nameIndex.entries` 全量子串匹配的兜底路径 | 移除 O(n) 兜底，或改用 `PsiShortNamesCache` / `StubIndex` 平台索引 | 待分配 | - |
 | 6.5.1 | **PSI 调用图替代启发式正则** | ⚠️ 部分落地 | `find_usages` 已走 `ReferencesSearch`，但 `findCallees` 仍有 regex 扫描兜底 | `CodeInsightExecutor.findCallees` 完全基于 PSI / `KtCallExpression` / `PsiMethodCallExpression` | 待分配 | - |
-| 6.8.3 | **`dependency_tree` 依赖树工具** | ❌ 未开始 | 仅有通用 `maven`/`gradle` 包装，无结构化依赖树输出 | 新增 `dependency_tree` UnifiedTool，解析 `mvn dependency:tree -DoutputType=json` / Gradle `dependencies` 输出 | 待分配 | - |
+| 6.8.3 | **`dependency_tree` 依赖树工具** | ✅ 已完成 | 仅有通用 `maven`/`gradle` 包装，无结构化依赖树输出 | 新增 `DependencyTreeTool` UnifiedTool，解析 Maven JSON / Gradle 文本输出；注册于 `ToolRegistry`；测试见 `DependencyTreeToolTest` | AI-Agent | 2026-06-14 |
 | 6.9.2 | **LLM 自动会话摘要** | ⚠️ 部分落地 | `SessionSummarizer` 为规则引擎，未接入 LLM | `BuiltInMemoryProvider.onSessionEnd` 异步调用轻量模型生成摘要与关键事实 | 待分配 | - |
 | 6.9.3 | 记忆上下文**token 预算 / Top-K 注入** | ⚠️ 部分落地 | 已有 16KB 长度保护和 token 估算，但未按“与当前查询相似度排序 + token 上限 Top-K”注入 | `BuiltInMemoryProvider.prefetch` 中按查询相似度排序，设置 token 预算上限，保留 Top-K | 待分配 | - |
 | 6.11.3 | Skill 工具统一命名、`examples`、`use_skill` 元工具 | ⚠️ 部分落地 | `Skill` 接口有 `category`/`tags`/`metadata`，但无 `examples` 字段和统一 `use_skill` 元工具 | `Skill.kt` 增加 `examples`；`SkillToolAdapter` 转换时增强 schema；新增 `use_skill` 元工具 | 待分配 | - |
@@ -144,11 +144,40 @@
 
 ---
 
+#### 3.4.3 6.8.3 `dependency_tree` 依赖树工具（AI-Agent，2026-06-14）
+
+**关键设计决策：**
+
+1. **统一工具类 + 双解析器**：新增 `DependencyTreeTool` 继承 `UnifiedTool`，根据 `pom.xml` / `build.gradle[.kts]` 自动判断构建系统；内部用独立解析器处理 Maven JSON 与 Gradle 文本树，避免逻辑耦合。
+2. **复用 wrapper 优先策略**：Maven / Gradle 命令均通过 `BuildCommandResolver` 生成，优先使用 `./mvnw` / `./gradlew`，与现有 `BuildToolHandlers` / `RunLinterTool` 保持一致，避免全局命令缺失导致的运行时失败。
+3. **结构化输出与深度控制**：返回 `dependencies[]` + `total_top_level` + `total_transitive`；`max_depth` 在解析后统一截断，确保计数反映可见节点。
+4. **Gradle 标记保留**：解析时识别并保留末尾的 `(*)` / `(c)` 标记到 `markers` 字段；Maven JSON 中的 `classifier` / `optional` 作为可选字段透传。
+
+**测试状态：**
+
+- `./gradlew check`：通过（含新增 6 个单元测试）
+- `npm test`：通过
+- 新增测试：
+  - `DependencyTreeToolTest.execute should parse maven dependency tree json`
+  - `DependencyTreeToolTest.execute should respect max_depth for maven tree`
+  - `DependencyTreeToolTest.execute should parse gradle dependency tree text`
+  - `DependencyTreeToolTest.execute should preserve gradle markers`
+  - `DependencyTreeToolTest.execute should return error for unsupported project`
+  - `DependencyTreeToolTest.execute should return error for non-existent path`
+
+**遗留边界情况 / 已知限制：**
+
+- Maven JSON 输出依赖 `maven-dependency-plugin >= 3.x`；旧版本会回退为文本并返回明确错误提示。
+- `mvn dependency:tree` 输出文件写入 `target/codesage-dependency-tree.json`，插件异常时文件可能残留，但不影响后续调用（每次调用前会删除旧文件）。
+- Gradle scope 映射仅覆盖常见的 `compile` / `runtime` / `test` / `provided`；自定义配置名会直接透传，但部分配置（如带空格的名称）可能与输出解析正则不匹配。
+
+---
+
 ## 4. 进度总览
 
 ```text
 P0:  0 项部分落地，0 项未开始，1 项已完成
-P1:  5 项部分落地，3 项未开始，1 项已完成
+P1:  5 项部分落地，2 项未开始，2 项已完成
 P2:  0 项部分落地，3 项未开始，0 项已完成
 ```
 
@@ -241,6 +270,7 @@ P2:  0 项部分落地，3 项未开始，0 项已完成
 | 2026-06-14 | AI-Agent | 初始整理：基于 `CODESAGE_TOOLS_RESEARCH_REPORT.md` 与源码检索，建立剩余优化项跟踪表与 AI 实施提示词 |
 | 2026-06-14 | AI-Agent | 完成 6.4.3 Shell 命令流式输出：后台进程支持 `stream_output` 实时 emit `CommandOutputStream` 事件，同步更新测试与进度文档 |
 | 2026-06-14 | AI-Agent | 完成 6.3.3 `semantic_search` 真实 embedding 向量召回：新增 ONNX provider、SQLite chunk 向量索引、`reindex_semantic` 工具与模型下载脚本，同步更新测试与进度文档 |
+| 2026-06-14 | AI-Agent | 完成 6.8.3 `dependency_tree` 依赖树工具：新增 `DependencyTreeTool` UnifiedTool，支持 Maven JSON 与 Gradle 文本解析，注册并补充 6 个单元测试，同步更新进度文档 |
 
 ---
 

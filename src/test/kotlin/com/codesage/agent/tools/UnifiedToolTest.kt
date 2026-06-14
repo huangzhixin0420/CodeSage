@@ -168,6 +168,7 @@ class UnifiedToolTest {
         assertTrue("semantic_search" in toolNames, "semantic_search should be registered (UnifiedTool)")
         assertTrue("get_file_summary" in toolNames, "get_file_summary should be registered (UnifiedTool)")
         assertTrue("get_project_stats" in toolNames, "get_project_stats should be registered (UnifiedTool)")
+        assertTrue("dependency_tree" in toolNames, "dependency_tree should be registered (UnifiedTool)")
     }
 
     @Test
