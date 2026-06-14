@@ -8,6 +8,8 @@ import com.codesage.model.dto.ToolParameters
 import com.codesage.model.dto.ToolProperty
 import com.codesage.shared.security.CommandSandbox
 import com.codesage.shared.utils.Logger
+import com.codesage.skill.executor.SkillExecutor
+import com.codesage.skill.registry.SkillRegistry
 import java.io.File
 
 /**
@@ -86,6 +88,8 @@ class ToolRegistry {
             project: com.intellij.openapi.project.Project? = null,
             auditLog: com.codesage.tools.guardrails.ToolAuditLog? = null,
             mcpServerManager: MCPServerManager? = null,
+            skillRegistry: SkillRegistry? = null,
+            skillExecutor: SkillExecutor? = null,
         ): ToolRegistry {
             return ToolRegistry().apply {
                 // Phase 3: 为命令执行工具注入 OS 级沙箱（默认开启 workspace 写权限）
@@ -164,6 +168,7 @@ class ToolRegistry {
                 register(DependencyToolHandlers.createAnalyzeDependenciesHandler(project))
                 register(DependencyTreeTool(project))
                 register(WebScraperToolHandlers.createWebScraperHandler())
+                register(FetchUrlMarkdownTool())
                 register(ClipboardToolHandlers.createClipboardHandler())
                 register(TimestampToolHandlers.createTimestampHandler())
                 register(UUIDToolHandlers.createUUIDHandler())
@@ -190,6 +195,11 @@ class ToolRegistry {
 
                 // === 6.11.1 MCP 动态工具发现 ===
                 register(McpToolHandlers.createMcpToolSearchHandler(mcpServerManager))
+
+                // === 6.11.3 Skill 统一调用元工具 ===
+                if (skillRegistry != null && skillExecutor != null) {
+                    register(UseSkillTool(skillRegistry, skillExecutor, project))
+                }
 
                 // === 子 Agent 委托工具（特殊：分发由 EnhancedAgentLoop.executeTool 处理） ===
                 // 单独注册其 schema 让 LLM 看到可用工具。

@@ -39,7 +39,7 @@ class ToolGuardrails(
         // Git（只读）
         "git_status", "git_diff", "git_log", "git_branch", "git_show",
         // HTTP（受 SSRF 防护）
-        "http_request",
+        "http_request", "fetch_url_markdown",
         // 数据处理
         "parse_json", "format_json", "encode_base64", "decode_base64",
         "hash_md5", "hash_sha256",

@@ -72,12 +72,12 @@
 | 报告节 | 优化项 | 状态 | 差距说明 | 建议交付物 | 负责人 | 目标日期 |
 |--------|--------|------|----------|------------|--------|----------|
 | 6.3.3 | `semantic_search` **真实 embedding 向量召回** | ✅ 已完成 | 已新增 ONNX 本地 embedding provider、项目级 SQLite chunk 向量索引与 `reindex_semantic` 工具；模型文件需通过 `scripts/download-embedding-model.sh` 下载 | `EmbeddingProvider.kt` / `OnnxEmbeddingProvider` / `SemanticIndexRepository.kt` / `SemanticChunkIndexer.kt` / `SemanticSearch.kt` / `ReindexSemanticTool.kt` / `scripts/download-embedding-model.sh` | AI-Agent | 2026-06-14 |
-| 6.3.4 | `SymbolIndex.fuzzySearch` **前缀树/trie 优化** | ⚠️ 部分落地 | 已加 token 前缀索引，但仍保留 `nameIndex.entries` 全量子串匹配的兜底路径 | 移除 O(n) 兜底，或改用 `PsiShortNamesCache` / `StubIndex` 平台索引 | 待分配 | - |
-| 6.5.1 | **PSI 调用图替代启发式正则** | ⚠️ 部分落地 | `find_usages` 已走 `ReferencesSearch`，但 `findCallees` 仍有 regex 扫描兜底 | `CodeInsightExecutor.findCallees` 完全基于 PSI / `KtCallExpression` / `PsiMethodCallExpression` | 待分配 | - |
+| 6.3.4 | `SymbolIndex.fuzzySearch` **前缀树/trie 优化** | ✅ 已完成 | 已加 token 前缀索引，但仍保留 `nameIndex.entries` 全量子串匹配的兜底路径 | 移除 O(n) 兜底：实现 `SymbolIndex.TokenTrie`，查询走前缀树；交付：`src/main/kotlin/com/codesage/analysis/SymbolIndex.kt`、`src/test/kotlin/com/codesage/analysis/SymbolIndexTest.kt` | AI-Agent | 2026-06-14 |
+| 6.5.1 | **PSI 调用图替代启发式正则** | ✅ 已完成 | `find_usages` 已走 `ReferencesSearch`，`findCallees` 已通过 `CallGraphExtractor` 基于 PSI 遍历；但缺 project-null / 无 PSI 源边界测试 | 验证 `CodeInsightExecutor.collectCalleesForSymbol` 完全基于 PSI；补充 `find_callees` 边界测试；交付：`src/main/kotlin/com/codesage/analysis/CodeInsightExecutor.kt`、`src/main/kotlin/com/codesage/analysis/CallGraphExtractor.kt`、`src/test/kotlin/com/codesage/analysis/CodeInsightExecutorTest.kt` | AI-Agent | 2026-06-14 |
 | 6.8.3 | **`dependency_tree` 依赖树工具** | ✅ 已完成 | 仅有通用 `maven`/`gradle` 包装，无结构化依赖树输出 | 新增 `DependencyTreeTool` UnifiedTool，解析 Maven JSON / Gradle 文本输出；注册于 `ToolRegistry`；测试见 `DependencyTreeToolTest` | AI-Agent | 2026-06-14 |
-| 6.9.2 | **LLM 自动会话摘要** | ⚠️ 部分落地 | `SessionSummarizer` 为规则引擎，未接入 LLM | `BuiltInMemoryProvider.onSessionEnd` 异步调用轻量模型生成摘要与关键事实 | 待分配 | - |
+| 6.9.2 | **LLM 自动会话摘要** | ✅ 已完成 | `SessionSummarizer` 为规则引擎，未接入 LLM | 将 `SessionSummarizer` 改造为可注入 `ModelGateway` 的类，`BuiltInMemoryProvider.onSessionEnd` 异步调用轻量模型生成摘要与关键事实，失败时自动降级到规则引擎；交付：`src/main/kotlin/com/codesage/agent/memory/SessionSummarizer.kt`、`src/main/kotlin/com/codesage/agent/memory/BuiltInMemoryProvider.kt`、`src/test/kotlin/com/codesage/agent/memory/BuiltInMemoryProviderTest.kt` | AI-Agent | 2026-06-14 |
 | 6.9.3 | 记忆上下文**token 预算 / Top-K 注入** | ✅ 已完成 | 已有 16KB 长度保护和 token 估算，但未按“与当前查询相似度排序 + token 上限 Top-K”注入 | `BuiltInMemoryProvider.prefetch` 中按查询相似度排序，设置 token 预算上限，保留 Top-K；实际交付：`MemorySimilarityRanker.kt` / `BuiltInMemoryProvider.kt` / `BuiltInMemoryProviderTest.kt` / `MemorySimilarityRankerTest.kt` | AI-Agent | 2026-06-14 |
-| 6.11.3 | Skill 工具统一命名、`examples`、`use_skill` 元工具 | ⚠️ 部分落地 | `Skill` 接口有 `category`/`tags`/`metadata`，但无 `examples` 字段和统一 `use_skill` 元工具 | `Skill.kt` 增加 `examples`；`SkillToolAdapter` 转换时增强 schema；新增 `use_skill` 元工具 | 待分配 | - |
+| 6.11.3 | Skill 工具统一命名、`examples`、`use_skill` 元工具 | ✅ 已完成 | `Skill` 接口新增 `examples`，`SkillToolAdapter.toTools()` 输出携带 `category`/`tags`/示例，`use_skill` 元工具注册于 `ToolRegistry` | `Skill.kt` / `SkillToolAdapter.kt` / `UseSkillTool.kt` / `ToolRegistry.kt` / `AgentCore.kt` / `SkillToolAdapterTest.kt` | AI-Agent | 2026-06-14 |
 | 6.12.1 | **统一截断标记与续读协议** | ✅ 已完成 | 各工具截断字段不统一 | 在 `ToolResult` / `ToolExecutor.postProcess` 中统一追加 `{truncated, total_items, returned_items, next_offset, hint}`；交付：`ToolResultMetadata.kt` / `ToolResultTruncationNormalizer.kt` / `ToolExecutor.kt` / `ToolGuardrails.kt` / `ToolResultMetadataTest.kt` | AI-Agent | 2026-06-14 |
 | 6.12.2 | 工具结果中嵌入 **token 预算提示** | ✅ 已完成 | 未在工具结果中提示上下文消耗 | `ToolExecutor.postProcess` 追加 `context_cost_estimate` / `remaining_context_hint`；交付：`ToolResultBudgetHints.kt` / `ToolExecutor.kt` / `AgentCore.kt` / `ToolResultMetadataTest.kt` | AI-Agent | 2026-06-14 |
 
@@ -85,9 +85,9 @@
 
 | 报告节 | 优化项 | 状态 | 差距说明 | 建议交付物 | 负责人 | 目标日期 |
 |--------|--------|------|----------|------------|--------|----------|
-| 6.7.2 | **动态页面抓取**（Readability / Playwright） | ❌ 未开始 | `web_scraper` 仅支持 JSoup 静态解析 | 新增 `fetch_url_markdown` 工具：先集成 Readability 算法，可选 Playwright 无头浏览器 | 待分配 | - |
-| 6.13.2 | **OpenTelemetry 导出** | ❌ 未开始 | 已有 `AgentHooks` 和 `ExecutionTracer`，但无 OpenTelemetry 格式导出 | `ObservabilityService` 增加 OpenTelemetry span/span exporter；提供配置开关 | 待分配 | - |
-| 4.4.6 | **ACP（Agent Client Protocol）支持** | ❌ 未开始 | 未找到 ACP Server/Client 实现 | 调研 ACP 协议；新增 ACP server/client 模块（可选长期任务） | 待分配 | - |
+| 6.7.2 | **动态页面抓取**（Readability / Playwright） | ✅ 已完成 | `web_scraper` 仅支持 JSoup 静态解析 | 新增 `fetch_url_markdown` UnifiedTool：静态 Readability 提取 + Markdown 转换，可选 Playwright 渲染（临时 Node 脚本，按需安装） | AI-Agent | 2026-06-14 |
+| 6.13.2 | **OpenTelemetry 导出** | ✅ 已完成 | 已有 `AgentHooks` 和 `ExecutionTracer`，但无 OpenTelemetry 格式导出 | `ExecutionTracer` 新增 `TraceListener`；`OpenTelemetryExporter` 以 OTLP/JSON 异步导出；`AgentCore` 注册/关闭；复用 `enableTelemetry`/`telemetryEndpoint` | AI-Agent | 2026-06-14 |
+| 4.4.6 | **ACP（Agent Client Protocol）支持** | ✅ 已完成 | 未找到 ACP Server/Client 实现 | 调研 ACP 协议；新增 ACP server/client 模块（可选长期任务） | AI-Agent | 2026-06-14 |
 
 ### 3.4 实施笔记
 
@@ -207,6 +207,81 @@
 
 ---
 
+#### 3.4.8 6.9.2 LLM 自动会话摘要（AI-Agent，2026-06-14）
+
+**关键设计决策：**
+
+1. **LLM 优先 + 规则兜底**：将 `SessionSummarizer` 从 `object` 改为可配置类，默认持有 `ModelGateway.getInstance()`；`summarize()` 先尝试调用轻量模型（默认 `MiniMax-M2.1`）生成结构化 JSON 摘要，任何失败（无适配器、网络错误、解析失败）都静默降级到原有规则引擎。
+2. **异步执行不阻塞会话关闭**：`BuiltInMemoryProvider.onSessionEnd` 在 `coroutineScope` 中启动协程调用 `sessionSummarizer.summarize()`，将摘要写入 `sessions.summary`、将关键事实自动 `memory_add`，保持 `MemoryProvider.onSessionEnd` 同步签名不变。
+3. **token 成本控制**：输入会话文本默认截断至 6,000 字符，LLM 最大输出 512 tokens；摘要长度限制 2,000 字符，关键事实最多 10 条，避免会话结束产生高额 token 消耗。
+4. **测试可注入**：`BuiltInMemoryProvider` 暴露 `internal var sessionSummarizer`，测试可注入 `FakeModelGateway` 验证 LLM 成功/失败两条路径；同时修复了规则引擎文件路径正则中的字符类范围异常（`[\w\-./]` → `[\w./-]`）。
+
+**测试状态：**
+
+- `./gradlew check`：通过（新增 2 个单元测试）
+- `npm test`：通过
+- 新增测试：
+  - `BuiltInMemoryProviderTest.onSessionEnd uses LLM summary and persists returned facts`
+  - `BuiltInMemoryProviderTest.onSessionEnd falls back to rule summary when LLM fails`
+
+**遗留边界情况 / 已知限制：**
+
+- LLM 摘要依赖 `ModelGateway` 已注册可用模型；未配置模型时自动使用规则引擎，不会阻塞或报错。
+- 当前通过字符串截断控制输入长度，未使用真实 tokenizer；后续可接入 `ContextBudgetManager` 做更精确的 token 预算。
+- 异步摘要若会话立即关闭（`shutdown()`）可能被取消；正常 IDE 会话结束到进程退出有足够时间完成写入。
+
+---
+
+#### 3.4.7 6.5.1 PSI 调用图替代启发式正则（AI-Agent，2026-06-14）
+
+**关键设计决策：**
+
+1. **代码审查结论**：`CodeInsightExecutor.collectCalleesForSymbol` 已实现为 PSI 遍历：通过 `findPsiElement` 定位目标符号对应的 `PsiElement`，再使用 `PsiRecursiveElementVisitor` 遍历方法体，由 `CallGraphExtractor.extractCalleeName` 识别 `PsiMethodCallExpression`、`PsiNewExpression`、`KtCallExpression` 等真实调用表达式，未再使用正则扫描方法体文本。
+2. **`CallGraphExtractor` 直接面向 PSI 元素类型**：虽然 Java/Kotlin 专用 PSI 类在测试 classpath 中未必全部存在，但提取逻辑以元素运行时类型为准（`PsiMethodCallExpression`、`PsiNewExpression`、`KtCallExpression`），并过滤 `if/for/println/also/let` 等语法关键字与作用域函数，避免启发式误报。
+3. **保持 `find_usages` 降级路径独立**：`findTextReferences` 文本搜索仅作为 `find_usages` 在 `ReferencesSearch` 不可用时的降级，不影响 `findCallees` 的 PSI 路径。
+4. **补充边界测试**：为 `find_callees` 增加 project=null 错误路径与 symbol 无法解析到 PSI 元素时空 callee 列表的测试，覆盖正常/错误路径。
+
+**测试状态：**
+
+- `./gradlew check`：通过（新增 2 个单元测试）
+- `npm test`：通过
+- 新增测试：
+  - `CodeInsightExecutorTest.find_callees should return error when project is null`
+  - `CodeInsightExecutorTest.find_callees should return empty callees when symbol source is not resolvable`
+
+**遗留边界情况 / 已知限制：**
+
+- `findCallees` 依赖 `LocalFileSystem` 能根据 `SymbolInfo.filePath` 加载到真实 `VirtualFile`；在 headless 测试或文件已被删除/重命名时，无法解析 PSI 元素，会返回空 callee 列表（已在测试中覆盖）。
+- 当前未解析重载/多态目标；提取结果为被调用符号的简单名称，与报告要求的“完全基于 PSI / KtCallExpression / PsiMethodCallExpression”一致，如需精确重载可后续结合 `PsiResolveHelper`。
+
+---
+
+#### 3.4.6 6.3.4 `SymbolIndex.fuzzySearch` 前缀树/trie 优化（AI-Agent，2026-06-14）
+
+**关键设计决策：**
+
+1. **内部轻量前缀树替代全量扫描**：在 `SymbolIndex` 中新增私有 `TokenTrie`，对 `tokenizeSymbolName` 产出的 token 建立字符前缀树；`fuzzySearch` 查询时沿前缀走到目标节点，再遍历子树收集候选 token，彻底移除 `tokenIndex.entries` 线性过滤与 `nameIndex.entries` 子串兜底。
+2. **同时支持“长 token 前缀”与“短 token 前缀”匹配**：遍历 query 过程中累积路径上的终端 token（短 token 是 query 的前缀），到达目标节点后再收集子树终端 token（长 token 以 query 为前缀），用 `LinkedHashSet` 去重，保留原有评分语义。
+3. **query 分词兼容多词输入**：将 `tokenizeSymbolName` 的拆分正则扩展为 `[_.\\-\\s]+`，使 `"order repo"` 这类空格分隔的多词查询能正确拆分为多个 token 在前缀树中查找。
+4. **零 public API 变更、向后兼容**：`fuzzySearch(query, limit)` 签名与返回类型不变；`SymbolSearchTool` 等调用方无需修改。
+
+**测试状态：**
+
+- `./gradlew check`：通过（新增 3 个单元测试）
+- `npm test`：通过
+- 新增测试：
+  - `SymbolIndexTest.fuzzySearch with trie matches token prefixes and shorter tokens`
+  - `SymbolIndexTest.fuzzySearch remains fast for non-matching query without O(n) fallback`
+  - `SymbolIndexTest.fuzzySearch does not match arbitrary substring outside token boundaries`
+
+**遗留边界情况 / 已知限制：**
+
+- 查询必须命中某个 token 前缀或本身是某个 token 的前缀；不再支持任意子串匹配（这是移除 O(n) 兜底的预期行为变化）。
+- 单字符查询返回空结果，因为 `tokenizeSymbolName` 过滤掉长度 ≤1 的 token；如需支持，可后续放宽该过滤条件。
+- 当前 trie 仅在 token 首次加入 `tokenIndex` 时插入，删除符号时不会从 trie 中移除空 token；空 token 对应的 `tokenIndex` 列表为空，不会产生误报，仅占用少量内存。
+
+---
+
 #### 3.4.5 6.9.3 记忆上下文 token 预算 / Top-K 注入（AI-Agent，2026-06-14）
 
 **关键设计决策：**
@@ -239,12 +314,126 @@
 
 ---
 
+#### 3.4.9 6.11.3 Skill 工具统一命名、`examples`、`use_skill` 元工具（AI-Agent，2026-06-14）
+
+**关键设计决策：**
+
+1. **Skill 接口新增 `examples` 并向下兼容**：`Skill` 接口以默认实现 `val examples: List<String> get() = emptyList()` 提供，所有现有内置/声明式/MCP 委托技能无需修改；`SkillDefinition` 同步增加 `examples` 字段，JSON/YAML 配置均可解析。
+2. **`SkillToolAdapter` 输出完整元数据**：`toTools()` 将技能的 `category` 映射为 `ToolCategory`、`tags` 透传，并把 `examples` 追加到 description；模型看到的工具定义不再只是名称+schema。
+3. **新增 `use_skill` 元工具收敛调用入口**：`UseSkillTool` 继承 `UnifiedTool`，参数为 `skill_id` + `arguments`，内部委托 `SkillExecutor` 执行；注册于 `ToolRegistry.createDefault()`，避免 LLM 工具列表被大量动态 `skill_*` 工具污染。
+4. **修复 `SkillToolAdapter.execute` 的输出序列化**：原有 `Json.encodeToJsonElement(result.output)` 对 `Map<String, Any>` 会在运行时抛序列化异常，改为递归 `valueToJsonElement`/`mapToJsonElement`，保证复杂输出正确返回。
+
+**测试状态：**
+
+- `./gradlew check`：通过（新增 7 个单元测试）
+- `npm test`：通过
+- 新增测试：
+  - `SkillToolAdapterTest.toTools includes category tags and examples`
+  - `SkillToolAdapterTest.execute routes skill call and returns success json`
+  - `SkillToolAdapterTest.execute returns error json for failing skill`
+  - `SkillToolAdapterTest.use_skill executes skill by id`
+  - `SkillToolAdapterTest.use_skill returns error for missing skill_id`
+  - `SkillToolAdapterTest.use_skill returns error for unknown skill`
+  - `SkillToolAdapterTest.use_skill is registered in default registry when skill components provided`
+
+**遗留边界情况 / 已知限制：**
+
+- `use_skill` 的 `skill_id` 枚举在构造时快照注册表内容；若运行时通过热加载新增/删除技能，已注册工具的 schema 不会自动刷新（与现有 `skill_*` 工具的动态注册行为一致，可通过重新初始化 Agent 刷新）。
+- 当前 `SkillCategory` 到 `ToolCategory` 的映射是启发式映射（如 `CODE_SEARCH`/`NETWORK` → `SEARCH`）；如需更细粒度展示，可后续新增 `ToolCategory.SKILL` 专用类别。
+- `use_skill` 执行仍复用 `SkillExecutor` 的上下文，尚未注入会话级 `sessionId`；后续可在 `AgentCore` 调用时透传当前会话 ID。
+
+---
+
+#### 3.4.10 6.7.2 动态页面抓取 `fetch_url_markdown`（AI-Agent，2026-06-14）
+
+**关键设计决策：**
+
+1. **新增 `fetch_url_markdown` UnifiedTool**：与现有 `web_scraper` 共存，专门输出 Markdown 格式正文，保留标题、链接、列表、代码块等结构，便于直接喂给 LLM。
+2. **自包含 Readability 提取器**：不引入新的 Java 依赖，基于 JSoup 实现候选元素评分（标签语义 + class/id 关键词 + 文本/链接密度），自动剔除导航、广告、页脚、评论区等噪声。
+3. **可选 Playwright 渲染**：`use_browser=true` 时通过临时 Node 脚本调用 Playwright（`chromium.launch`）获取渲染后 HTML，再复用同一 Readability/Markdown 转换逻辑；Playwright 未安装时返回明确安装提示，不影响默认静态路径。
+4. **复用现有安全与网络能力**：SSRF 校验走 [SsrfGuard]，HTTP 请求走 [ProxyAwareHttpClientFactory]，响应上限 5MB；工具加入 `ToolGuardrails.KNOWN_SAFE_TOOLS` 白名单（受 SSRF 保护的网络读取）。
+
+**测试状态：**
+
+- `./gradlew check`：通过（新增 5 个单元测试）
+- `npm test`：通过
+- 新增测试：
+  - `FetchUrlMarkdownToolTest.static extraction converts article HTML to markdown`
+  - `FetchUrlMarkdownToolTest.truncates markdown when max_length is exceeded`
+  - `FetchUrlMarkdownToolTest.returns error for HTTP failure`
+  - `FetchUrlMarkdownToolTest.blocks private URLs when SSRF protection enabled`
+  - `FetchUrlMarkdownToolTest.use_browser returns error when Playwright is not installed`
+
+**遗留边界情况 / 已知限制：**
+
+- 静态 Readability 对严重依赖前端 JS 渲染的 SPA（如某些 React/Vue 客户端路由页面）效果有限；此时需 `use_browser=true` 并安装 Playwright。
+- Playwright 路径通过临时 `.mjs` 文件调用 `node`，依赖运行环境已安装 Node.js；未安装 Node 时 `use_browser=true` 会返回 `Browser rendering failed`。
+- Markdown 转换器目前对表格做简单支持，复杂嵌套表格可能丢失对齐；图片保留 `![alt](src)` 但无法验证可访问性。
+
+---
+
+#### 3.4.11 6.13.2 OpenTelemetry 导出（AI-Agent，2026-06-14）
+
+**关键设计决策：**
+
+1. **零额外依赖**：不引入官方 OTLP Java SDK，直接用手写的 `kotlinx.serialization.json` 构造 OTLP/JSON 请求体，复用已有的 OkHttp 与 `ProxyAwareHttpClientFactory`，避免依赖膨胀。
+2. **监听者模式接入 `ExecutionTracer`**：给 `ExecutionTracer` 增加 `TraceListener` 接口并在 `endTrace()` 时通知；`AgentCore.initialize()` 注册 `OpenTelemetryExporter`，`shutdown()` 时取消协程作用域。
+3. **复用现有设置项**：使用 `AdvancedSection.enableTelemetry` 作为总开关、`telemetryEndpoint` 作为接收端点（默认 `http://localhost:4318/v1/traces`），无需新增前端字段。
+4. **异步失败隔离**：导出在独立 `CoroutineScope` 中执行，任何网络/解析失败只打 warn 日志，不影响 Agent 主流程；trace ID / span ID 会被规范化裁剪为 OTLP 要求的 32/16 位十六进制字符串。
+
+**测试状态：**
+
+- `./gradlew check`：通过（新增 4 个单元测试）
+- `npm test`：通过
+- 新增测试：
+  - `OpenTelemetryExporterTest.exports OTLP JSON when telemetry is enabled`
+  - `OpenTelemetryExporterTest.onTraceEnded does nothing when telemetry is disabled`
+  - `OpenTelemetryExporterTest.onTraceEnded swallows export failure and does not throw`
+  - `OpenTelemetryExporterTest.ExecutionTracer notifies listener when trace ends`
+
+**遗留边界情况 / 已知限制：**
+
+- 当前仅支持 OTLP/JSON over HTTP；未实现 gRPC 或 OTLP/HTTP Protobuf。如需对接仅支持 Protobuf 的 Collector，可后续扩展序列化器。
+- `TraceEvent` 属性只导出 `stringValue` 类型；`ExecutionTracer` 目前属性全为字符串，满足当前需求。
+- 导出任务在 `AgentCore.shutdown()` 时会被取消，未 flush 的尾部 trace 可能丢失；正常会话结束到 shutdown 之间通常有足够时间完成。
+
+---
+
+#### 3.4.12 4.4.6 ACP（Agent Client Protocol）支持（AI-Agent，2026-06-14）
+
+**关键设计决策：**
+
+1. **协议抽象优先**：参考 Kimi Code CLI / Zed 的 ACP 集成，采用 JSON-RPC 2.0 + 行分隔消息；在 `com.codesage.acp.model` 定义 `AcpJsonRpcRequest` / `AcpJsonRpcResponse` / `AcpInitializeResult` / `AcpTool` / `AcpCallToolResult` 等消息，与现有 `ToolParameters` 复用。
+2. **传输层可插拔**：定义 `AcpSessionTransport` 接口，提供 `StdioAcpSessionTransport`（子进程 stdio）、`SocketAcpSessionTransport`（TCP）、`InMemoryAcpSessionTransport`（测试 fake）三种实现；client/server 都基于同一接口，方便替换。
+3. **Server 复用现有工具链**：`AcpServer` 持有 `ToolRegistry` + `ToolExecutor`，暴露 `initialize` / `tools/list` / `tools/call` / `shutdown` 方法；工具定义直接映射为 ACP tool schema，执行结果以 text content block 返回，与 MCP 结果风格对齐。
+4. **Client 可连接外部 agent**：`AcpClient` 通过 `AcpProcessTransport` 启动 `kimi acp` 等外部 ACP agent，完成握手后查询并调用远端工具；为后续把外部 agent 同步为 CodeSage Skill 预留接口。
+5. **生命周期与配置**：`SettingsFile` 新增 `AcpSection`（`enabled`、`serverPort`、`externalAgents`）；`AcpServerManager` 在 `CodeSageAppService` 中初始化与关闭，支持动态启停；TCP server 使用 `ServerSocket(port=0)` 自动分配端口，避免冲突。
+
+**测试状态：**
+
+- `./gradlew check`：通过（新增 4 个单元测试）
+- `npm test`：通过
+- 新增测试：
+  - `AcpServerClientTest.client can initialize list tools and call tool over in-memory transport`
+  - `AcpServerClientTest.calling unknown tool returns error result`
+  - `AcpServerClientTest.calling tool before initialize returns error`
+  - `AcpSocketServerTest.client can connect to ACP socket server and call tool`
+
+**遗留边界情况 / 已知限制：**
+
+- 当前 ACP 实现为基础协议模块，尚未与具体 IDE（Zed、JetBrains ACP Runner）进行端到端联调；JSON-RPC 方法集合按最小可用集合实现（initialize / tools/list / tools/call / shutdown）。
+- `AcpServerManager` 连接外部 ACP agent 后仅打印工具数量，未实际把远端工具注册进本地 `SkillRegistry` 或 `ToolRegistry`，属于后续增强点。
+- 本地 ACP Socket 服务端默认关闭（`enabled=false`），启用后监听所有接口；若需安全限制，可后续增加 `bindHost` / token 认证配置。
+- ACP 服务端以 `project=null` 创建 `ToolRegistry`，依赖项目的工具（如 PSI 分析）会返回错误；在 IDE 真实环境中可通过 `projectProvider` 注入当前打开项目改进。
+
+---
+
 ## 4. 进度总览
 
 ```text
 P0:  0 项部分落地，0 项未开始，1 项已完成
-P1:  2 项部分落地，2 项未开始，5 项已完成
-P2:  0 项部分落地，3 项未开始，0 项已完成
+P1:  0 项部分落地，2 项未开始，9 项已完成
+P2:  0 项部分落地，0 项未开始，3 项已完成
 ```
 
 ---
@@ -339,6 +528,13 @@ P2:  0 项部分落地，3 项未开始，0 项已完成
 | 2026-06-14 | AI-Agent | 完成 6.8.3 `dependency_tree` 依赖树工具：新增 `DependencyTreeTool` UnifiedTool，支持 Maven JSON 与 Gradle 文本解析，注册并补充 6 个单元测试，同步更新进度文档 |
 | 2026-06-14 | AI-Agent | 完成 6.12.1 / 6.12.2 统一截断协议与 token 预算提示：新增 `ToolResultMetadata`、`ToolResultTruncationNormalizer`、`ToolResultBudgetHints`，扩展 `ToolResult.Success` 与 `ToolExecutor.formatResult`，补充 10 个单元测试，同步更新进度文档 |
 | 2026-06-14 | AI-Agent | 完成 6.9.3 记忆上下文 token 预算 / Top-K 注入：新增 `MemorySimilarityRanker` 按查询相似度排序并支持文本 fallback，`BuiltInMemoryProvider.prefetch` 增加类型优先级、2048 token 预算与省略提示，补充 8 个单元测试，同步更新进度文档 |
+| 2026-06-14 | AI-Agent | 完成 6.3.4 `SymbolIndex.fuzzySearch` 前缀树/trie 优化：内部实现 `TokenTrie` 替代 `nameIndex` 全量子串兜底，扩展 query 分词支持空格，补充 3 个单元测试，同步更新进度文档 |
+| 2026-06-14 | AI-Agent | 完成 6.5.1 PSI 调用图替代启发式正则：验证 `findCallees` 已基于 `CallGraphExtractor` PSI 遍历实现，补充 2 个边界单元测试，同步更新进度文档 |
+| 2026-06-14 | AI-Agent | 完成 6.9.2 LLM 自动会话摘要：`SessionSummarizer` 接入 `ModelGateway` 并支持 LLM 失败自动降级规则引擎，`BuiltInMemoryProvider.onSessionEnd` 改为异步调用，补充 2 个单元测试，同步更新进度文档 |
+| 2026-06-14 | AI-Agent | 完成 6.11.3 Skill 工具统一命名、`examples`、`use_skill` 元工具：`Skill` 接口新增 `examples`，`SkillToolAdapter` 输出 category/tags/examples，新增 `UseSkillTool` 并注册于 `ToolRegistry`，修复 skill 输出序列化，补充 7 个单元测试，同步更新进度文档 |
+| 2026-06-14 | AI-Agent | 完成 6.7.2 动态页面抓取：新增 `fetch_url_markdown` UnifiedTool，基于 JSoup 实现 Readability 内容提取与 Markdown 转换，可选 Playwright 无头浏览器渲染，复用 SsrfGuard 与 ProxyAwareHttpClientFactory，补充 5 个单元测试，同步更新进度文档 |
+| 2026-06-14 | AI-Agent | 完成 6.13.2 OpenTelemetry 导出：`ExecutionTracer` 新增 `TraceListener`，`OpenTelemetryExporter` 以 OTLP/JSON 异步导出到 `telemetryEndpoint`，`AgentCore` 注册/关闭，复用 `enableTelemetry` 开关，补充 4 个单元测试，同步更新进度文档 |
+| 2026-06-14 | AI-Agent | 完成 4.4.6 ACP 支持：新增 `com.codesage.acp` 协议模块，实现 JSON-RPC 2.0 消息模型、`AcpServer` / `AcpClient` / `AcpSocketServer`、stdio/socket/内存三种传输层；`SettingsFile` 新增 `AcpSection`；`AcpServerManager` 接入 `CodeSageAppService` 生命周期，补充 4 个单元测试，同步更新进度文档 |
 
 ---
 

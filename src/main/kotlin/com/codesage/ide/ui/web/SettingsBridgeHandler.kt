@@ -264,6 +264,21 @@ class SettingsBridgeHandler(
                     )
                 }
             ),
+            "acp" to mapOf(
+                "enabled" to s.acp.enabled,
+                "serverPort" to s.acp.serverPort,
+                "externalAgents" to s.acp.externalAgents.map { agent ->
+                    mapOf(
+                        "id" to agent.id,
+                        "name" to agent.name,
+                        "command" to agent.command,
+                        "args" to agent.args,
+                        "env" to agent.env,
+                        "workingDir" to agent.workingDir,
+                        "enabled" to agent.enabled,
+                    )
+                }
+            ),
             "network" to mapOf(
                 "proxy" to mapOf(
                     "mode" to s.network.proxy.mode,

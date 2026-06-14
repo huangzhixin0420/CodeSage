@@ -1,9 +1,11 @@
 package com.codesage.agent.tools
 
 import com.codesage.model.dto.Tool
+import com.codesage.model.dto.ToolCategory
 import com.codesage.model.dto.ToolParameters
 import com.codesage.model.dto.ToolProperty
 import com.codesage.skill.Skill
+import com.codesage.skill.SkillCategory
 import com.codesage.skill.SkillInput
 import com.codesage.skill.SkillResult
 import com.codesage.skill.executor.SkillExecutor
@@ -16,19 +18,23 @@ import kotlinx.serialization.json.*
  * 将 SkillRegistry 中的技能动态转换为 OpenAI Function Calling 格式的工具
  */
 class SkillToolAdapter(
-    private val skillRegistry: SkillRegistry,
-    private val skillExecutor: SkillExecutor,
-    private val project: Project? = null
+    internal val skillRegistry: SkillRegistry,
+    internal val skillExecutor: SkillExecutor,
+    internal val project: Project? = null
 ) {
     /**
-     * 将所有技能转换为 Tool 定义列表
+     * 将所有技能转换为 Tool 定义列表。
+     *
+     * 生成结果会保留技能的类别、标签和示例，帮助模型更准确地选择技能。
      */
     fun toTools(): List<Tool> {
         return skillRegistry.getAll().map { skill ->
             Tool(
                 name = sanitizeToolName(skill.id),
-                description = "[Skill] ${skill.name}: ${skill.description}",
-                parameters = convertSchema(skill.inputSchema)
+                description = buildSkillDescription(skill),
+                parameters = convertSchema(skill.inputSchema),
+                category = mapSkillCategory(skill.category),
+                tags = skill.tags
             )
         }
     }
@@ -57,7 +63,7 @@ class SkillToolAdapter(
                         JsonObject.serializer(), JsonObject(
                             mapOf(
                                 "success" to JsonPrimitive(true),
-                                "output" to Json.encodeToJsonElement(result.output)
+                                "output" to mapToJsonElement(result.output)
                             )
                         )
                     )
@@ -69,6 +75,33 @@ class SkillToolAdapter(
             }
         } catch (e: Exception) {
             jsonError("Skill execution failed: ${e.message}")
+        }
+    }
+
+    private fun buildSkillDescription(skill: Skill): String {
+        val parts = mutableListOf<String>()
+        parts.add("[Skill] ${skill.name}: ${skill.description}")
+        if (skill.tags.isNotEmpty()) {
+            parts.add("Tags: ${skill.tags.joinToString(", ")}")
+        }
+        if (skill.examples.isNotEmpty()) {
+            parts.add("Examples:")
+            skill.examples.forEachIndexed { index, example ->
+                parts.add("  ${index + 1}. $example")
+            }
+        }
+        return parts.joinToString("\n")
+    }
+
+    private fun mapSkillCategory(category: SkillCategory): ToolCategory {
+        return when (category) {
+            SkillCategory.FILE_OPERATION -> ToolCategory.FILE_OPERATION
+            SkillCategory.CODE_SEARCH -> ToolCategory.SEARCH
+            SkillCategory.EXECUTION -> ToolCategory.SYSTEM
+            SkillCategory.NETWORK -> ToolCategory.SEARCH
+            SkillCategory.GIT -> ToolCategory.GIT
+            SkillCategory.AI_INTEGRATION -> ToolCategory.CODE_ANALYSIS
+            SkillCategory.CUSTOM -> ToolCategory.GENERAL
         }
     }
 
@@ -143,12 +176,37 @@ class SkillToolAdapter(
                     when (element) {
                         is JsonPrimitive -> element.content
                         is JsonObject -> jsonObjectToMap(element)
+                        is JsonNull -> JsonNull
                         else -> element.toString()
                     }
                 }
 
-                else -> value.toString()
+                is JsonNull -> JsonNull
             }
+        }
+    }
+
+    /**
+     * 将普通 Map<String, Any> 转换为 [JsonElement]，用于包装技能输出。
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun mapToJsonElement(map: Map<String, Any>): JsonElement {
+        return JsonObject(map.mapValues { (_, value) -> valueToJsonElement(value) })
+    }
+
+    private fun valueToJsonElement(value: Any?): JsonElement {
+        return when (value) {
+            null -> JsonNull
+            is String -> JsonPrimitive(value)
+            is Number -> JsonPrimitive(value)
+            is Boolean -> JsonPrimitive(value)
+            is Map<*, *> -> mapToJsonElement(
+                value.mapKeys { it.key.toString() }
+                    .mapValues { it.value as Any }
+            )
+
+            is List<*> -> JsonArray(value.map { valueToJsonElement(it) })
+            else -> JsonPrimitive(value.toString())
         }
     }
 }

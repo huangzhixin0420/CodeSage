@@ -1,5 +1,6 @@
 package com.codesage.shared.config
 
+import com.codesage.model.dto.AcpSection
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -36,6 +37,7 @@ data class SettingsFile(
     val editor: EditorSection = EditorSection(),
     val shortcuts: ShortcutsSection = ShortcutsSection(),
     val mcp: McpSection = McpSection(),
+    val acp: AcpSection = AcpSection(),
     val advanced: AdvancedSection = AdvancedSection(),
     val network: NetworkSection = NetworkSection(),
 )
@@ -196,7 +198,7 @@ data class ProxyConfig(
 @Serializable
 data class AdvancedSection(
     val enableTelemetry: Boolean = false,
-    val telemetryEndpoint: String = "",
+    val telemetryEndpoint: String = "http://localhost:4318/v1/traces",
     val logLevel: String = "INFO",           // TRACE / DEBUG / INFO / WARN / ERROR
     val autoUpdate: Boolean = true,
     val checkUpdateIntervalHours: Int = 24,

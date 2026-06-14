@@ -2,6 +2,7 @@ package com.codesage.plugin
 
 import com.codesage.model.gateway.ModelGateway
 import com.codesage.model.registry.ModelRegistry
+import com.codesage.acp.manager.AcpServerManager
 import com.codesage.mcp.server.MCPServerManager
 import com.codesage.mcp.transport.MCPServerConfig
 import com.codesage.mcp.transport.TransportType
@@ -35,6 +36,7 @@ class CodeSageAppService {
     val skillRegistry: SkillRegistry = SkillRegistry.getInstance()
     val skillExecutor: SkillExecutor = SkillExecutor(skillRegistry)
     val mcpServerManager: MCPServerManager = MCPServerManager(skillRegistry)
+    val acpServerManager: AcpServerManager = AcpServerManager()
 
     @Volatile
     var isModelLayerInitialized: Boolean = false
@@ -45,6 +47,7 @@ class CodeSageAppService {
         try {
             initializeSkillSystem()
             initializeMCPServers()
+            initializeACP()
             // 在后台线程初始化模型层，避免在 EDT 上执行慢操作（如 PasswordSafe.getPassword）
             scope.launch {
                 initializeModelLayer()
@@ -198,10 +201,21 @@ class CodeSageAppService {
             scope.launch {
                 mcpServerManager.disconnectAll()
             }
+            acpServerManager.shutdown()
             skillExecutor.shutdown()
             logger.info("CodeSage application service shut down")
         } catch (e: Exception) {
             logger.error("Error shutting down application service", e)
+        }
+    }
+
+    private fun initializeACP() {
+        logger.info("Initializing ACP server manager...")
+        try {
+            acpServerManager.initialize()
+            logger.info("ACP server manager initialized")
+        } catch (e: Exception) {
+            logger.error("Failed to initialize ACP server manager", e)
         }
     }
 

@@ -42,8 +42,13 @@ class BuiltInMemoryProvider : MemoryProvider {
     // 预编译语句缓存
     private val statementCache = ConcurrentHashMap<String, PreparedStatement>()
 
-    // 协程作用域（用于后台预取）
+    // 协程作用域（用于后台预取与会话摘要）
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * 6.9.2 会话摘要器；可注入 fake 用于测试。
+     */
+    internal var sessionSummarizer: SessionSummarizer = SessionSummarizer()
 
     // 6.9.3 prefetch token 预算（可配置，便于测试）
     var prefetchTokenBudget: Int = DEFAULT_PREFETCH_TOKEN_BUDGET
@@ -409,24 +414,27 @@ class BuiltInMemoryProvider : MemoryProvider {
 
     override fun onSessionEnd(messages: List<Message>) {
         val conn = connection ?: return
-        try {
-            // 6.9.2 自动生成结构化会话摘要并提取关键事实
-            val summary = SessionSummarizer.summarize(messages)
-            updateSessionSummary(conn, currentSessionId, summary.summary)
 
-            summary.keyFacts.forEach { fact ->
-                val similar = findSimilarMemory(conn, fact)
-                if (similar == null) {
-                    insertMemory(conn, currentSessionId, fact, "fact")
+        // 6.9.2 异步调用轻量 LLM 生成会话摘要与关键事实；失败时自动降级到规则引擎
+        coroutineScope.launch {
+            try {
+                val summary = sessionSummarizer.summarize(messages)
+                updateSessionSummary(conn, currentSessionId, summary.summary)
+
+                summary.keyFacts.forEach { fact ->
+                    val similar = findSimilarMemory(conn, fact)
+                    if (similar == null) {
+                        insertMemory(conn, currentSessionId, fact, "fact")
+                    }
                 }
-            }
 
-            logger.info(
-                "Session end processed: session=$currentSessionId, " +
-                        "facts=${summary.keyFacts.size}, messages=${messages.size}"
-            )
-        } catch (e: Exception) {
-            logger.error("Session end processing failed", e)
+                logger.info(
+                    "Session end processed: session=$currentSessionId, " +
+                            "facts=${summary.keyFacts.size}, messages=${messages.size}"
+                )
+            } catch (e: Exception) {
+                logger.error("Session end processing failed", e)
+            }
         }
     }
 

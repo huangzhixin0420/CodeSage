@@ -41,6 +41,9 @@ class SymbolIndex(private val project: Project) {
     // 6.3.4 前缀树优化：token -> 符号列表（按 camelCase/下划线分词）
     private val tokenIndex = ConcurrentHashMap<String, MutableList<PSIAnalyzer.SymbolInfo>>()
 
+    // token 前缀树，避免 fuzzySearch 中对 tokenIndex 做全量 O(n) 扫描
+    private val tokenTrie = TokenTrie()
+
     // 继承反向索引：superType -> 实现/继承该类型的符号列表
     private val inheritanceIndex = ConcurrentHashMap<String, CopyOnWriteArrayList<PSIAnalyzer.SymbolInfo>>()
 
@@ -214,7 +217,13 @@ class SymbolIndex(private val project: Project) {
             nameIndex.getOrPut(symbol.name) { mutableListOf() }.add(symbol)
             typeIndex.getOrPut(symbol.type) { mutableListOf() }.add(symbol)
             tokenizeSymbolName(symbol.name).forEach { token ->
-                tokenIndex.getOrPut(token) { CopyOnWriteArrayList() }.add(symbol)
+                val existingList = tokenIndex[token]
+                if (existingList == null) {
+                    // 首次出现该 token：建立符号列表，并插入前缀树
+                    tokenIndex[token] = CopyOnWriteArrayList()
+                    tokenTrie.addToken(token)
+                }
+                tokenIndex[token]!!.add(symbol)
             }
             symbol.superTypes.forEach { superType ->
                 inheritanceIndex.getOrPut(superType) { CopyOnWriteArrayList() }.add(symbol)
@@ -241,8 +250,8 @@ class SymbolIndex(private val project: Project) {
             .filter { it.length > 1 }
             .forEach { tokens.add(it) }
 
-        // 下划线 / 连字符 / 点号拆分
-        lower.split(Regex("[_.\\-]+"))
+        // 下划线 / 连字符 / 点号 / 空白拆分
+        lower.split(Regex("[_.\\-\\s]+"))
             .filter { it.length > 1 }
             .forEach { tokens.add(it) }
 
@@ -260,37 +269,29 @@ class SymbolIndex(private val project: Project) {
     }
 
     /**
-     * 6.3.4 模糊搜索符号（token 前缀索引优化）。
+     * 6.3.4 模糊搜索符号（基于 token 前缀树）。
      *
-     * 先按 query 拆分出的 token 在前缀索引中命中候选，再按匹配 token 数量排序；
-     * 同时保留子串匹配作为兜底，避免 token 拆分遗漏。
+     * 将 query 拆分为小写 token 后，在前缀树中快速查找以 query token 为前缀的 token，
+     * 以及本身是 query token 前缀的短 token；按命中 token 的完整度与数量累计分数后返回 Top-K。
+     *
+     * 已移除 `nameIndex.entries` 全量子串匹配兜底，避免大项目下的 O(n) 扫描。
      */
     fun fuzzySearch(query: String, limit: Int = 20): List<PSIAnalyzer.SymbolInfo> {
         ensureIndexed()
         return indexLock.readLock().withLock {
             val scores = mutableMapOf<PSIAnalyzer.SymbolInfo, Double>()
-            val lowerQuery = query.lowercase()
             val queryTokens = tokenizeSymbolName(query)
 
             // token 前缀匹配：命中 token 越多、token 本身越完整，分数越高
             queryTokens.forEach { qt ->
-                tokenIndex.entries
-                    .filter { (token, _) -> token.startsWith(qt) || qt.startsWith(token) }
-                    .forEach { (token, symbols) ->
-                        val tokenScore = if (token == qt) 2.0 else 1.0 + qt.length.toDouble() / token.length
-                        symbols.forEach { symbol ->
-                            scores.merge(symbol, tokenScore) { existing, added -> existing + added }
-                        }
+                tokenTrie.findTokensWithPrefix(qt).forEach { token ->
+                    val symbols = tokenIndex[token] ?: return@forEach
+                    val tokenScore = if (token == qt) 2.0 else 1.0 + qt.length.toDouble() / token.length
+                    symbols.forEach { symbol ->
+                        scores.merge(symbol, tokenScore) { existing, added -> existing + added }
                     }
-            }
-
-            // 兜底：名称子串匹配
-            nameIndex.entries
-                .filter { it.key.lowercase().contains(lowerQuery) }
-                .flatMap { it.value }
-                .forEach { symbol ->
-                    scores.merge(symbol, 0.5) { existing, added -> existing + added }
                 }
+            }
 
             scores.entries
                 .sortedByDescending { it.value }
@@ -414,6 +415,7 @@ class SymbolIndex(private val project: Project) {
             fileIndex.clear()
             typeIndex.clear()
             tokenIndex.clear()
+            tokenTrie.clear()
             inheritanceIndex.clear()
             indexedFileHashes.clear()
             buildSkipCount.set(0)
@@ -445,6 +447,59 @@ class SymbolIndex(private val project: Project) {
         val cacheHitRate: Double = 0.0,
         val indexVersion: Long = 0
     )
+
+    /**
+     * 轻量 token 前缀树。
+     *
+     * 仅对 SymbolIndex 内部已 tokenize 的符号名建立索引；查询时沿前缀走到目标节点，
+     * 再遍历子树收集所有终端 token，避免对 token 全集做线性扫描。
+     */
+    private class TokenTrie {
+        private class Node {
+            val children = ConcurrentHashMap<Char, Node>()
+            val terminalTokens = CopyOnWriteArrayList<String>()
+        }
+
+        private val root = Node()
+
+        /** 将单个 token 插入前缀树。 */
+        fun addToken(token: String) {
+            var node = root
+            for (ch in token) {
+                node = node.children.computeIfAbsent(ch) { Node() }
+            }
+            node.terminalTokens.add(token)
+        }
+
+        /**
+         * 返回所有以 [prefix] 为前缀的 token，以及本身是 [prefix] 前缀的短 token。
+         *
+         * 遍历 query 前缀时收集路径上的终端 token（短 token 匹配），到达目标节点后再
+         * 遍历子树收集所有以该前缀开头的 token（长 token 匹配）。
+         */
+        fun findTokensWithPrefix(prefix: String): List<String> {
+            var node = root
+            val result = LinkedHashSet<String>()
+            for (ch in prefix) {
+                node = node.children[ch] ?: return result.toList()
+                result.addAll(node.terminalTokens)
+            }
+            val stack = ArrayDeque<Node>()
+            stack.add(node)
+            while (stack.isNotEmpty()) {
+                val current = stack.removeLast()
+                result.addAll(current.terminalTokens)
+                stack.addAll(current.children.values)
+            }
+            return result.toList()
+        }
+
+        /** 清空前缀树。 */
+        fun clear() {
+            root.children.clear()
+            root.terminalTokens.clear()
+        }
+    }
 
     companion object {
         /**

@@ -432,4 +432,48 @@ class CodeInsightExecutorTest {
         assertTrue(data.containsKey("callees"))
         assertTrue(data.containsKey("total"))
     }
+
+    @Test
+    fun `find_callees should return error when project is null`() {
+        val executor = CodeInsightExecutor(null)
+        val result = executor.findCallees(
+            kotlinx.serialization.json.JsonObject(
+                mapOf("symbol_name" to kotlinx.serialization.json.JsonPrimitive("Foo"))
+            )
+        )
+        assertTrue(result is com.codesage.agent.tools.ToolResult.Error)
+        assertTrue((result as com.codesage.agent.tools.ToolResult.Error).message.contains("No active project"))
+    }
+
+    @Test
+    fun `find_callees should return empty callees when symbol source is not resolvable`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+        symbolIndex.updateFileSymbolsForTest(
+            "/test/Service.kt", listOf(
+                PSIAnalyzer.SymbolInfo(
+                    name = "process",
+                    type = PSIAnalyzer.SymbolType.METHOD,
+                    qualifiedName = null,
+                    filePath = "/test/Service.kt",
+                    lineNumber = 5,
+                    docComment = null,
+                    modifiers = emptyList()
+                )
+            )
+        )
+
+        val executor = CodeInsightExecutor(project, symbolIndex, null, null)
+        val result = executor.findCallees(
+            kotlinx.serialization.json.JsonObject(
+                mapOf("symbol_name" to kotlinx.serialization.json.JsonPrimitive("process"))
+            )
+        )
+
+        assertTrue(result is com.codesage.agent.tools.ToolResult.Success, "Expected Success but got $result")
+        val data = (result as com.codesage.agent.tools.ToolResult.Success).data as kotlinx.serialization.json.JsonObject
+        assertTrue(data.containsKey("callees"))
+        assertEquals(0, data["callees"]?.jsonArray?.size, "未解析到 PSI 元素时应返回空 callee 列表")
+        assertEquals(0, data["total"]?.jsonPrimitive?.int)
+    }
 }

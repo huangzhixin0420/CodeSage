@@ -1,6 +1,9 @@
 package com.codesage.agent.memory
 
-import com.codesage.model.dto.Role
+import com.codesage.model.dto.*
+import com.codesage.model.gateway.ModelGateway
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
@@ -20,6 +23,35 @@ class BuiltInMemoryProviderTest {
         provider = BuiltInMemoryProvider()
         tempDir = Files.createTempDirectory("codesage_test").toFile()
         provider.initialize(sessionId, tempDir.absolutePath)
+    }
+
+    /**
+     * 用于测试的 [ModelGateway] 伪实现：可返回固定 JSON 或模拟失败。
+     */
+    private class FakeModelGateway(
+        private val responseContent: String? = null,
+        private val fail: Boolean = false
+    ) : ModelGateway() {
+        override suspend fun chat(request: ChatRequest): Result<ChatResponse> {
+            return if (fail || responseContent == null) {
+                Result.failure(RuntimeException("LLM unavailable"))
+            } else {
+                Result.success(
+                    ChatResponse(
+                        id = "test-summary",
+                        model = request.model,
+                        choices = listOf(
+                            Choice(
+                                index = 0,
+                                message = Message.assistantMessage(responseContent),
+                                finishReason = "stop"
+                            )
+                        ),
+                        usage = null
+                    )
+                )
+            }
+        }
     }
 
     @AfterEach
@@ -309,6 +341,9 @@ class BuiltInMemoryProviderTest {
 
     @Test
     fun `onSessionEnd extracts key facts and persists them as memories`() {
+        // 强制走规则引擎，避免依赖真实模型网关
+        provider.sessionSummarizer = SessionSummarizer(modelGateway = null)
+
         val messages = listOf(
             com.codesage.model.dto.Message.userMessage("I prefer dark theme for the IDE"),
             com.codesage.model.dto.Message.assistantMessage("Got it, I'll use dark theme."),
@@ -317,6 +352,8 @@ class BuiltInMemoryProviderTest {
         )
 
         provider.onSessionEnd(messages)
+        // 异步等待摘要写入完成
+        runBlocking { delay(300) }
 
         val searchResult = provider.handleToolCall(
             "memory_search",
@@ -326,6 +363,60 @@ class BuiltInMemoryProviderTest {
         assertTrue(
             searchResult.contains("dark theme") || searchResult.contains("Preference"),
             "Session end should persist dark theme fact: $searchResult"
+        )
+    }
+
+    @Test
+    fun `onSessionEnd uses LLM summary and persists returned facts`() {
+        val messages = listOf(
+            com.codesage.model.dto.Message.userMessage("We need to migrate from Java to Kotlin"),
+            com.codesage.model.dto.Message.assistantMessage("I will plan the migration carefully.")
+        )
+
+        val fakeGateway = FakeModelGateway(
+            """
+            {
+              "summary": "User wants to migrate from Java to Kotlin.",
+              "key_facts": ["Migration plan: Java to Kotlin", "Requires careful refactoring"]
+            }
+            """.trimIndent()
+        )
+        provider.sessionSummarizer = SessionSummarizer(modelGateway = fakeGateway, summaryModel = "test-model")
+
+        provider.onSessionEnd(messages)
+        runBlocking { delay(300) }
+
+        val searchResult = provider.handleToolCall(
+            "memory_search",
+            mapOf("query" to "Kotlin migration", "limit" to 5)
+        )
+        assertTrue(searchResult.contains("\"success\":true"))
+        assertTrue(
+            searchResult.contains("Migration plan") || searchResult.contains("Java to Kotlin"),
+            "LLM facts should be persisted: $searchResult"
+        )
+    }
+
+    @Test
+    fun `onSessionEnd falls back to rule summary when LLM fails`() {
+        val messages = listOf(
+            com.codesage.model.dto.Message.userMessage("I prefer spaces over tabs"),
+            com.codesage.model.dto.Message.assistantMessage("Noted, I will use spaces.")
+        )
+
+        provider.sessionSummarizer = SessionSummarizer(modelGateway = FakeModelGateway(fail = true))
+
+        provider.onSessionEnd(messages)
+        runBlocking { delay(300) }
+
+        val searchResult = provider.handleToolCall(
+            "memory_search",
+            mapOf("query" to "spaces", "limit" to 5)
+        )
+        assertTrue(searchResult.contains("\"success\":true"))
+        assertTrue(
+            searchResult.contains("spaces") || searchResult.contains("Preference"),
+            "Rule fallback should persist preference fact: $searchResult"
         )
     }
 

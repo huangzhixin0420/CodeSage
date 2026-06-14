@@ -441,4 +441,119 @@ class SymbolIndexTest {
         assertTrue(results.isNotEmpty(), "Should find matching symbol")
         assertTrue(durationMs < 50.0, "fuzzySearch should be fast with token index, took ${durationMs}ms")
     }
+
+    @Test
+    fun `fuzzySearch with trie matches token prefixes and shorter tokens`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+
+        symbolIndex.updateFileSymbolsForTest(
+            "/test/Search.kt", listOf(
+                PSIAnalyzer.SymbolInfo(
+                    name = "UserService",
+                    type = PSIAnalyzer.SymbolType.CLASS,
+                    qualifiedName = null,
+                    filePath = "/test/Search.kt",
+                    lineNumber = 1,
+                    docComment = null,
+                    modifiers = emptyList()
+                ),
+                PSIAnalyzer.SymbolInfo(
+                    name = "OrderRepository",
+                    type = PSIAnalyzer.SymbolType.CLASS,
+                    qualifiedName = null,
+                    filePath = "/test/Search.kt",
+                    lineNumber = 5,
+                    docComment = null,
+                    modifiers = emptyList()
+                ),
+                PSIAnalyzer.SymbolInfo(
+                    name = "getUserById",
+                    type = PSIAnalyzer.SymbolType.METHOD,
+                    qualifiedName = null,
+                    filePath = "/test/Search.kt",
+                    lineNumber = 10,
+                    docComment = null,
+                    modifiers = emptyList()
+                )
+            )
+        )
+
+        // 前缀匹配："us" 应命中 "UserService" 和 "getUserById"
+        val prefixResults = symbolIndex.fuzzySearch("us", limit = 5)
+        assertTrue(prefixResults.any { it.name == "UserService" }, "Should find UserService by 'us' prefix")
+        assertTrue(prefixResults.any { it.name == "getUserById" }, "Should find getUserById by 'us' prefix")
+
+        // query token 是索引 token 的前缀："repo" 应命中 "OrderRepository"
+        val shorterTokenResults = symbolIndex.fuzzySearch("repo", limit = 5)
+        assertTrue(
+            shorterTokenResults.any { it.name == "OrderRepository" },
+            "Should find OrderRepository by 'repo' prefix"
+        )
+
+        // 多 token 查询仍工作
+        val multiTokenResults = symbolIndex.fuzzySearch("order repo", limit = 5)
+        assertTrue(
+            multiTokenResults.any { it.name == "OrderRepository" },
+            "Should find OrderRepository by multiple tokens"
+        )
+    }
+
+    @Test
+    fun `fuzzySearch remains fast for non-matching query without O(n) fallback`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+
+        val symbols = (1..10_000).map { i ->
+            PSIAnalyzer.SymbolInfo(
+                name = "SomeLongSymbolName$i",
+                type = PSIAnalyzer.SymbolType.CLASS,
+                qualifiedName = null,
+                filePath = "/test/Class$i.kt",
+                lineNumber = i,
+                docComment = null,
+                modifiers = emptyList()
+            )
+        }
+        symbols.chunked(100).forEachIndexed { idx, chunk ->
+            symbolIndex.updateFileSymbolsForTest("/test/batch$idx.kt", chunk)
+        }
+
+        val start = System.nanoTime()
+        val results = symbolIndex.fuzzySearch("xyznonmatch", limit = 10)
+        val durationMs = (System.nanoTime() - start) / 1_000_000.0
+
+        assertTrue(results.isEmpty(), "Non-matching query should return empty results")
+        assertTrue(
+            durationMs < 10.0,
+            "fuzzySearch should avoid O(n) fallback for non-matching query, took ${durationMs}ms"
+        )
+    }
+
+    @Test
+    fun `fuzzySearch does not match arbitrary substring outside token boundaries`() {
+        val project = createStubProject()
+        val symbolIndex = SymbolIndex(project)
+
+        symbolIndex.updateFileSymbolsForTest(
+            "/test/Search.kt", listOf(
+                PSIAnalyzer.SymbolInfo(
+                    name = "UserService",
+                    type = PSIAnalyzer.SymbolType.CLASS,
+                    qualifiedName = null,
+                    filePath = "/test/Search.kt",
+                    lineNumber = 1,
+                    docComment = null,
+                    modifiers = emptyList()
+                )
+            )
+        )
+
+        // "erserv" 不是任何 token 的前缀，不应返回结果（此前 nameIndex 子串兜底会命中）
+        val results = symbolIndex.fuzzySearch("erserv", limit = 5)
+        assertFalse(
+            results.any { it.name == "UserService" },
+            "Should not match arbitrary substring without token boundary"
+        )
+    }
 }

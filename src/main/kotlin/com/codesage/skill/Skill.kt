@@ -64,6 +64,12 @@ interface Skill {
     val outputSchema: Map<String, Any>
 
     /**
+     * 使用示例，用于帮助模型理解如何调用该技能。
+     * 每个示例应为一段自然语言描述或 JSON 调用示例。
+     */
+    val examples: List<String> get() = emptyList()
+
+    /**
      * 检查是否可以执行
      */
     fun canExecute(context: ExecutionContext): CanExecuteResult
@@ -105,6 +111,7 @@ data class SkillDefinition(
     val version: String = "1.0.0",
     val category: SkillCategory,
     val tags: Set<String> = emptySet(),
+    val examples: List<String> = emptyList(),
     val inputSchema: Map<String, @Contextual Any> = emptyMap(),
     val outputSchema: Map<String, @Contextual Any> = emptyMap(),
     val implementation: SkillImplementationType,

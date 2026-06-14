@@ -12,6 +12,7 @@ class ExecutionTracer {
 
     private val activeTraces = ConcurrentHashMap<String, Trace>()
     private val traceHistory = CopyOnWriteArrayList<Trace>()
+    private val listeners = CopyOnWriteArrayList<TraceListener>()
     private val maxHistory = 100
 
     /**
@@ -54,6 +55,21 @@ class ExecutionTracer {
         if (traceHistory.size > maxHistory) {
             traceHistory.removeAt(0)
         }
+        listeners.forEach { it.onTraceEnded(completed) }
+    }
+
+    /**
+     * 注册追踪结束监听器。
+     */
+    fun addListener(listener: TraceListener) {
+        listeners.add(listener)
+    }
+
+    /**
+     * 移除追踪结束监听器。
+     */
+    fun removeListener(listener: TraceListener) {
+        listeners.remove(listener)
     }
 
     /**
@@ -189,6 +205,16 @@ class ExecutionTracer {
 
     enum class TraceStatus {
         OK, ERROR, CANCELLED
+    }
+
+    /**
+     * 追踪生命周期监听器
+     */
+    interface TraceListener {
+        /**
+         * 当一个追踪完成并被移入历史时调用。
+         */
+        fun onTraceEnded(trace: Trace)
     }
 
     data class TraceTree(

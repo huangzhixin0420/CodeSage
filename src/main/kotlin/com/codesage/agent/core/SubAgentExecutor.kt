@@ -1003,7 +1003,7 @@ open class SubAgentExecutor(
             "grep_code", "search_code", "get_file_info", "get_project_structure",
             "analyze_symbol", "find_usages", "get_inheritance_chain",
             "semantic_search", "get_file_summary", "get_project_stats", "symbol_search",
-            "http_request", "web_scraper", "parse_json", "format_json",
+            "http_request", "web_scraper", "fetch_url_markdown", "parse_json", "format_json",
             "encode_base64", "decode_base64", "hash_md5", "hash_sha256",
             "timestamp", "uuid", "generate_doc", "analyze_dependencies"
         )
@@ -1019,7 +1019,7 @@ open class SubAgentExecutor(
 
         /** 浏览器 / 网络类 */
         private val BROWSER_TOOLS: Set<String> = setOf(
-            "http_request", "web_scraper", "clipboard",
+            "http_request", "web_scraper", "fetch_url_markdown", "clipboard",
             "parse_json", "format_json", "encode_base64", "decode_base64",
             "hash_md5", "hash_sha256", "timestamp", "uuid"
         )

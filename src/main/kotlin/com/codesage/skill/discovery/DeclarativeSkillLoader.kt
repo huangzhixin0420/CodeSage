@@ -144,6 +144,7 @@ class DeclarativeSkillLoader(
             version = map["version"] as? String ?: "1.0.0",
             category = parseCategory(map["category"] as? String),
             tags = (map["tags"] as? List<String>)?.toSet() ?: emptySet(),
+            examples = (map["examples"] as? List<String>) ?: emptyList(),
             inputSchema = (map["inputSchema"] as? Map<String, Any>) ?: emptyMap(),
             outputSchema = (map["outputSchema"] as? Map<String, Any>) ?: emptyMap(),
             implementation = implementation,
@@ -171,6 +172,7 @@ class DeclarativeSkillLoader(
                     DeclarativeSkill(
                         id = def.id, name = def.name, description = def.description,
                         version = def.version, category = def.category, tags = def.tags,
+                        examples = def.examples,
                         inputSchema = def.inputSchema, outputSchema = def.outputSchema,
                         implementation = def.implementation
                     )
@@ -180,6 +182,7 @@ class DeclarativeSkillLoader(
             is SkillImplementationType.External -> DeclarativeSkill(
                 id = def.id, name = def.name, description = def.description,
                 version = def.version, category = def.category, tags = def.tags,
+                examples = def.examples,
                 inputSchema = def.inputSchema, outputSchema = def.outputSchema,
                 implementation = def.implementation
             )

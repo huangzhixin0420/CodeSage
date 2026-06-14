@@ -4,6 +4,7 @@ import com.codesage.agent.context.ContextBudgetManager
 import com.codesage.agent.context.ContextManager
 import com.codesage.agent.memory.MemoryManager
 import com.codesage.agent.memory.MemoryNudger
+import com.codesage.observability.OpenTelemetryExporter
 import com.codesage.agent.planner.AgentCoreStepExecutor
 import com.codesage.agent.planner.DagTaskPlan
 import com.codesage.agent.planner.Task
@@ -188,6 +189,18 @@ open class AgentCore(
     // 可观测性（T7.2：提前初始化供 ToolExecutor 使用）
     private val tracer: ExecutionTracer = ExecutionTracer()
 
+    // 6.13.2：OpenTelemetry 导出器
+    private val openTelemetryExporter: OpenTelemetryExporter = OpenTelemetryExporter(
+        settingsProvider = {
+            try {
+                com.codesage.shared.config.SettingsRepository.getInstance().get()
+            } catch (e: Exception) {
+                // 测试/无 IDE 环境：返回默认空配置
+                com.codesage.shared.config.SettingsFile()
+            }
+        }
+    )
+
     // Phase 5: 上下文预算管理器（跨会话共享实例，通过 provider 绑定当前会话）
     private val contextBudgetManager: ContextBudgetManager = ContextBudgetManager()
 
@@ -195,7 +208,12 @@ open class AgentCore(
     // 注意：override 优先于 createDefault()，供子 Agent 按 toolset 过滤使用。
     // initialize() 仍会向其注册 memory tools / skills / 插件贡献的 tools。
     private val toolRegistry: ToolRegistry = toolRegistryOverride
-        ?: ToolRegistry.createDefault(project, mcpServerManager = mcpServerManagerOverride)
+        ?: ToolRegistry.createDefault(
+            project,
+            mcpServerManager = mcpServerManagerOverride,
+            skillRegistry = skillToolAdapter?.skillRegistry,
+            skillExecutor = skillToolAdapter?.skillExecutor
+        )
     private val guardrails: ToolGuardrails? = project?.let {
         ToolGuardrails(
             projectRoot = it.basePath,
@@ -357,6 +375,10 @@ open class AgentCore(
             restoreSessions(SessionRestore.RestoreOptions(strategy = SessionRestore.RestoreStrategy.RESTORE_ALL))
         }
 
+        // 6.13.2：注册 OpenTelemetry 导出监听器
+        tracer.addListener(openTelemetryExporter)
+        logger.info("OpenTelemetry exporter registered")
+
         // 如果没有会话，自动创建一个
         if (sessions.isEmpty()) {
             createSession()
@@ -517,6 +539,7 @@ open class AgentCore(
      */
     fun shutdown() {
         agentScope.cancel()
+        openTelemetryExporter.shutdown()
         sessions.clear()
         currentSessionId.set(null)
         currentLoop.getAndSet(null)?.interrupt()

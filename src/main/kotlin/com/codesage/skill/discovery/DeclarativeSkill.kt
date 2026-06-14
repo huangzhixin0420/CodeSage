@@ -17,6 +17,7 @@ class DeclarativeSkill(
     override val version: String,
     override val category: SkillCategory,
     override val tags: Set<String>,
+    override val examples: List<String> = emptyList(),
     override val inputSchema: Map<String, Any>,
     override val outputSchema: Map<String, Any>,
     private val implementation: SkillImplementationType
