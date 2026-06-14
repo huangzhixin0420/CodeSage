@@ -1,18 +1,32 @@
 package com.codesage.analysis
 
-import com.codesage.agent.memory.MemoryEmbedding
+import com.codesage.agent.memory.EmbeddingMath
+import com.codesage.agent.memory.EmbeddingProvider
+import com.codesage.agent.memory.EmbeddingProviderFactory
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.project.Project
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 语义搜索
- * 基于符号索引和代码结构进行智能搜索
- * 支持查询结果 LRU 缓存，缓存 TTL 60 秒，容量 100 条
+ * 基于符号索引、代码 chunk 向量索引和代码结构进行智能搜索。
+ *
+ * 6.3.3 增强：
+ * - 优先使用项目级 SQLite 向量索引（chunk 级 embedding）做真实语义召回。
+ * - 向量索引为空时，回退到符号级 embedding（由 [EmbeddingProvider] 提供）。
+ * - 首次调用且索引为空时，会在后台异步触发索引构建（可通过 `reindex_semantic` 手动重建）。
+ *
+ * 支持查询结果 LRU 缓存，缓存 TTL 60 秒，容量 100 条。
  */
 class SemanticSearch(
     private val project: Project,
-    private val symbolIndex: SymbolIndex = SymbolIndex(project)
+    private val symbolIndex: SymbolIndex = SymbolIndex(project),
+    private val embeddingProvider: EmbeddingProvider = EmbeddingProviderFactory.create(project),
+    private val semanticIndex: SemanticIndexRepository? = project.basePath?.let {
+        SemanticIndexRepository(File(it, ".codesage/semantic_index.db"))
+    }
 ) {
     private val logger = Logger.getLogger<SemanticSearch>()
 
@@ -40,6 +54,9 @@ class SemanticSearch(
     // 6.3.3 符号向量 embedding 缓存：key = "version:filePath:name:type"
     private val symbolEmbeddingCache = ConcurrentHashMap<String, FloatArray>()
 
+    // 后台索引触发标记，避免重复触发
+    private val indexBuildTriggered = AtomicBoolean(false)
+
     // LRU 缓存：Key -> (timestamp, results)
     private val searchCache = object : LinkedHashMap<String, Pair<Long, List<SearchResult>>>(100, 0.75f, true) {
         override fun removeEldestEntry(eldest: Map.Entry<String, Pair<Long, List<SearchResult>>>): Boolean {
@@ -52,7 +69,9 @@ class SemanticSearch(
     private var cacheMisses = 0L
 
     private fun getCacheKey(method: String, query: String, limit: Int): String {
-        return "${method}:${query.lowercase().trim()}:$limit:${symbolIndex.version.get()}"
+        return "${method}:${
+            query.lowercase().trim()
+        }:$limit:${symbolIndex.version.get()}:${embeddingProvider.dimension}"
     }
 
     private fun getCached(key: String): List<SearchResult>? {
@@ -199,42 +218,69 @@ class SemanticSearch(
     }
 
     /**
-     * 6.3.3 根据自然语言描述搜索：融合关键词匹配与本地向量语义相似度。
+     * 6.3.3 根据自然语言描述搜索：优先使用 chunk 级向量索引，其次使用符号级向量语义相似度，
+     * 并融合关键词匹配分数。
      */
     fun semanticQuery(description: String, limit: Int = 20): List<SearchResult> {
         val key = getCacheKey("semanticQuery", description, limit)
         getCached(key)?.let { return it }
 
-        // 提取关键词（简单分词）
-        val keywords = description.lowercase()
-            .replace(Regex("[^a-z0-9\\s]"), " ")
-            .split(Regex("\\s+"))
-            .filter { it.length > 2 }
-            .distinct()
+        ensureSemanticIndexBuildTriggered()
 
+        val results = if (semanticIndex != null && semanticIndex.count() > 0) {
+            searchByVectorIndex(description, limit)
+        } else {
+            searchBySymbolVector(description, limit)
+        }
+
+        putCache(key, results)
+        return results
+    }
+
+    /**
+     * 使用 chunk 级向量索引做语义召回。
+     */
+    private fun searchByVectorIndex(description: String, limit: Int): List<SearchResult> {
+        val repo = semanticIndex ?: return emptyList()
+        val keywords = extractKeywords(description)
+        val queryVector = embeddingProvider.embed(description)
+
+        return repo.search(queryVector, limit * 2, minScore = 0.15f)
+            .mapNotNull { result ->
+                val chunk = result.chunk
+                val keywordScore = computeChunkKeywordScore(chunk, keywords)
+                val vectorScore = result.score
+                val score = 0.65 * vectorScore + 0.35 * keywordScore
+
+                if (score <= 0.05) return@mapNotNull null
+
+                val symbol = resolveChunkSymbol(chunk)
+                SearchResult(
+                    filePath = chunk.filePath,
+                    symbol = symbol,
+                    matchType = MatchType.VECTOR_SIMILARITY,
+                    relevanceScore = score.coerceAtMost(1.0),
+                    contextLines = chunk.content.lineSequence().take(8).toList()
+                )
+            }
+            .sortedByDescending { it.relevanceScore }
+            .take(limit)
+    }
+
+    /**
+     * 使用符号级向量召回（chunk 索引为空时的降级路径）。
+     */
+    private fun searchBySymbolVector(description: String, limit: Int): List<SearchResult> {
+        val keywords = extractKeywords(description)
         val allSymbols = symbolIndex.findByType(PSIAnalyzer.SymbolType.METHOD) +
                 symbolIndex.findByType(PSIAnalyzer.SymbolType.CLASS)
 
-        val queryVector = MemoryEmbedding.embed(description)
+        val queryVector = embeddingProvider.embed(description)
 
-        val results = allSymbols.mapNotNull { symbol ->
-            val nameTokens = symbol.name.lowercase().split(Regex("(?=[A-Z])|[_\\-]"))
-            val docTokens = symbol.docComment?.lowercase()?.split(Regex("\\s+")) ?: emptyList()
-
-            var keywordScore = 0.0
-            keywords.forEach { keyword ->
-                if (nameTokens.any { it.contains(keyword) || keyword.contains(it) }) {
-                    keywordScore += 0.5
-                }
-                if (docTokens.any { it.contains(keyword) }) {
-                    keywordScore += 0.3
-                }
-            }
-
+        return allSymbols.mapNotNull { symbol ->
+            val keywordScore = computeSymbolKeywordScore(symbol, keywords)
             val symbolVector = embedSymbol(symbol)
-            val vectorScore = MemoryEmbedding.cosineSimilarity(queryVector, symbolVector).toDouble()
-
-            // 融合：向量相似度占主导，关键词作为补充
+            val vectorScore = EmbeddingMath.cosineSimilarity(queryVector, symbolVector).toDouble()
             val score = 0.65 * vectorScore + 0.35 * keywordScore
 
             if (score > 0.05) {
@@ -246,9 +292,6 @@ class SemanticSearch(
                 )
             } else null
         }.sortedByDescending { it.relevanceScore }.take(limit)
-
-        putCache(key, results)
-        return results
     }
 
     private fun searchByExactName(query: String): List<SearchResult> {
@@ -324,13 +367,13 @@ class SemanticSearch(
      * 6.3.3 向量语义召回：用本地 embedding 比较查询与符号（名称 + 文档）的相似度。
      */
     private fun searchByVector(query: String, limit: Int): List<SearchResult> {
-        val queryVector = MemoryEmbedding.embed(query)
+        val queryVector = embeddingProvider.embed(query)
         val allSymbols = symbolIndex.findByType(PSIAnalyzer.SymbolType.METHOD) +
                 symbolIndex.findByType(PSIAnalyzer.SymbolType.CLASS)
 
         return allSymbols.mapNotNull { symbol ->
             val symbolVector = embedSymbol(symbol)
-            val similarity = MemoryEmbedding.cosineSimilarity(queryVector, symbolVector)
+            val similarity = EmbeddingMath.cosineSimilarity(queryVector, symbolVector)
             if (similarity > 0.15f) {
                 SearchResult(
                     filePath = symbol.filePath,
@@ -343,7 +386,8 @@ class SemanticSearch(
     }
 
     private fun embedSymbol(symbol: PSIAnalyzer.SymbolInfo): FloatArray {
-        val cacheKey = "${symbolIndex.version.get()}:${symbol.filePath}:${symbol.name}:${symbol.type}"
+        val cacheKey =
+            "${symbolIndex.version.get()}:${symbol.filePath}:${symbol.name}:${symbol.type}:${embeddingProvider.dimension}"
         return symbolEmbeddingCache.getOrPut(cacheKey) {
             val text = buildString {
                 append(symbol.name)
@@ -352,11 +396,86 @@ class SemanticSearch(
                     append(it)
                 }
             }
-            MemoryEmbedding.embed(text)
+            embeddingProvider.embed(text)
         }
     }
 
     private fun looksLikeMethodSignature(query: String): Boolean {
         return query.contains("(") && query.contains(")")
+    }
+
+    private fun extractKeywords(description: String): List<String> {
+        return description.lowercase()
+            .replace(Regex("[^a-z0-9\\s]"), " ")
+            .split(Regex("\\s+"))
+            .filter { it.length > 2 }
+            .distinct()
+    }
+
+    private fun computeSymbolKeywordScore(symbol: PSIAnalyzer.SymbolInfo, keywords: List<String>): Double {
+        val nameTokens = symbol.name.lowercase().split(Regex("(?=[A-Z])|[_\\-]"))
+        val docTokens = symbol.docComment?.lowercase()?.split(Regex("\\s+")) ?: emptyList()
+
+        var score = 0.0
+        keywords.forEach { keyword ->
+            if (nameTokens.any { it.contains(keyword) || keyword.contains(it) }) {
+                score += 0.5
+            }
+            if (docTokens.any { it.contains(keyword) }) {
+                score += 0.3
+            }
+        }
+        return score
+    }
+
+    private fun computeChunkKeywordScore(chunk: SemanticChunk, keywords: List<String>): Double {
+        var score = 0.0
+        val nameLower = chunk.symbolName?.lowercase() ?: ""
+        val contentLower = chunk.content.lowercase()
+        keywords.forEach { keyword ->
+            if (nameLower.contains(keyword)) score += 0.5
+            if (contentLower.contains(keyword)) score += 0.2
+        }
+        return score
+    }
+
+    private fun resolveChunkSymbol(chunk: SemanticChunk): PSIAnalyzer.SymbolInfo? {
+        val name = chunk.symbolName ?: return null
+        return symbolIndex.findByName(name).firstOrNull { it.filePath == chunk.filePath }
+    }
+
+    /**
+     * 首次调用语义搜索且索引为空时，后台异步触发一次索引构建。
+     * 不阻塞当前查询，后续调用可逐步使用索引结果。
+     */
+    private fun ensureSemanticIndexBuildTriggered() {
+        if (project.isDisposedSafe() || semanticIndex == null) return
+        if (semanticIndex.count() > 0) return
+        if (!indexBuildTriggered.compareAndSet(false, true)) return
+
+        Thread {
+            try {
+                logger.info("Background semantic indexing triggered")
+                val indexer = SemanticChunkIndexer(project, semanticIndex, embeddingProvider, symbolIndex = symbolIndex)
+                indexer.buildIndex(force = false)
+            } catch (e: Exception) {
+                logger.warn("Background semantic indexing failed", e)
+            }
+        }.apply {
+            isDaemon = true
+            name = "CodeSage-SemanticIndex-${project.name}"
+            start()
+        }
+    }
+
+    /**
+     * 兼容测试/stub Project 的 isDisposed 查询，避免 null 返回值导致 NPE。
+     */
+    private fun Project.isDisposedSafe(): Boolean {
+        return try {
+            Project::class.java.getMethod("isDisposed").invoke(this) as? Boolean ?: false
+        } catch (_: Exception) {
+            false
+        }
     }
 }

@@ -119,4 +119,102 @@ class RunCommandStreamingTest {
         assertTrue(last.done)
         assertTrue(last.stderr.contains("timed out"))
     }
+
+    @Test
+    fun `background command with stream_output emits output stream events`() = runBlocking {
+        val ideTools = IDETools(null)
+        val events = mutableListOf<AgentStreamEvent>()
+        val result = ideTools.runCommand(
+            JsonObject(
+                mapOf(
+                    "command" to JsonPrimitive("echo bg1 && echo bg2"),
+                    "run_in_background" to JsonPrimitive(true),
+                    "stream_output" to JsonPrimitive(true)
+                )
+            )
+        ) { events.add(it) }
+
+        assertTrue(result is ToolResult.Success)
+        val data = (result as ToolResult.Success).data.jsonObject
+        assertEquals(true, data["stream_output"]?.jsonPrimitive?.booleanOrNull)
+        val processId = data["process_id"]?.jsonPrimitive?.content
+        assertNotNull(processId)
+
+        waitForBackgroundProcess(processId!!)
+
+        val outputEvents = events.filterIsInstance<AgentStreamEvent.CommandOutputStream>()
+        val combinedStdout = outputEvents.joinToString("") { it.stdout }
+        assertTrue(combinedStdout.contains("bg1"), "流式 stdout 应包含 bg1")
+        assertTrue(combinedStdout.contains("bg2"), "流式 stdout 应包含 bg2")
+        assertTrue(outputEvents.any { it.done }, "应收到 done=true 事件")
+    }
+
+    @Test
+    fun `background command with stream_output can still be read via read_process_output`() = runBlocking {
+        val ideTools = IDETools(null)
+        val events = mutableListOf<AgentStreamEvent>()
+        val result = ideTools.runCommand(
+            JsonObject(
+                mapOf(
+                    "command" to JsonPrimitive("echo persistent-output"),
+                    "run_in_background" to JsonPrimitive(true),
+                    "stream_output" to JsonPrimitive(true)
+                )
+            )
+        ) { events.add(it) }
+
+        assertTrue(result is ToolResult.Success)
+        val processId = (result as ToolResult.Success).data.jsonObject["process_id"]?.jsonPrimitive?.content
+        assertNotNull(processId)
+
+        waitForBackgroundProcess(processId!!)
+
+        val readResult = BackgroundProcessManager.readOutput(processId, 1000)
+        assertNotNull(readResult, "read_process_output 应能读取流式后台进程输出")
+        val readData = (readResult as ToolResult.Success).data.jsonObject
+        assertEquals(false, readData["running"]?.jsonPrimitive?.booleanOrNull)
+        assertTrue(
+            readData["stdout"]?.jsonPrimitive?.content?.contains("persistent-output") == true,
+            "read_process_output 应包含持久化输出"
+        )
+    }
+
+    @Test
+    fun `background command without stream_output still works`() = runBlocking {
+        val ideTools = IDETools(null)
+        val events = mutableListOf<AgentStreamEvent>()
+        val result = ideTools.runCommand(
+            JsonObject(
+                mapOf(
+                    "command" to JsonPrimitive("echo no-stream"),
+                    "run_in_background" to JsonPrimitive(true),
+                    "stream_output" to JsonPrimitive(false)
+                )
+            )
+        ) { events.add(it) }
+
+        assertTrue(result is ToolResult.Success)
+        assertEquals(0, events.size, "stream_output=false 的后台命令不应产生流式事件")
+        val data = (result as ToolResult.Success).data.jsonObject
+        assertEquals(false, data["stream_output"]?.jsonPrimitive?.booleanOrNull)
+        val processId = data["process_id"]?.jsonPrimitive?.content
+        assertNotNull(processId)
+
+        waitForBackgroundProcess(processId!!)
+
+        val readResult = BackgroundProcessManager.readOutput(processId, 1000)
+        assertNotNull(readResult)
+        val readData = (readResult as ToolResult.Success).data.jsonObject
+        assertTrue(readData["stdout"]?.jsonPrimitive?.content?.contains("no-stream") == true)
+    }
+
+    private fun waitForBackgroundProcess(processId: String) {
+        var attempts = 0
+        while (BackgroundProcessManager.readOutput(processId, 1000)
+                ?.let { (it as ToolResult.Success).data.jsonObject["running"]?.jsonPrimitive?.booleanOrNull } != false
+        ) {
+            if (++attempts > 50) break
+            Thread.sleep(100)
+        }
+    }
 }

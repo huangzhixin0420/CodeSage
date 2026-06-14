@@ -1,5 +1,6 @@
 package com.codesage.agent.tools
 
+import com.codesage.agent.core.AgentStreamEvent
 import com.codesage.agent.tools.handlers.KillProcessTool
 import com.codesage.agent.tools.handlers.ReadProcessOutputTool
 import kotlinx.coroutines.runBlocking
@@ -30,6 +31,31 @@ class BackgroundProcessManagerTest {
         assertEquals(false, data["running"]?.jsonPrimitive?.booleanOrNull)
         assertTrue(data["stdout"]?.jsonPrimitive?.content?.contains("HelloBackground") == true)
         assertEquals(0, data["exit_code"]?.jsonPrimitive?.int)
+    }
+
+    @Test
+    fun `start with stream callback emits CommandOutputStream events`() {
+        val events = mutableListOf<AgentStreamEvent.CommandOutputStream>()
+        val id = BackgroundProcessManager.start(
+            "echo stream1 && echo stream2",
+            System.getProperty("user.dir")
+        ) { events.add(it) }
+        assertTrue(id.isNotBlank())
+
+        // 等待进程结束与读取线程 flush
+        var attempts = 0
+        while (BackgroundProcessManager.readOutput(id, 1000)
+                ?.let { (it as ToolResult.Success).data.jsonObject["running"]?.jsonPrimitive?.booleanOrNull } != false
+        ) {
+            if (++attempts > 50) break
+            Thread.sleep(100)
+        }
+
+        val combinedStdout = events.joinToString("") { it.stdout }
+        assertTrue(combinedStdout.contains("stream1"), "流式 stdout 应包含 stream1")
+        assertTrue(combinedStdout.contains("stream2"), "流式 stdout 应包含 stream2")
+        assertTrue(events.any { it.done }, "应收到 done=true 事件")
+        assertTrue(events.any { it.processId == id }, "事件应携带 process_id")
     }
 
     @Test

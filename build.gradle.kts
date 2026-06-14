@@ -26,6 +26,8 @@ dependencies {
     implementation("org.yaml:snakeyaml:2.2")
     implementation("org.xerial:sqlite-jdbc:3.45.1.0")
     implementation("org.apache.pdfbox:pdfbox:3.0.2")
+    implementation("com.microsoft.onnxruntime:onnxruntime:1.18.0")
+    implementation("ai.djl.huggingface:tokenizers:0.29.0")
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.1")
     testImplementation("org.junit.jupiter:junit-jupiter-api:5.10.1")

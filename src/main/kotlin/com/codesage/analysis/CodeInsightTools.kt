@@ -82,7 +82,7 @@ object CodeInsightTools {
 
     fun semanticSearchTool() = Tool(
         name = "semantic_search",
-        description = "Search for code symbols using natural language descriptions. Combines local vector semantic similarity, keyword matching, and fuzzy token indexing to find classes, methods, and fields matching the description.",
+        description = "Search for code symbols using natural language descriptions. Combines local chunk-level vector semantic similarity, keyword matching, and fuzzy token indexing to find classes, methods, and fields matching the description. Run `reindex_semantic` to build or rebuild the vector index.",
         parameters = ToolParameters(
             properties = mapOf(
                 "query" to ToolProperty("string", "Natural language description of what you're looking for"),

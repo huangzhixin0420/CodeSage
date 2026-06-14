@@ -34,6 +34,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
@@ -840,8 +841,8 @@ class IDETools(
      * Phase 3: 优先使用 OS 级沙箱执行；未注入沙箱时回退到旧版 ProcessBuilder。
      * 后台命令当前不走 OS 级沙箱（沙箱不支持异步生命周期），但仍经过 ShellInjectionDetector。
      *
-     * 6.4.3：当 `stream_output=true` 且 [onStream] 不为空时，同步命令会实时发射
-     * [AgentStreamEvent.CommandOutputStream] 事件。沙箱与后台路径暂保持非流式。
+     * 6.4.3：当 `stream_output=true` 且 [onStream] 不为空时，同步命令与后台命令
+     * 均会实时发射 [AgentStreamEvent.CommandOutputStream] 事件。沙箱路径暂保持非流式。
      */
     suspend fun runCommand(
         args: JsonObject,
@@ -861,17 +862,12 @@ class IDETools(
         }
 
         if (runInBackground) {
-            val processId = BackgroundProcessManager.start(command, workingDir)
-            if (streamOutput) {
-                // 后台模式目前不支持 push 流式；发射一个携带 process_id 的 done 事件作为提示
-                onStream(
-                    AgentStreamEvent.CommandOutputStream(
-                        stdout = "",
-                        stderr = "",
-                        processId = processId,
-                        done = true
-                    )
-                )
+            val processId = if (streamOutput) {
+                BackgroundProcessManager.start(command, workingDir) { event ->
+                    runBlocking { onStream(event) }
+                }
+            } else {
+                BackgroundProcessManager.start(command, workingDir)
             }
             return@withContext ToolResult.Success(
                 JsonObject(
@@ -879,7 +875,8 @@ class IDETools(
                         "process_id" to JsonPrimitive(processId),
                         "command" to JsonPrimitive(command),
                         "working_dir" to JsonPrimitive(workingDir),
-                        "status" to JsonPrimitive("running")
+                        "status" to JsonPrimitive("running"),
+                        "stream_output" to JsonPrimitive(streamOutput)
                     )
                 )
             )

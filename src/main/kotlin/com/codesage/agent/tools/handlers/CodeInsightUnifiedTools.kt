@@ -106,7 +106,7 @@ class GetInheritanceChainTool(private val executor: CodeInsightExecutor) : Unifi
 
 class SemanticSearchTool(private val executor: CodeInsightExecutor) : UnifiedTool(
     name = "semantic_search",
-    description = "Search for code symbols using natural language descriptions. Finds classes, methods, and fields matching the description.",
+    description = "Search for code symbols using natural language descriptions. Finds classes, methods, and fields matching the description. Uses a local chunk-level vector index when available; run `reindex_semantic` to build or rebuild the index.",
     parameters = ToolParameters(
         type = "object",
         properties = mapOf(
@@ -156,6 +156,7 @@ fun List<UnifiedTool>.addAllCodeInsightTools(executor: CodeInsightExecutor): Lis
         FindCalleesTool(executor),
         GetInheritanceChainTool(executor),
         SemanticSearchTool(executor),
+        ReindexSemanticTool(executor),
         GetFileSummaryTool(executor),
         GetProjectStatsTool(executor)
     )

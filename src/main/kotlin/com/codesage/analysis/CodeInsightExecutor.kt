@@ -702,6 +702,71 @@ class CodeInsightExecutor(
 
     //endregion
 
+    //region reindex_semantic
+
+    /**
+     * 6.3.3 手动触发语义搜索索引重建。
+     *
+     * 扫描项目文件、切分 chunk、计算 embedding 并写入项目级 SQLite。
+     * 该工具会读取项目源码文件并写入 `.codesage/semantic_index.db`，不修改业务代码。
+     */
+    fun reindexSemantic(args: JsonObject): ToolResult {
+        if (project == null) {
+            return ToolResult.Error("No active project")
+        }
+
+        val basePath = project.basePath
+            ?: return ToolResult.Error("Project base path not available")
+
+        val pathArg = args["path"]?.jsonPrimitive?.content
+        val force = args["force"]?.jsonPrimitive?.content?.toBoolean() ?: false
+
+        val root = if (pathArg.isNullOrBlank()) {
+            java.io.File(basePath)
+        } else {
+            val f = java.io.File(pathArg)
+            if (f.isAbsolute) f else java.io.File(basePath, pathArg)
+        }
+
+        if (!root.exists() || !root.isDirectory) {
+            return ToolResult.Error("Path does not exist or is not a directory: ${root.absolutePath}")
+        }
+
+        return try {
+            val dbFile = java.io.File(java.io.File(basePath, ".codesage"), "semantic_index.db")
+            val repository = SemanticIndexRepository(dbFile)
+            val provider = com.codesage.agent.memory.EmbeddingProviderFactory.create(project)
+            val indexer = SemanticChunkIndexer(
+                project = project,
+                repository = repository,
+                provider = provider,
+                rootPath = root.absolutePath,
+                symbolIndex = symbolIndex
+            )
+            val result = indexer.buildIndex(force = force)
+
+            ToolResult.Success(
+                JsonObject(
+                    mapOf(
+                        "success" to JsonPrimitive(true),
+                        "files_indexed" to JsonPrimitive(result.filesIndexed),
+                        "chunks_indexed" to JsonPrimitive(result.chunksIndexed),
+                        "duration_ms" to JsonPrimitive(result.durationMs),
+                        "errors" to JsonArray(result.errors.map { JsonPrimitive(it) }),
+                        "index_path" to JsonPrimitive(dbFile.absolutePath),
+                        "embedding_provider" to JsonPrimitive(provider::class.simpleName),
+                        "embedding_dimension" to JsonPrimitive(provider.dimension)
+                    )
+                )
+            )
+        } catch (e: Exception) {
+            logger.error("reindex_semantic failed", e)
+            ToolResult.Error("Semantic index rebuild failed: ${e.message}")
+        }
+    }
+
+    //endregion
+
     //region get_file_summary
 
     fun getFileSummary(args: JsonObject): ToolResult {

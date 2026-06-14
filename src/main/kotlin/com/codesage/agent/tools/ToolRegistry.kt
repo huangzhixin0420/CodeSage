@@ -175,6 +175,7 @@ class ToolRegistry {
                 register(FindCalleesTool(codeInsightExecutor))
                 register(GetInheritanceChainTool(codeInsightExecutor))
                 register(SemanticSearchTool(codeInsightExecutor))
+                register(ReindexSemanticTool(codeInsightExecutor))
                 register(GetFileSummaryTool(codeInsightExecutor))
                 register(GetProjectStatsTool(codeInsightExecutor))
 
@@ -339,7 +340,7 @@ internal fun runCommandTool() = Tool(
         Do: 运行测试、构建、lint 等验证命令；用 `| head` 控制输出；命令前确认依赖已安装。长期进程（如 dev server）用 run_in_background=true。
         Don't: 不要执行 rm -rf /、curl | sh、修改系统配置等危险命令；不要假设命令存在而不检查；不要在沙箱内尝试网络命令。
         Parallel: Yes，多个相互独立的命令可并行执行；后台进程之间也独立。
-        Cap: 单流输出超过 1M 字符会被截断并标记 stdout_truncated/stderr_truncated；命令运行在 OS 级沙箱中（禁网络、禁项目外写入）。后台命令当前不走 OS 级沙箱。
+        Cap: 单流输出超过 1M 字符会被截断并标记 stdout_truncated/stderr_truncated；命令运行在 OS 级沙箱中（禁网络、禁项目外写入）。后台命令当前不走 OS 级沙箱；传 stream_output=true 时后台命令会实时发送 CommandOutputStream 事件。
     """.trimIndent(),
     parameters = ToolParameters(
         properties = mapOf(
@@ -361,7 +362,7 @@ internal fun runCommandTool() = Tool(
             ),
             "stream_output" to ToolProperty(
                 type = "boolean",
-                description = "是否流式输出命令的 stdout/stderr。为 true 时命令执行期间会实时发送 command_output_delta 事件（仅同步命令支持，后台命令与沙箱命令暂不支持）。默认 false。"
+                description = "是否流式输出命令的 stdout/stderr。为 true 时命令执行期间会实时发送 command_output_delta 事件（后台命令同步支持；沙箱命令暂不支持）。默认 false。"
             )
         ),
         required = listOf("command")
