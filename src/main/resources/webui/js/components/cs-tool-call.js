@@ -263,6 +263,79 @@ function renderArgsTable(args) {
     `;
 }
 
+/**
+ * O6: 富渲染辅助函数
+ *  - renderCode: 代码块带语言标签 + 复制按钮
+ *  - renderTerminal: 命令输出,行号 + stderr 红边
+ *  - renderJsonTree: 可折叠 JSON 树(简化版)
+ *  - renderError: 错误卡片 + 堆栈折叠
+ */
+function renderCode(content, language) {
+  const lang = language || "text";
+  const id = "code-" + Math.random().toString(36).slice(2, 10);
+  return `
+    <div class="tool-result-code-block" data-lang="${escapeHtml(lang)}">
+      <div class="tool-result-code-header">
+        <span class="tool-result-code-lang">${escapeHtml(lang)}</span>
+        <button type="button" class="tool-result-code-copy" data-cs-copy-target="${id}" title="复制代码">
+          <i class="fas fa-copy"></i> 复制
+        </button>
+      </div>
+      <pre class="tool-result-code" id="${id}"><code>${escapeHtml(content || "")}</code></pre>
+    </div>
+  `;
+}
+
+function renderTerminal(stdout, stderr, exitCode) {
+  const lines = (s) => (s || "").split("\n");
+  const stdoutLines = lines(stdout);
+  const stderrLines = lines(stderr);
+  const renderLines = (arr, kind) => arr
+    .map((line, i) => `<div class="tool-result-term-line ${kind}"><span class="tool-result-term-gutter">${i + 1}</span><span class="tool-result-term-text">${escapeHtml(line)}</span></div>`)
+    .join("");
+  const failed = exitCode !== undefined && exitCode !== 0;
+  return `
+    <div class="tool-result-terminal ${failed ? "failed" : ""}">
+      ${stdout ? `<div class="tool-result-term-stdout">${renderLines(stdoutLines, "stdout")}</div>` : ""}
+      ${stderr ? `<div class="tool-result-term-stderr"><div class="tool-result-term-error-icon"><i class="fas fa-circle-exclamation"></i> stderr</div>${renderLines(stderrLines, "stderr")}</div>` : ""}
+      ${exitCode !== undefined ? `<div class="tool-result-term-exit ${failed ? "failed" : ""}">exit ${exitCode}${failed ? " · 异常" : " · 成功"}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderJsonTree(value, key) {
+  if (value === null) return `<span class="json-null">null</span>`;
+  if (typeof value === "string") return `<span class="json-string">"${escapeHtml(value)}"</span>`;
+  if (typeof value === "number") return `<span class="json-number">${value}</span>`;
+  if (typeof value === "boolean") return `<span class="json-boolean">${value}</span>`;
+  if (Array.isArray(value)) {
+    if (value.length === 0) return `<span class="json-bracket">[]</span>`;
+    const items = value.map((v, i) => `<li>${renderJsonTree(v, i)}</li>`).join("");
+    return `<details class="json-array" open><summary><span class="json-bracket">[</span> ${value.length} 项</summary><ul>${items}</ul><span class="json-bracket">]</span></details>`;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value);
+    if (entries.length === 0) return `<span class="json-bracket">{}</span>`;
+    const items = entries.map(([k, v]) => `<li><span class="json-key">"${escapeHtml(k)}"</span>: ${renderJsonTree(v, k)}</li>`).join("");
+    return `<details class="json-object" open><summary><span class="json-bracket">{</span> ${entries.length} 键</summary><ul>${items}</ul><span class="json-bracket">}</span></details>`;
+  }
+  return `<span>${escapeHtml(String(value))}</span>`;
+}
+
+function renderErrorCard(message, stack, hint) {
+  const hasStack = stack && String(stack).trim().length > 0;
+  return `
+    <div class="tool-result-error-card">
+      <div class="tool-result-error-icon">
+        <i class="fas fa-triangle-exclamation"></i>
+        <span>${escapeHtml(message || "执行失败")}</span>
+      </div>
+      ${hint ? `<div class="tool-result-error-hint"><i class="fas fa-lightbulb"></i> ${escapeHtml(hint)}</div>` : ""}
+      ${hasStack ? `<details class="tool-result-error-stack"><summary>堆栈详情</summary><pre>${escapeHtml(stack)}</pre></details>` : ""}
+    </div>
+  `;
+}
+
 function renderResult(r) {
   if (!r) return "";
   const label = KIND_LABEL[r.kind] || r.kind;
@@ -270,28 +343,28 @@ function renderResult(r) {
   switch (r.kind) {
     case "text": {
       const txt = r.content || "";
-      const pretty = tryPrettyJson(txt);
-      const isJson = pretty !== txt;
-      body = isJson
-        ? `<pre class="tool-result-json">${escapeHtml(pretty)}</pre>`
-        : `<div class="tool-result-code">${escapeHtml(txt)}</div>`;
+      // O6: 先尝试解析为 JSON(若是 JSON,渲染为可折叠树)
+      let parsed = null;
+      try { parsed = JSON.parse(txt); } catch (_) { /* not json */ }
+      if (parsed !== null) {
+        body = `<div class="tool-result-json">${renderJsonTree(parsed, "root")}</div>`;
+      } else {
+        body = `<div class="tool-result-code">${escapeHtml(txt)}</div>`;
+      }
       break;
     }
     case "code": {
-      body = `<pre class="tool-result-code"><code>${escapeHtml(r.content || "")}</code></pre>`;
+      // O6: 代码块带语言标签 + 复制按钮
+      body = renderCode(r.content, r.language);
       break;
     }
     case "command": {
+      // O6: 终端风格渲染(stdout 行号 + stderr 红边)
+      const hasOutput = r.stdout || r.stderr;
       const meta = [];
-      if (r.exitCode !== undefined && r.exitCode !== 0) {
-        meta.push(`<span class="meta-failed">exit ${r.exitCode}</span>`);
-      }
-      if (r.exitCode === 0) meta.push(`<span>exit 0</span>`);
-      if (r.summary) meta.push(`<span>${escapeHtml(r.summary)}</span>`);
       body = `
-                ${r.command ? `<div class="tool-result-meta"><span>$ ${escapeHtml(truncate(r.command, 120))}</span></div>` : ""}
-                ${r.stdout ? `<pre class="tool-result-stdout">${escapeHtml(r.stdout)}</pre>` : ""}
-                ${r.stderr ? `<pre class="tool-result-stderr">${escapeHtml(r.stderr)}</pre>` : ""}
+                ${r.command ? `<div class="tool-result-meta"><span class="tool-result-meta-prompt">$ ${escapeHtml(truncate(r.command, 120))}</span></div>` : ""}
+                ${hasOutput ? renderTerminal(r.stdout, r.stderr, r.exitCode) : ""}
                 ${meta.length ? `<div class="tool-result-meta">${meta.join("")}</div>` : ""}
             `;
       break;
@@ -306,11 +379,13 @@ function renderResult(r) {
       break;
     }
     case "json": {
-      body = `<pre class="tool-result-json">${escapeHtml(JSON.stringify(r.content, null, 2))}</pre>`;
+      // O6: 可折叠 JSON 树
+      body = `<div class="tool-result-json">${renderJsonTree(r.content, "root")}</div>`;
       break;
     }
     case "diff": {
-      body = `<div class="tool-result-code">${escapeHtml(r.content || "")}</div>`;
+      // O6: Diff 走专用 cs-diff-viewer(已存在),这里仍回退到 code 渲染
+      body = renderCode(r.content, r.language || "diff");
       break;
     }
     case "subagent": {
@@ -322,10 +397,8 @@ function renderResult(r) {
       break;
     }
     case "error": {
-      body = `
-                <div class="tool-result-error">${escapeHtml(r.message || "")}</div>
-                ${r.context ? `<div class="tool-result-meta"><span>${escapeHtml(r.context)}</span></div>` : ""}
-            `;
+      // O6: 错误卡片 + 堆栈折叠 + 建议修复
+      body = renderErrorCard(r.message, r.stack, r.hint || r.context);
       break;
     }
     default: {
@@ -490,6 +563,38 @@ export class ToolCall {
         e.preventDefault();
         this.toggle();
       }
+    });
+
+    // O6: 委托处理代码块复制按钮([data-cs-copy-target])
+    this.el.addEventListener("click", (e) => {
+      const btn = e.target.closest?.("[data-cs-copy-target]");
+      if (!btn) return;
+      e.stopPropagation();
+      const id = btn.getAttribute("data-cs-copy-target");
+      const target = id ? this.el.querySelector("#" + CSS.escape(id)) : null;
+      const text = target ? target.innerText : "";
+      if (!text) return;
+      const copy = async () => {
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            // fallback
+            const ta = document.createElement("textarea");
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+          }
+          const original = btn.innerHTML;
+          btn.innerHTML = '<i class="fas fa-check"></i> 已复制';
+          setTimeout(() => { btn.innerHTML = original; }, 1200);
+        } catch (err) {
+          console.warn("[tool-call] copy failed", err);
+        }
+      };
+      copy();
     });
   }
 

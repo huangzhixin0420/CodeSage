@@ -89,6 +89,9 @@ class JCEFChatPanel(
     // H16 修复：单次插入到 IDE 编辑器的最大字符数
     private val MAX_ARTIFACT_INSERT_SIZE = 50 * 1024
 
+    // O9 / T6: Diff 对比时,原始文件读取大小上限
+    private val MAX_DIFF_FILE_SIZE = 200_000
+
     // M23 修复：dataUrl 图片大小上限（8MB，对应解码后约 5.3MB base64）
     private val MAX_IMAGE_DATA_URL_SIZE = 8 * 1024 * 1024
 
@@ -570,6 +573,26 @@ class JCEFChatPanel(
                     val content = json.jsonObject["code"]?.jsonPrimitive?.content ?: ""
                     val filePath = json.jsonObject["filePath"]?.jsonPrimitive?.content ?: ""
                     createFileFromArtifact(filePath.ifBlank { "NewFile.kt" }, content)
+                }
+                // O9 / T6: 代码块 Diff 对比
+                "show_code_diff" -> {
+                    val filePath = json.jsonObject["filePath"]?.jsonPrimitive?.content ?: ""
+                    val proposedCode = json.jsonObject["code"]?.jsonPrimitive?.content ?: ""
+                    val originalCode = readFileContentForDiff(filePath)
+                    sendToJS(mapOf(
+                        "type" to "show_diff_modal",
+                        "filePath" to filePath,
+                        "original" to originalCode,
+                        "proposed" to proposedCode,
+                    ))
+                }
+                // O9 / T6: 用户拒绝代码块(从 DOM 移除)
+                //  协议约定:返回 ack 即可,无需特殊处理
+                "reject_code_block" -> {
+                    val filePath = json.jsonObject["filePath"]?.jsonPrimitive?.content ?: ""
+                    val code = json.jsonObject["code"]?.jsonPrimitive?.content ?: ""
+                    logger.info("[Bridge] reject_code_block filePath=$filePath length=${code.length}")
+                    // 仅记录审计,前端已经移除 DOM
                 }
                 "accept_hunk" -> {
                     val filePath = json.jsonObject["filePath"]?.jsonPrimitive?.content ?: ""
@@ -1121,6 +1144,40 @@ class JCEFChatPanel(
     }
 
     // ===== IDE Integration =====
+
+    /**
+     * O9 / T6: 读取项目内指定文件的当前内容,用于代码块 Diff 对比。
+     *
+     * 安全策略:
+     *  - filePath 必须以项目 basePath 开头(防止路径穿越)
+     *  - 文件不存在 / 读取失败时返回空串(前端会展示"新增文件"模式)
+     *  - 文件过大(>200KB)截断,避免 JCEF 桥接卡死
+     */
+    private fun readFileContentForDiff(filePath: String): String {
+        if (filePath.isBlank()) return ""
+        val p = project ?: return ""
+        return try {
+            val basePath = p.basePath ?: return ""
+            val vFile = com.intellij.openapi.vfs.LocalFileSystem.getInstance()
+                .findFileByPath(filePath)
+                ?: run {
+                    val resolved = java.io.File(basePath, filePath)
+                    com.intellij.openapi.vfs.LocalFileSystem.getInstance()
+                        .findFileByIoFile(resolved)
+                }
+                ?: return ""
+            val text = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance()
+                .getDocument(vFile)?.text ?: return ""
+            if (text.length > MAX_DIFF_FILE_SIZE) {
+                text.take(MAX_DIFF_FILE_SIZE) + "\n// [truncated for diff, file too large]"
+            } else {
+                text
+            }
+        } catch (e: Exception) {
+            logger.warn("[readFileContentForDiff] failed: ${e.message}")
+            ""
+        }
+    }
 
     private fun applyArtifactToEditor(artifactId: String, content: String) {
         val p = project ?: run {

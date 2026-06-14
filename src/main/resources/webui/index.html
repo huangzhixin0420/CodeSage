@@ -26,12 +26,13 @@
         <link rel="stylesheet" href="styles/base.css" />
         <link rel="stylesheet" href="styles/animations.css" />
         <link rel="stylesheet" href="styles/layout.css" />
-        <link rel="stylesheet" href="styles/sidebar.css" />
+        <link rel="stylesheet" href="styles/session-popover.css" />
         <link rel="stylesheet" href="styles/chat.css" />
         <link rel="stylesheet" href="styles/input.css" />
         <link rel="stylesheet" href="styles/markdown.css" />
         <link rel="stylesheet" href="styles/components.css" />
         <link rel="stylesheet" href="styles/settings.css" />
+        <link rel="stylesheet" href="styles/empty-state.css" />
         <link rel="stylesheet" href="styles/polish.css" />
 
         <!-- Vendor: highlight.js -->
@@ -78,9 +79,7 @@
         <a href="#messages-container" class="cs-skip-link">跳到主内容</a>
 
         <div class="app-container" id="app-container">
-            <!-- ============== Sidebar ============== -->
-            <aside class="cs-sidebar" id="cs-sidebar"></aside>
-
+            <!-- O5.2/O5.3: 删除了常驻侧边栏与工件面板,改为单栏全宽 -->
             <!-- ============== Main Area ============== -->
             <div class="main-area">
                 <!-- Settings view (overlays chat content when active) -->
@@ -93,13 +92,14 @@
                 <!-- Header -->
                 <header class="chat-header">
                     <div class="header-left">
+                        <!-- O5.2: 常驻侧边栏删除,改为点击按钮唤出历史会话弹出框 -->
                         <button
-                            class="sidebar-toggle-btn"
-                            id="sidebar-toggle-btn"
-                            data-cs-tooltip="切换侧边栏"
-                            aria-label="切换侧边栏"
+                            class="icon-btn session-history-btn"
+                            id="session-history-btn"
+                            data-cs-tooltip="历史会话 (Cmd+Shift+L)"
+                            aria-label="历史会话"
                         >
-                            <i class="fas fa-bars"></i>
+                            <i class="fas fa-clock-rotate-left"></i>
                         </button>
                         <div class="brand">
                             <div class="brand-mark" aria-label="CodeSage">
@@ -146,15 +146,7 @@
                             ></div>
                         </div>
 
-                        <button
-                            class="icon-btn"
-                            id="artifacts-toggle-btn"
-                            data-cs-tooltip="工件 (Cmd+I)"
-                            aria-label="工件"
-                        >
-                            <i class="fas fa-puzzle-piece"></i>
-                        </button>
-
+                        <!-- O5.3: 工件面板删除,移除 toggle 按钮 -->
                         <button
                             class="icon-btn"
                             id="thinking-toggle-btn"
@@ -342,26 +334,6 @@
                 </div>
             </div>
 
-            <!-- ============== Artifacts (right) ============== -->
-            <aside class="cs-artifacts" id="cs-artifacts">
-                <div class="cs-artifacts-header">
-                    <div class="cs-artifacts-title">
-                        <i
-                            class="fas fa-puzzle-piece"
-                            style="color: var(--accent)"
-                        ></i>
-                        工件
-                    </div>
-                    <button
-                        class="icon-btn"
-                        id="artifacts-close-btn"
-                        aria-label="关闭"
-                    >
-                        <i class="fas fa-xmark"></i>
-                    </button>
-                </div>
-                <div class="cs-artifacts-list" id="artifacts-list"></div>
-            </aside>
         </div>
 
         <!-- Toast container -->

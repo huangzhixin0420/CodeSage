@@ -181,14 +181,31 @@ class AgentToolWindowPanel(
         }
     }
 
+    /**
+     * O5.2: 把会话序列化为前端 map,优先使用 [com.codesage.persistence.PersistedSession]
+     * 的字段(包含 previewText),fallback 到 in-memory AgentSession。
+     */
     private fun sessionToMap(session: AgentSession): Map<String, Any> {
+        val core = agentCore ?: return sessionFallbackMap(session)
+        val persisted = core.getAllPersistedSessions().firstOrNull { it.id == session.id }
+        val name = persisted?.name?.takeIf { it.isNotBlank() }
+            ?: session.name.ifEmpty { "New Session" }
         return mapOf(
             "id" to session.id,
-            "name" to (session.name.ifEmpty { "New Session" }),
-            "createdAt" to session.createdAt,
-            "lastActivityAt" to session.lastActivityAt
+            "name" to name,
+            "createdAt" to (persisted?.createdAt ?: session.createdAt),
+            "lastActivityAt" to (persisted?.lastActivityAt ?: session.lastActivityAt),
+            "previewText" to (persisted?.previewText.orEmpty()),
         )
     }
+
+    private fun sessionFallbackMap(session: AgentSession): Map<String, Any> = mapOf(
+        "id" to session.id,
+        "name" to session.name.ifEmpty { "New Session" },
+        "createdAt" to session.createdAt,
+        "lastActivityAt" to session.lastActivityAt,
+        "previewText" to "",
+    )
 
     private fun createNewSession() {
         val core = agentCore ?: return

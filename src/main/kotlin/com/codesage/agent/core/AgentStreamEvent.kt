@@ -87,6 +87,18 @@ sealed class AgentStreamEvent {
     data class ModelReasoning(val delta: String) : AgentStreamEvent()
 
     /**
+     * O5.1: 标记新一轮模型推理开始（用于多轮推理卡片分离）
+     *
+     * Agent 单次 turn 内部可能经历多轮"调用模型 → 工具调用 → 再调用模型"循环,
+     * 每次重新调用模型前都应发出本事件,前端据此创建独立的 [StructuredThinking] 卡片。
+     * 若仅依赖 `model_reasoning_start`(由 EventConsumer 在首条 ModelReasoning
+     * 时改写 type 得到),后续轮次推理将无法触发新卡片,所有内容会被并入第一个卡片。
+     *
+     * @param roundIndex 从 1 开始的轮次编号(与 [EnhancedAgentLoop.turnNumber] 对齐)
+     */
+    data class ModelReasoningRoundStart(val roundIndex: Int) : AgentStreamEvent()
+
+    /**
      * 发生错误
      */
     data class Error(val message: String) : AgentStreamEvent()

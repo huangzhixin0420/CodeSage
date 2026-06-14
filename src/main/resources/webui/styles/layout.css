@@ -432,58 +432,7 @@
 
 /* ===================== Responsive Layout ===================== */
 
-@media (max-width: 1024px) {
-    .app-container {
-        grid-template-columns: 0 1fr 0;
-    }
-
-    .app-container.sidebar-collapsed {
-        grid-template-columns: 0 1fr 0;
-    }
-
-    .app-container.artifacts-collapsed {
-        grid-template-columns: 0 1fr 0;
-    }
-
-    .app-container.sidebar-collapsed.artifacts-collapsed {
-        grid-template-columns: 0 1fr 0;
-    }
-
-    .cs-sidebar,
-    .cs-artifacts {
-        position: fixed;
-        top: 0;
-        bottom: 0;
-        z-index: var(--z-modal);
-        width: var(--sidebar-width);
-        max-width: 80vw;
-        box-shadow: var(--shadow-xl);
-    }
-
-    .cs-sidebar {
-        left: 0;
-        transform: translateX(-100%);
-        transition: transform var(--duration-slow) var(--ease-out);
-    }
-
-    .app-container:not(.sidebar-collapsed) .cs-sidebar {
-        transform: translateX(0);
-    }
-
-    .cs-artifacts {
-        right: 0;
-        transform: translateX(100%);
-        transition: transform var(--duration-slow) var(--ease-out);
-    }
-
-    .app-container:not(.artifacts-collapsed) .cs-artifacts {
-        transform: translateX(0);
-    }
-
-    .main-area {
-        width: 100vw;
-    }
-}
+/* O5.2/O5.3: 单栏布局下,@media 折叠逻辑已无意义,删除整个块 */
 
 @media (max-width: 768px) {
     .model-pill .model-name {

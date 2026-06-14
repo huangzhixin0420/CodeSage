@@ -275,6 +275,8 @@ class EnhancedAgentLoop(
                     parallelToolCalls = if (tools != null) true else null
                 )
 
+                // O5.1: 标记新一轮模型推理开始,前端据此创建独立 StructuredThinking 卡片
+                emitEvent(AgentStreamEvent.ModelReasoningRoundStart(turnNumber))
                 emitEvent(AgentStreamEvent.Thinking("思考中... (turn $turnNumber)"))
 
                 // === 详细请求日志 ===

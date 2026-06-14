@@ -69,6 +69,14 @@ class EventRouter {
         register<AgentStreamEvent.ModelReasoning> { e, turnId ->
             mapOf("type" to "model_reasoning_delta", "turnId" to turnId, "delta" to e.delta)
         }
+        // O5.1: 多轮推理卡片分离 — 每轮 AI 调用模型前发 start
+        register<AgentStreamEvent.ModelReasoningRoundStart> { e, turnId ->
+            mapOf(
+                "type" to "model_reasoning_round_start",
+                "turnId" to turnId,
+                "roundIndex" to e.roundIndex,
+            )
+        }
 
         // === 工具调用 ===
         register<AgentStreamEvent.ToolCallStart> { e, turnId ->

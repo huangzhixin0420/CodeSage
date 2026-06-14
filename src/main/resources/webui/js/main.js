@@ -103,6 +103,10 @@ function handleBridgeMessage(msg) {
       case "model_reasoning_complete":
         chat._onModelReasoningComplete(turnId, msg.elapsedMs || 0);
         break;
+      // O5.1: 多轮推理卡片分离 — 每轮开始时创建新卡片
+      case "model_reasoning_round_start":
+        chat._onModelReasoningRoundStart(turnId, msg.roundIndex || 0);
+        break;
       case "tool_call_start":
         chat._onToolCallStart(
           turnId,
@@ -187,30 +191,21 @@ function handleBridgeMessage(msg) {
       case "history":
         chat.loadHistory(msg.messages || []);
         break;
-      case "artifact_add":
-        chat.addArtifact(
-          msg.artifactId || msg.id,
-          msg.title,
-          msg.language,
-          msg.content,
-          {
-            version: msg.version,
-            originalContent: msg.originalContent,
-            kind: msg.kind,
-            status: msg.status,
-            timestamp: msg.timestamp,
-          },
-        );
-        break;
-      case "artifact_update":
-        chat.updateArtifact(msg.artifactId || msg.id, {
-          content: msg.content,
-          version: msg.version,
-          originalContent: msg.originalContent,
-          kind: msg.kind,
-          status: msg.status,
-          timestamp: msg.timestamp,
-        });
+      // O5.3: artifact_add / artifact_update 事件已不再路由到 UI
+      // (后端 apply_artifact / reject_artifact API 仍保留,见 T6)
+      // O9 / T6: 后端响应 show_code_diff,弹出 Diff 模态框
+      case "show_diff_modal":
+        if (window.CodeSage?.openDiffModal) {
+          window.CodeSage.openDiffModal({
+            filePath: msg.filePath || "",
+            original: msg.original || "",
+            proposed: msg.proposed || "",
+          });
+        } else {
+          // 降级:用 console 提示 + alert
+          console.info("[main] show_diff_modal", msg);
+          alert("Diff 数据已接收,Diff 模态框未挂载:\n" + (msg.filePath || "(无文件)"));
+        }
         break;
       case "user_message_ack":
         chat.addUserMessage(

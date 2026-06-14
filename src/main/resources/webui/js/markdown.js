@@ -325,6 +325,31 @@ function _buildNonDiffBlock(block, pre, codeText, lang, filePath, sendAction) {
   });
   actions.appendChild(copyBtn);
 
+  // O9 / T6: Diff 按钮 — 与当前文件做对比(有 filePath 时)
+  if (filePath) {
+    const diffBtn = _makeActionBtn("diff", "fa-code-compare", "Diff 对比");
+    diffBtn.addEventListener("click", () =>
+      sendAction("show_code_diff", payload),
+    );
+    actions.appendChild(diffBtn);
+  }
+
+  // O9 / T6: 拒绝按钮 — 删除代码块
+  const rejectBtn = _makeActionBtn("reject", "fa-xmark", "拒绝(删除)");
+  rejectBtn.classList.add("code-block-action-reject");
+  rejectBtn.addEventListener("click", () => {
+    if (block.parentNode) {
+      // T6: 拒绝 = 从 DOM 移除 + 通知后端(用于审计/历史)
+      block.parentNode.removeChild(block);
+      sendAction("reject_code_block", {
+        code: codeText,
+        language: lang,
+        filePath,
+      });
+    }
+  });
+  actions.appendChild(rejectBtn);
+
   header.appendChild(langSpan);
   header.appendChild(actions);
 

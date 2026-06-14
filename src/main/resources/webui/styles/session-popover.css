@@ -1,0 +1,272 @@
+/**
+ * Session Popover v1.0 — 历史会话弹出框 (O5.2)
+ * ==============================================
+ *
+ * 取代 v2.0 时代的常驻侧边栏 cs-sidebar:
+ *   - absolute 定位,不占用 grid 空间
+ *   - 宽度 280-320px,最大高度 ~480px
+ *   - 阴影 + 圆角,与 .cs-modal 同款视觉
+ *   - 时间分组 / 搜索 / 重命名 / 删除 / 新建
+ *
+ * 弹层从 header 的"历史"按钮 (session-history-btn) 下方展开。
+ */
+
+/* ===================== Popover Shell ===================== */
+
+.cs-session-popover {
+    position: fixed;
+    z-index: var(--z-modal, 1000);
+    width: 320px;
+    max-width: calc(100vw - 16px);
+    max-height: 480px;
+    /* O8: 玻璃面 — backdrop-filter blur,saturate 增加通透感 */
+    background: var(--surface-glass, var(--surface-raised, #fff));
+    color: var(--fg-primary, #1a1a1a);
+    border: 1px solid var(--surface-glass-border, var(--border-default, rgba(0, 0, 0, 0.12)));
+    border-radius: var(--radius-lg, 12px);
+    box-shadow: var(--shadow-xl, 0 20px 60px rgba(0, 0, 0, 0.18));
+    -webkit-backdrop-filter: blur(var(--surface-glass-blur, 12px)) saturate(var(--surface-glass-saturate, 150%));
+    backdrop-filter: blur(var(--surface-glass-blur, 12px)) saturate(var(--surface-glass-saturate, 150%));
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: cs-popover-in 220ms var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1));
+    font-size: var(--text-sm, 13px);
+}
+
+.cs-session-popover[hidden] {
+    display: none !important;
+}
+
+@keyframes cs-popover-in {
+    from {
+        opacity: 0;
+        transform: translateY(-6px) scale(0.98);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+/* ===================== Header (search + new) ===================== */
+
+.cs-session-popover-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.06));
+    flex-shrink: 0;
+}
+
+.cs-session-popover-search {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: var(--surface-sunken, rgba(0, 0, 0, 0.04));
+    border-radius: var(--radius-md, 8px);
+    color: var(--fg-tertiary, #888);
+}
+
+.cs-session-popover-search-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--fg-primary, #1a1a1a);
+    font-size: var(--text-sm, 13px);
+    font-family: inherit;
+}
+
+.cs-session-popover-search-input::placeholder {
+    color: var(--fg-tertiary, #888);
+}
+
+.cs-session-popover-new {
+    border: none;
+    background: var(--accent, #2563eb);
+    color: var(--fg-inverse, #fff);
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-md, 8px);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: filter 120ms;
+}
+
+.cs-session-popover-new:hover {
+    filter: brightness(1.1);
+}
+
+/* ===================== List ===================== */
+
+.cs-session-popover-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+    min-height: 60px;
+}
+
+.cs-session-popover-group {
+    margin-bottom: 6px;
+}
+
+.cs-session-popover-group-label {
+    padding: 6px 16px 4px;
+    font-size: 11px;
+    color: var(--fg-tertiary, #888);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: var(--weight-semibold, 600);
+}
+
+.cs-session-popover-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    margin: 0 6px;
+    border-radius: var(--radius-md, 8px);
+    cursor: pointer;
+    transition: background 100ms;
+    position: relative;
+}
+
+.cs-session-popover-item:hover {
+    background: var(--surface-hover, rgba(0, 0, 0, 0.05));
+}
+
+.cs-session-popover-item.active {
+    background: var(--accent-soft, rgba(37, 99, 235, 0.12));
+}
+
+.cs-session-popover-item.active .cs-session-popover-item-name {
+    color: var(--accent, #2563eb);
+    font-weight: var(--weight-semibold, 600);
+}
+
+.cs-session-popover-item-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.cs-session-popover-item-name {
+    font-size: var(--text-sm, 13px);
+    color: var(--fg-primary, #1a1a1a);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.cs-session-popover-item-preview {
+    font-size: 11px;
+    color: var(--fg-tertiary, #888);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.cs-session-popover-item-time {
+    font-size: 10px;
+    color: var(--fg-tertiary, #888);
+    flex-shrink: 0;
+}
+
+.cs-session-popover-item-actions {
+    display: none;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.cs-session-popover-item:hover .cs-session-popover-item-actions,
+.cs-session-popover-item.active .cs-session-popover-item-actions {
+    display: flex;
+}
+
+.cs-session-popover-item-action {
+    border: none;
+    background: transparent;
+    color: var(--fg-tertiary, #888);
+    width: 22px;
+    height: 22px;
+    border-radius: var(--radius-sm, 4px);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    transition: background 100ms, color 100ms;
+}
+
+.cs-session-popover-item-action:hover {
+    background: var(--surface-elevated, rgba(0, 0, 0, 0.08));
+    color: var(--fg-primary, #1a1a1a);
+}
+
+.cs-session-popover-item-action.danger:hover {
+    color: var(--error, #ef4444);
+}
+
+/* ===================== Empty ===================== */
+
+.cs-session-popover-empty {
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--fg-tertiary, #888);
+    font-size: var(--text-sm, 13px);
+    line-height: 1.6;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.cs-session-popover-empty i {
+    font-size: 24px;
+    color: var(--fg-muted, #aaa);
+    margin-bottom: 4px;
+}
+
+.cs-session-popover-empty .hint {
+    display: block;
+    margin-top: 4px;
+    font-size: 11px;
+    opacity: 0.8;
+}
+
+/* ===================== Footer ===================== */
+
+.cs-session-popover-footer {
+    border-top: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.06));
+    padding: 6px 16px;
+    font-size: 11px;
+    color: var(--fg-tertiary, #888);
+    background: var(--surface-sunken, rgba(0, 0, 0, 0.02));
+    flex-shrink: 0;
+}
+
+/* ===================== Dark mode 适配 ===================== */
+
+[data-theme="dark"] .cs-session-popover {
+    background: var(--surface-raised, #1f1f1f);
+    border-color: var(--border-default, rgba(255, 255, 255, 0.12));
+}
+
+[data-theme="dark"] .cs-session-popover-search {
+    background: var(--surface-sunken, rgba(255, 255, 255, 0.04));
+}
+
+[data-theme="dark"] .cs-session-popover-item:hover {
+    background: var(--surface-hover, rgba(255, 255, 255, 0.06));
+}

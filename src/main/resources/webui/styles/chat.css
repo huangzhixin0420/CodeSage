@@ -760,7 +760,7 @@
     word-break: break-word;
 }
 
-/* Error result */
+/* Error result (legacy / simple) */
 .tool-result-error {
     background: var(--error-soft);
     color: var(--error-fg);
@@ -768,6 +768,346 @@
     padding: var(--space-2) var(--space-3);
     font-size: var(--text-sm);
     line-height: var(--leading-snug);
+}
+
+/* ===================== O8: 视觉风格升级 ===================== */
+
+/* 卡片 hover 微抬升 — 适用于 tool-call / thinking / plan / session popover 项 */
+.tool-call-card,
+.cs-thinking-card,
+.plan-card {
+    transition:
+        transform var(--duration-base) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)),
+        box-shadow var(--duration-base) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.tool-call-card:hover,
+.cs-thinking-card:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.08));
+}
+
+/* 用户消息 hover 时头部小图标浮现(轻微视觉反馈) */
+.message-user .message-actions {
+    opacity: 0;
+    transition: opacity var(--duration-base) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.message-user:hover .message-actions {
+    opacity: 1;
+}
+
+/* 输入框 focus 时的 spring 动画 */
+.input-container:focus-within {
+    box-shadow: var(--shadow-focus, 0 0 0 3px var(--accent-ring, rgba(37, 99, 235, 0.2)));
+    transform: translateY(-1px);
+    transition:
+        transform var(--duration-base) var(--ease-spring, cubic-bezier(0.34, 1.56, 0.64, 1)),
+        box-shadow var(--duration-base) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+/* 按钮 active 时轻微下沉,模拟物理按压 */
+.cs-button:active,
+.icon-btn:active {
+    transform: scale(0.97);
+    transition: transform 80ms var(--ease-out, ease-out);
+}
+
+/* ===================== O6: 工具结果富渲染 ===================== */
+
+/* 代码块:语言标签 + 复制按钮 */
+.tool-result-code-block {
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    border: 1px solid var(--border-default);
+    background: var(--code-bg);
+}
+
+.tool-result-code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px var(--space-2);
+    background: var(--surface-raised);
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 11px;
+    color: var(--fg-tertiary);
+}
+
+.tool-result-code-lang {
+    text-transform: lowercase;
+    font-family: var(--font-mono);
+    padding: 1px 6px;
+    border-radius: var(--radius-pill);
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+.tool-result-code-copy {
+    border: none;
+    background: transparent;
+    color: var(--fg-tertiary);
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: background 100ms, color 100ms;
+}
+
+.tool-result-code-copy:hover {
+    background: var(--surface-hover);
+    color: var(--fg-primary);
+}
+
+.tool-result-code-block .tool-result-code {
+    border-radius: 0;
+    border: none;
+}
+
+/* 命令终端:行号 + stderr 红边 */
+.tool-result-terminal {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--code-bg);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    font-family: var(--font-mono);
+}
+
+.tool-result-term-stdout,
+.tool-result-term-stderr {
+    font-size: var(--text-xs);
+    line-height: var(--leading-relaxed);
+    max-height: 280px;
+    overflow-y: auto;
+}
+
+.tool-result-term-line {
+    display: flex;
+    align-items: flex-start;
+    padding: 0 var(--space-2);
+    white-space: pre;
+}
+
+.tool-result-term-line.stderr {
+    background: rgba(239, 68, 68, 0.06);
+}
+
+.tool-result-term-gutter {
+    width: 36px;
+    flex-shrink: 0;
+    text-align: right;
+    color: var(--fg-tertiary);
+    padding-right: var(--space-2);
+    user-select: none;
+    font-size: 10px;
+    line-height: var(--leading-relaxed);
+}
+
+.tool-result-term-text {
+    flex: 1;
+    overflow-x: auto;
+}
+
+.tool-result-term-stderr {
+    border-left: 3px solid var(--error);
+}
+
+.tool-result-term-error-icon {
+    background: var(--error-soft);
+    color: var(--error);
+    padding: 4px var(--space-2);
+    font-size: 11px;
+    font-weight: var(--weight-semibold);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.tool-result-term-exit {
+    padding: 4px var(--space-2);
+    font-size: 11px;
+    color: var(--fg-tertiary);
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface-raised);
+}
+
+.tool-result-term-exit.failed {
+    color: var(--error);
+    font-weight: var(--weight-semibold);
+}
+
+/* JSON 树 */
+.tool-result-json {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: var(--leading-relaxed);
+    max-height: 320px;
+    overflow: auto;
+}
+
+.json-key {
+    color: #2563eb;
+    font-weight: var(--weight-medium);
+}
+
+.json-string {
+    color: #16a34a;
+}
+
+.json-number {
+    color: #f59e0b;
+}
+
+.json-boolean {
+    color: #9333ea;
+    font-weight: var(--weight-semibold);
+}
+
+.json-null {
+    color: var(--fg-tertiary);
+    font-style: italic;
+}
+
+.json-bracket {
+    color: var(--fg-tertiary);
+}
+
+details.json-array,
+details.json-object {
+    margin-left: var(--space-3);
+}
+
+details.json-array > summary,
+details.json-object > summary {
+    cursor: pointer;
+    color: var(--fg-secondary);
+    font-size: 11px;
+    list-style: none;
+    user-select: none;
+    padding: 2px 0;
+}
+
+details.json-array > summary::-webkit-details-marker,
+details.json-object > summary::-webkit-details-marker {
+    display: none;
+}
+
+details.json-array > summary::before {
+    content: "▼ ";
+    font-size: 9px;
+    margin-right: 2px;
+}
+
+details.json-object > summary::before {
+    content: "▼ ";
+    font-size: 9px;
+    margin-right: 2px;
+}
+
+details.json-array:not([open]) > summary::before,
+details.json-object:not([open]) > summary::before {
+    content: "▶ ";
+}
+
+details.json-array > ul,
+details.json-object > ul {
+    list-style: none;
+    padding-left: var(--space-3);
+    margin: 0;
+    border-left: 1px dashed var(--border-subtle);
+}
+
+[data-theme="dark"] .json-key {
+    color: #60a5fa;
+}
+[data-theme="dark"] .json-string {
+    color: #4ade80;
+}
+[data-theme="dark"] .json-number {
+    color: #fbbf24;
+}
+[data-theme="dark"] .json-boolean {
+    color: #c084fc;
+}
+
+/* 错误卡片 */
+.tool-result-error-card {
+    background: var(--error-soft);
+    border-left: 3px solid var(--error);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.tool-result-error-card .tool-result-error-icon {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--error);
+    font-weight: var(--weight-semibold);
+    font-size: var(--text-sm);
+}
+
+.tool-result-error-hint {
+    color: var(--fg-secondary);
+    font-size: var(--text-xs);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.tool-result-error-hint i {
+    color: var(--warning);
+}
+
+.tool-result-error-stack {
+    margin-top: 4px;
+}
+
+.tool-result-error-stack > summary {
+    cursor: pointer;
+    color: var(--fg-tertiary);
+    font-size: 11px;
+    list-style: none;
+    user-select: none;
+}
+
+.tool-result-error-stack > summary::-webkit-details-marker {
+    display: none;
+}
+
+.tool-result-error-stack > summary::before {
+    content: "▶ ";
+    font-size: 9px;
+    margin-right: 2px;
+}
+
+.tool-result-error-stack[open] > summary::before {
+    content: "▼ ";
+}
+
+.tool-result-error-stack pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2);
+    font-size: 11px;
+    margin-top: 4px;
+    max-height: 200px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 /* ===================== Plan Card ===================== */
@@ -1174,6 +1514,12 @@
 
 .code-block-action.copied {
     color: var(--success);
+}
+
+/* O9 / T6: 拒绝按钮 — 默认灰,hover 红 */
+.code-block-action.code-block-action-reject:hover {
+    background: var(--error-soft);
+    color: var(--error);
 }
 
 .code-block-path {

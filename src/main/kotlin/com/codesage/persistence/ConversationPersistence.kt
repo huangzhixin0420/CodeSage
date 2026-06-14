@@ -110,8 +110,22 @@ class ConversationPersistence(
             metadata = SessionMetadata(
                 messageCount = messages.size,
                 saveVersion = CURRENT_VERSION
-            )
+            ),
+            // O5.2: 取首条 user 消息的纯文本前 30 字,去除空白
+            previewText = extractPreviewText(messages)
         )
+
+    /**
+     * O5.2: 从消息列表提取会话预览文本 — 首条 USER 角色消息去除空白后截前 30 字。
+     * 若无 user 消息则返回空串(后端 AgentToolWindowPanel 在 fallback 时会用会话名)。
+     */
+    private fun extractPreviewText(messages: List<Message>): String {
+        val firstUser = messages.firstOrNull { it.role.name == "USER" } ?: return ""
+        val raw = (firstUser.content ?: "").trim().replace(Regex("\\s+"), " ")
+        if (raw.isEmpty()) return ""
+        val max = 30
+        return if (raw.length <= max) raw else raw.substring(0, max) + "…"
+    }
 
     /**
      * 原子写入：先写临时文件，再重命名。
@@ -384,7 +398,12 @@ data class PersistedSession(
     val lastActivityAt: Long,
     val isActive: Boolean,
     val messages: List<PersistedMessage>,
-    val metadata: SessionMetadata
+    val metadata: SessionMetadata,
+    /**
+     * O5.2: 会话预览文本(首条用户消息前 ~30 字),会话列表弹层用。
+     * 默认空字符串以便旧版 json 反序列化兼容。
+     */
+    val previewText: String = ""
 )
 
 @Serializable

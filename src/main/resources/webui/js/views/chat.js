@@ -39,7 +39,6 @@
  *   mode_suggestion       { turnId, effective, suggestion, userExplicit }
  */
 
-import { Thinking } from "../components/cs-thinking.js";
 import { StructuredThinking } from "../components/cs-thinking-v2.js";
 import { ToolCall } from "../components/cs-tool-call.js";
 import { Plan } from "../components/cs-plan.js";
@@ -47,10 +46,10 @@ import { PlanV2 } from "../components/cs-plan-v2.js";
 import { AgentDashboard } from "../components/cs-agent-dashboard.js";
 import { MentionAutocomplete } from "../components/cs-mention.js";
 import { ContextChips } from "../components/cs-context-chips.js";
-import { CsArtifact } from "../components/cs-artifact.js";
 import { RunLogBuilder } from "../run-log.js";
 import { MessageVirtualizer } from "../message-virtualizer.js";
-import { Sidebar } from "../components/cs-sidebar.js";
+import { SessionPopover } from "../components/cs-session-popover.js";
+import { EmptyState } from "../components/cs-empty-state.js";
 import { InlineAlert } from "../components/cs-inline-alert.js";
 import { toast } from "../components/cs-toast.js";
 import { bridge } from "../bridge.js";
@@ -101,12 +100,11 @@ class ChatView {
     this.turns = new Map(); // turnId -> Turn
     this.toolCalls = new Map(); // toolId -> ToolCall
     this.plans = new Map(); // planId -> Plan | PlanV2
-    this.artifacts = new Map(); // artifactId -> CsArtifact
     this.runLogBuilder = new RunLogBuilder(); // RunLog 数据层
     this._isGenerating = false;
     this._currentStreamSegment = null;
     this._messageVirtualizer?.unpin(turn.el); // 当前 turn 内最后一段 text stream
-    this._sidebar = null;
+    this._sessionPopover = null;
     this._scrollLocked = false; // 用户手动上滚后锁定自动滚
     this._inputAttachments = [];
     this._contextChips = null;
@@ -135,7 +133,7 @@ class ChatView {
       this.sessionTitleEl = document.getElementById("session-title");
       this.appContainer = document.getElementById("app-container");
 
-      this._initSidebar();
+      this._initSessionPopover();
       this._initHeader();
       this._initInput();
       this._initScrollWatcher();
@@ -153,37 +151,40 @@ class ChatView {
     }
   }
 
-  // ============ Sidebar ============
+  // ============ Session Popover (O5.2) ============
 
-  _initSidebar() {
-    this._sidebar = new Sidebar({
-      container: this.appContainer,
-      onNew: () => this.onNewSession(),
-      onSelect: (id) => this._switchSession(id),
+  _initSessionPopover() {
+    const anchor = document.getElementById("session-history-btn");
+    this._sessionPopover = new SessionPopover({
+      anchor,
+      onNew: () => {
+        this._sessionPopover?.close();
+        this.onNewSession();
+      },
+      onSelect: (id) => {
+        this._sessionPopover?.close();
+        this._switchSession(id);
+      },
       onRename: (id) => this._renameSession(id),
       onDelete: (id) => this._deleteSession(id),
     });
-    // 默认折叠
-    this.appContainer.classList.add("sidebar-collapsed");
-    this._sidebar.setCollapsed(true);
-    // v2.1: 与 sidebar 一致 — 首次安装默认折叠工件面板。
-    // 之前 CSS 默认 grid 是 260 1fr 360,会吃走 360px 屏幕宽度,而工
-    // 件后端目前没有调用点(addArtifact 在仓库中未被使用),空面板白
-    // 占地方。addArtifact() 会按需自动展开,无需手展开。
-    this.appContainer.classList.add("artifacts-collapsed");
+    // 不挂到容器,popover 自己 appendChild 到 body(absolute 定位)
   }
 
-  toggleSidebar() {
-    const isCollapsed = this.appContainer.classList.toggle("sidebar-collapsed");
-    this._sidebar?.setCollapsed(isCollapsed);
+  /**
+   * O5.2: 切换历史会话弹出框显示
+   * 取代原来的 toggleSidebar
+   */
+  openSessionHistory() {
+    this._sessionPopover?.toggle();
   }
 
   setSessions(sessions) {
-    this._sidebar?.setSessions(sessions);
+    this._sessionPopover?.setSessions(sessions);
   }
 
   setCurrentSession(id, name) {
-    this._sidebar?.setCurrent(id);
+    this._sessionPopover?.setCurrent(id);
     if (this.sessionTitleEl) {
       this.sessionTitleEl.textContent = name || "";
       this.sessionTitleEl.title = name || "";
@@ -193,30 +194,23 @@ class ChatView {
   // ============ Header ============
 
   _initHeader() {
+    // O5.2: sidebar-toggle-btn 改名为 session-history-btn
     document
-      .getElementById("sidebar-toggle-btn")
-      ?.addEventListener("click", () => this.toggleSidebar());
+      .getElementById("session-history-btn")
+      ?.addEventListener("click", () => this.openSessionHistory());
     document
       .getElementById("theme-toggle-btn")
       ?.addEventListener("click", () => this.toggleTheme());
     document
       .getElementById("thinking-toggle-btn")
       ?.addEventListener("click", () => this.toggleThinkingVisibility());
-    document
-      .getElementById("artifacts-toggle-btn")
-      ?.addEventListener("click", () => this.toggleArtifacts());
-    // 修复 v2.1:旧实现只给主区头部的 toggle 按钮绑了 click,
-    // 工件面板右上角的 X 按钮 (id=artifacts-close-btn) 完全没人监听 — 点 X 无反应。
-    // 这里给它挂同一个 toggle 行为,与 toggleArtifacts() 同源,状态保持一致。
+    // O5.3: artifacts-toggle-btn / artifacts-close-btn 已删除
     document
       .getElementById("new-session-btn")
       ?.addEventListener("click", () => this.onNewSession());
     document
       .getElementById("settings-btn")
       ?.addEventListener("click", () => this.showSettings());
-    document
-      .getElementById("artifacts-close-btn")
-      ?.addEventListener("click", () => this.toggleArtifacts());
   }
 
   _initAgentDashboard() {
@@ -259,9 +253,7 @@ class ChatView {
     bridge.send({ type: "set_show_thinking", enabled: !cur });
   }
 
-  toggleArtifacts() {
-    this.appContainer.classList.toggle("artifacts-collapsed");
-  }
+  // O5.3: toggleArtifacts 已删除(工件面板不再常驻)
 
   onNewSession() {
     bridge.send({ type: "new_session" });
@@ -302,6 +294,26 @@ class ChatView {
   setAvailableModels(groups) {
     const dropdown = document.getElementById("model-dropdown");
     if (!dropdown) return;
+    // O11: 无模型配置时显示引导空状态
+    if (!groups || groups.length === 0) {
+      dropdown.innerHTML = "";
+      const empty = new EmptyState({
+        icon: "fa-plug-circle-bolt",
+        title: "尚未配置模型",
+        description: "前往设置添加 AI Provider,开始你的第一次对话。",
+        variant: "empty",
+        actions: [
+          {
+            label: "打开设置",
+            icon: "fa-gear",
+            variant: "primary",
+            onClick: () => this.showSettings(),
+          },
+        ],
+      });
+      dropdown.appendChild(empty.el);
+      return;
+    }
     const html = [
       `
             <div class="model-search">
@@ -876,12 +888,10 @@ class ChatView {
       if (mod && e.key === "n") {
         e.preventDefault();
         this.onNewSession();
-      } else if (mod && e.key === "b") {
+      } else if (mod && e.shiftKey && (e.key === "L" || e.key === "l")) {
+        // O5.2: Cmd/Ctrl+Shift+L — 唤出历史会话弹出框
         e.preventDefault();
-        this.toggleSidebar();
-      } else if (mod && e.key === "i") {
-        e.preventDefault();
-        this.toggleArtifacts();
+        this.openSessionHistory();
       } else if (mod && e.key === "k") {
         e.preventDefault();
         window.CodeSage?.openCommandPalette?.();
@@ -968,8 +978,7 @@ class ChatView {
     this.turns.clear();
     this.toolCalls.clear();
     this.plans.clear();
-    for (const art of this.artifacts.values()) art.destroy();
-    this.artifacts.clear();
+    // O5.3: 工件面板已删除,无需清理 artifacts Map
     this._messageVirtualizer?.clear();
     this._contextChips?.clear();
     this.runLogBuilder = new RunLogBuilder();
@@ -1080,7 +1089,10 @@ class ChatView {
       content: null, // assistant-content 容器
       currentStreamSegment: null, // 当前 text stream span
       thinking: null,
+      // O5.1: 多轮推理卡片分离 — 改为数组 + 单一当前引用
+      modelReasonings: [],
       modelReasoning: null,
+      modelReasoningRound: 0,
       plans: new Map(),
       toolCalls: new Map(),
       timerInterval: null,
@@ -1335,68 +1347,67 @@ class ChatView {
       turnId,
       thinkingId: "thinking-" + turnId,
     });
-    if (!turn.thinking) {
-      turn.thinking = new StructuredThinking({});
-      // 插入到 content 内、cursor 之前
-      const cursor = turn.content.querySelector('[data-cs-role="cursor"]');
-      if (cursor) {
-        turn.content.insertBefore(turn.thinking.el, cursor);
-      } else {
-        turn.content.appendChild(turn.thinking.el);
-      }
-      // 推进 stream anchor 到 thinking 之后(后续 text 在 thinking 之后追加)
-      turn.currentStreamSegment = null;
-    }
+    // 2026-06: Thinking 事件是 Agent 框架状态消息,不再创建 UI 卡片,仅记录到 RunLog。
+    // 真实推理内容由 _onModelReasoning* 系列方法渲染。
   }
 
   _onThinkingUpdate(turnId, message) {
     const turn = this.turns.get(turnId);
-    if (!turn?.thinking) return;
+    if (!turn) return;
     this.runLogBuilder.processEvent({
       type: "thinking_update",
       turnId,
       thinkingId: "thinking-" + turnId,
       message,
     });
-    turn.thinking.appendContent(message);
   }
 
   _onThinkingComplete(turnId, elapsedMs) {
     const turn = this.turns.get(turnId);
-    if (!turn?.thinking) return;
+    if (!turn) return;
     this.runLogBuilder.processEvent({
       type: "thinking_complete",
       turnId,
       thinkingId: "thinking-" + turnId,
       elapsedMs,
     });
-    turn.thinking.complete(elapsedMs);
-    // 思考完成后,创建新的 stream segment(在 thinking 之后)
-    turn.currentStreamSegment = null;
-    this._ensureStreamSegment(turn);
+    // 2026-06: Thinking 不再渲染 UI 卡片,此处无需创建 stream segment。
   }
 
   _onModelReasoningStart(turnId) {
+    // O5.1: 兼容路径。新的多轮推理流走 _onModelReasoningRoundStart,
+    // 这里保留作为兜底:若后端只发了 model_reasoning_start(没有 round_start),
+    // 仍能创建一张卡片。
+    this._onModelReasoningRoundStart(turnId, ++(this.turns.get(turnId)?.modelReasoningRound || 1));
+  }
+
+  _onModelReasoningRoundStart(turnId, roundIndex) {
     const turn = this.turns.get(turnId);
     if (!turn) return;
     this.runLogBuilder.processEvent({
       type: "thinking_start",
       turnId,
-      thinkingId: "reasoning-" + turnId,
+      thinkingId: "reasoning-" + turnId + "-" + roundIndex,
     });
-    if (!turn.modelReasoning) {
-      turn.modelReasoning = new StructuredThinking({});
-      turn.modelReasoning.el.classList.add("model-reasoning");
-      // 插入到 content 内、cursor 之前
-      const cursor = turn.content.querySelector('[data-cs-role="cursor"]');
-      if (cursor) {
-        turn.content.insertBefore(turn.modelReasoning.el, cursor);
-      } else {
-        turn.content.appendChild(turn.modelReasoning.el);
-      }
-      // 推进 stream anchor 到 modelReasoning 之后
-      turn.currentStreamSegment = null;
+    // 若已有当前活跃推理卡片,先 complete 归档(以防上游漏发 complete)
+    if (turn.modelReasoning) {
+      turn.modelReasoning.complete(0);
+      turn.modelReasonings.push(turn.modelReasoning);
+      turn.modelReasoning = null;
     }
+    turn.modelReasoningRound = roundIndex;
+    const card = new StructuredThinking({});
+    card.el.classList.add("model-reasoning");
+    turn.modelReasoning = card;
+    // 插入到 content 内、cursor 之前
+    const cursor = turn.content.querySelector('[data-cs-role="cursor"]');
+    if (cursor) {
+      turn.content.insertBefore(card.el, cursor);
+    } else {
+      turn.content.appendChild(card.el);
+    }
+    // 推进 stream anchor 到 modelReasoning 之后
+    turn.currentStreamSegment = null;
   }
 
   _onModelReasoningDelta(turnId, delta) {
@@ -1417,10 +1428,13 @@ class ChatView {
     this.runLogBuilder.processEvent({
       type: "thinking_complete",
       turnId,
-      thinkingId: "reasoning-" + turnId,
+      thinkingId: "reasoning-" + turnId + "-" + (turn.modelReasoningRound || 0),
       elapsedMs,
     });
     turn.modelReasoning.complete(elapsedMs);
+    // O5.1: 归档当前卡片,清空引用,下一轮 RoundStart 时会创建新卡片
+    turn.modelReasonings.push(turn.modelReasoning);
+    turn.modelReasoning = null;
     // 推理完成后,创建新的 stream segment(在 modelReasoning 之后)
     turn.currentStreamSegment = null;
     this._ensureStreamSegment(turn);
@@ -1753,68 +1767,40 @@ class ChatView {
 
   // ============ Artifacts ============
 
-  addArtifact(id, title, language, content, options = {}) {
-    const list = document.getElementById("artifacts-list");
-    if (!list) return;
-    // 自动展开
-    this.appContainer.classList.remove("artifacts-collapsed");
-
-    let art = this.artifacts.get(id);
-    if (art) {
-      art.addVersion(content, {
-        versionNumber: options.version,
-        status: options.status,
-        timestamp: options.timestamp,
-      });
-      if (options.originalContent != null)
-        art.setOriginalContent(options.originalContent);
-      if (options.kind) art.setKind(options.kind);
-      return;
-    }
-
-    art = new CsArtifact({
-      id,
-      title,
-      language,
-      content,
-      originalContent: options.originalContent,
-      kind: options.kind,
-      onAction: (action) => {
-        if (action.type === "apply_artifact") {
-          bridge.send({
-            type: "apply_artifact",
-            artifactId: action.artifactId,
-            content: action.content,
-            version: action.version,
-          });
-        } else if (action.type === "reject_artifact") {
-          bridge.send({
-            type: "reject_artifact",
-            artifactId: action.artifactId,
-            content: action.content,
-            version: action.version,
-          });
-        }
-      },
-    });
-    art.mount(list);
-    this.artifacts.set(id, art);
+  // O5.3: 工件面板已删除,addArtifact / updateArtifact 不再创建 UI。
+  // 但 apply_artifact / reject_artifact bridge 协议保留 — T6 会在
+  // 代码块操作栏接入这两个 type,后端 JCEFChatPanel 解析逻辑不变。
+  addArtifact(_id, _title, _language, _content, _options = {}) {
+    /* no-op: 工件面板 UI 已删除,代码块操作栏 (T6) 承接此能力 */
   }
 
-  updateArtifact(id, patch) {
-    const art = this.artifacts.get(id);
-    if (!art) return;
-    if (patch.content != null) {
-      art.addVersion(patch.content, {
-        versionNumber: patch.version,
-        status: patch.status,
-        timestamp: patch.timestamp,
+  updateArtifact(_id, _patch) {
+    /* no-op: 工件面板 UI 已删除 */
+  }
+
+  /**
+   * O5.3 / T6 占位:从代码块操作栏触发的应用/拒绝操作走这里发出
+   * bridge 消息,字段名与 JCEFChatPanel.apply_artifact / reject_artifact
+   * 期望严格一致(见 JStoKotlinContractTest)。
+   *
+   * @param action "apply" | "reject"
+   */
+  emitArtifactAction(action, payload) {
+    if (action === "apply") {
+      bridge.send({
+        type: "apply_artifact",
+        artifactId: payload.artifactId,
+        content: payload.content,
+        version: payload.version,
+      });
+    } else if (action === "reject") {
+      bridge.send({
+        type: "reject_artifact",
+        artifactId: payload.artifactId,
+        content: payload.content,
+        version: payload.version,
       });
     }
-    if (patch.status != null) art.setStatus(patch.status);
-    if (patch.originalContent != null)
-      art.setOriginalContent(patch.originalContent);
-    if (patch.kind) art.setKind(patch.kind);
   }
 
   // ============ History / Sessions ============
@@ -1826,13 +1812,19 @@ class ChatView {
         this.addUserMessage(m.content, m.images || [], m.fileRefs || []);
       } else if (m.role === "assistant") {
         if (m.thinking) {
+          // 2026-06: Thinking 事件不再创建 UI 卡片,仅记录到 RunLog。
           this._startAITurn();
           const turn = Array.from(this.turns.values()).pop();
-          this._onThinkingStart(turn.id);
-          // 历史回放没有 thinking_update 流, _onThinkingComplete 之前
-          // content 还是空,展开后看不到正文。直接用历史正文 setContent。
-          turn.thinking.setContent(m.thinking);
-          this._onThinkingComplete(turn.id, m.thinkingDurationMs || 0);
+          if (turn) {
+            this._onThinkingStart(turn.id);
+            this.runLogBuilder.processEvent({
+              type: "thinking_update",
+              turnId: turn.id,
+              thinkingId: "thinking-" + turn.id,
+              message: m.thinking,
+            });
+            this._onThinkingComplete(turn.id, m.thinkingDurationMs || 0);
+          }
         }
         if (m.content) {
           const turn = Array.from(this.turns.values()).pop();

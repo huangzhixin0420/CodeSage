@@ -1,0 +1,169 @@
+/**
+ * Empty State v1.0 — 空状态 / 错误状态 样式 (O11)
+ * ==================================================
+ *
+ * 居中布局:大图标 + 标题 + 描述 + 提示 + 操作按钮 + 详情折叠
+ * 适配:empty(中性)、error(红色调)、loading(spin 旋转)
+ */
+
+.cs-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    text-align: center;
+    max-width: 480px;
+    margin: 0 auto;
+    color: var(--fg-secondary, #555);
+    animation: cs-empty-state-in 280ms var(--ease-out, ease-out);
+}
+
+@keyframes cs-empty-state-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.cs-empty-state-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: var(--radius-full, 50%);
+    background: var(--surface-sunken, rgba(0, 0, 0, 0.04));
+    color: var(--accent, #2563eb);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    margin-bottom: 16px;
+}
+
+.cs-empty-state-error .cs-empty-state-icon {
+    background: var(--error-soft, rgba(239, 68, 68, 0.12));
+    color: var(--error, #ef4444);
+}
+
+.cs-empty-state-error .cs-empty-state-title {
+    color: var(--error, #ef4444);
+}
+
+.cs-empty-state-title {
+    font-size: 18px;
+    font-weight: var(--weight-semibold, 600);
+    color: var(--fg-primary, #1a1a1a);
+    margin: 0 0 6px;
+}
+
+.cs-empty-state-description {
+    font-size: 13px;
+    color: var(--fg-tertiary, #888);
+    line-height: 1.5;
+    margin: 0 0 16px;
+}
+
+.cs-empty-state-hint {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--warning, #f59e0b);
+    background: rgba(245, 158, 11, 0.08);
+    padding: 6px 12px;
+    border-radius: var(--radius-md, 8px);
+    margin-bottom: 16px;
+}
+
+.cs-empty-state-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 8px;
+}
+
+.cs-empty-state-action {
+    border: 1px solid var(--border-default, rgba(0, 0, 0, 0.12));
+    background: var(--surface-raised, #fff);
+    color: var(--fg-primary, #1a1a1a);
+    padding: 6px 14px;
+    border-radius: var(--radius-md, 8px);
+    font-size: 13px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all var(--duration-base) var(--ease-out, ease-out);
+}
+
+.cs-empty-state-action:hover {
+    background: var(--surface-hover, rgba(0, 0, 0, 0.05));
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.06));
+}
+
+.cs-empty-state-action-primary {
+    background: var(--accent, #2563eb);
+    color: var(--fg-inverse, #fff);
+    border-color: var(--accent, #2563eb);
+}
+
+.cs-empty-state-action-primary:hover {
+    filter: brightness(1.1);
+}
+
+.cs-empty-state-action-danger {
+    background: var(--error-soft, rgba(239, 68, 68, 0.12));
+    color: var(--error, #ef4444);
+    border-color: var(--error, #ef4444);
+}
+
+.cs-empty-state-details {
+    margin-top: 12px;
+    width: 100%;
+    text-align: left;
+}
+
+.cs-empty-state-details > summary {
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--fg-tertiary, #888);
+    list-style: none;
+    user-select: none;
+}
+
+.cs-empty-state-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.cs-empty-state-details > summary::before {
+    content: "▶ ";
+    font-size: 9px;
+    margin-right: 2px;
+}
+
+.cs-empty-state-details[open] > summary::before {
+    content: "▼ ";
+}
+
+.cs-empty-state-details pre {
+    background: var(--code-bg);
+    color: var(--code-fg);
+    border-radius: var(--radius-sm, 4px);
+    padding: 8px 10px;
+    font-size: 11px;
+    margin-top: 4px;
+    max-height: 160px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Dark mode 微调 */
+[data-theme="dark"] .cs-empty-state-icon {
+    background: var(--surface-elevated, rgba(255, 255, 255, 0.06));
+}

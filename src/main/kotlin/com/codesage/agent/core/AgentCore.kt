@@ -608,6 +608,15 @@ open class AgentCore(
     }
 
     /**
+     * O5.2: 获取所有持久化会话(含 previewText 等元数据),供 SessionPopover 展示。
+     * 与 [getSessions] 不同:返回的是从磁盘加载的 [PersistedSession],包含消息历史与预览文本。
+     */
+    fun getAllPersistedSessions(): List<com.codesage.persistence.PersistedSession> {
+        return conversationPersistence.loadAllSessions()
+            .sortedByDescending { it.lastActivityAt }
+    }
+
+    /**
      * 获取当前会话
      */
     fun getCurrentSession(): AgentSession? {
@@ -1004,6 +1013,9 @@ open class AgentCore(
                 is AgentStreamEvent.ContextCompressed -> result.appendLine("[上下文压缩: ${event.originalTokens} → ${event.compressedTokens} tokens]")
                 is AgentStreamEvent.SessionMigrated -> result.appendLine("[会话迁移: ${event.oldSessionId} → ${event.newSessionId}]")
                 is AgentStreamEvent.ModeSuggestion -> result.appendLine("[ChatMode建议: ${event.effective} (userExplicit=${event.userExplicit})]")
+                is AgentStreamEvent.ModelReasoningRoundStart -> {
+                    // O5.1: 多轮推理起点,执行流日志忽略
+                }
                 AgentStreamEvent.Done -> {}
             }
         }

@@ -152,6 +152,9 @@ const STRINGS = {
         commandPalette: "命令面板",
         toggleThinking: "切换思考",
         switchModel: "切换模型",
+        // O5.2: 侧边栏改为弹出框,toggleSidebar 改名为 openSessionHistory
+        // 保留 toggleSidebar 翻译以防旧 JS 引用
+        openSessionHistory: "历史会话",
         toggleSidebar: "切换侧边栏",
         newSession: "新会话",
         recordPrompt: "按下新键...",
@@ -423,6 +426,7 @@ const STRINGS = {
         commandPalette: "Command palette",
         toggleThinking: "Toggle thinking",
         switchModel: "Switch model",
+        openSessionHistory: "Session history",
         toggleSidebar: "Toggle sidebar",
         newSession: "New session",
         recordPrompt: "Press a new key...",
