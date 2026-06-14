@@ -1,41 +1,34 @@
 /**
- * Layout v2.0
+ * Layout v2.1
  * =============
  *
- * 整体三栏结构 (可折叠):
- *   ┌──────────┬───────────────────────┬──────────────┐
- *   │ sidebar  │       main area       │  artifacts   │
- *   │  260px   │  (header + chat +     │   360px      │
- *   │  收起 0  │       input)          │  收起 0      │
- *   └──────────┴───────────────────────┴──────────────┘
+ * 整体单栏结构 (O5.2/O5.3 重构后):
+ *   ┌────────────────────────────────────────────┐
+ *   │              main area (全宽)               │
+ *   │  (header + chat + input)                    │
+ *   └────────────────────────────────────────────┘
  *
  * 设计要点:
- *   - 三栏均通过 CSS class 切换折叠态,默认 sidebar 折叠、artifacts 关闭
- *   - 折叠过渡用 width 动画 (260ms)
- *   - 主区域为 flex column,固定 header + 自适应 chat + 固定 input
+ *   - 历史会话走弹出框 (cs-session-popover),不再常驻
+ *   - 工件面板完全删除,代码块操作承接其能力
  *   - 消息流最大宽 760px 居中,超宽屏不破坏可读性
+ *   - 向后兼容:旧 JS 切换的 .sidebar-collapsed / .artifacts-collapsed class 仍按 1fr 处理,不破坏布局
  */
 
 .app-container {
     display: grid;
-    grid-template-columns: var(--sidebar-width) 1fr var(--artifacts-width);
+    grid-template-columns: 1fr;
     height: 100vh;
     width: 100vw;
     overflow: hidden;
     background: var(--surface-base);
-    transition: grid-template-columns var(--duration-slow) var(--ease-out);
 }
 
-.app-container.sidebar-collapsed {
-    grid-template-columns: 0 1fr var(--artifacts-width);
-}
-
-.app-container.artifacts-collapsed {
-    grid-template-columns: var(--sidebar-width) 1fr 0;
-}
-
+/* 向后兼容:旧 JS 还在切换 collapse class,这里保持单栏 */
+.app-container.sidebar-collapsed,
+.app-container.artifacts-collapsed,
 .app-container.sidebar-collapsed.artifacts-collapsed {
-    grid-template-columns: 0 1fr 0;
+    grid-template-columns: 1fr;
 }
 
 .main-area {

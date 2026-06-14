@@ -369,7 +369,8 @@ class ChatView {
 
   setModelLabel(model, provider) {
     const name = document.getElementById("model-name");
-    if (name) name.textContent = model || "—";
+    // 修复: model 为空时显示明确的中性占位(原 "—" 用户看不懂,"Loading…" 误导)
+    if (name) name.textContent = model || "选择模型";
     if (this.hintModel)
       this.hintModel.textContent = provider
         ? `${provider} · ${model}`
@@ -1378,7 +1379,11 @@ class ChatView {
     // O5.1: 兼容路径。新的多轮推理流走 _onModelReasoningRoundStart,
     // 这里保留作为兜底:若后端只发了 model_reasoning_start(没有 round_start),
     // 仍能创建一张卡片。
-    this._onModelReasoningRoundStart(turnId, ++(this.turns.get(turnId)?.modelReasoningRound || 1));
+    // 修复:不能对三元/取值为 rvalue 的表达式做 ++(语法错误),改成"读出 + 1 写回"。
+    const turn = this.turns.get(turnId);
+    const next = (turn?.modelReasoningRound || 0) + 1;
+    if (turn) turn.modelReasoningRound = next;
+    this._onModelReasoningRoundStart(turnId, next);
   }
 
   _onModelReasoningRoundStart(turnId, roundIndex) {
