@@ -94,9 +94,34 @@ sealed class AgentStreamEvent {
      * 若仅依赖 `model_reasoning_start`(由 EventConsumer 在首条 ModelReasoning
      * 时改写 type 得到),后续轮次推理将无法触发新卡片,所有内容会被并入第一个卡片。
      *
+     * 修正 2026-06:不在每轮循环开始无条件 emit — 仅当本轮真的产生
+     * [ModelReasoning] delta 时,由 [EnhancedAgentLoop] 在首条 delta 之前
+     * 懒发射。这样:
+     *   - 不支持 reasoning 的模型完全不会创建空卡片
+     *   - 同一 round 内只发一次(配合 roundReasoningStarted 标志)
+     *   - 必须配对 [ModelReasoningRoundEnd] 使用,前端才能正确 complete 卡片
+     *
      * @param roundIndex 从 1 开始的轮次编号(与 [EnhancedAgentLoop.turnNumber] 对齐)
      */
     data class ModelReasoningRoundStart(val roundIndex: Int) : AgentStreamEvent()
+
+    /**
+     * O5.1: 标记新一轮模型推理结束,与 [ModelReasoningRoundStart] 配对。
+     *
+     * 触发时机:在一次模型调用流中,最后一个 [ModelReasoning] delta 之后的
+     * 下一个 chunk(可能是文本/工具调用/流结束)。前端收到后,折叠/归档当前
+     * 推理卡片,推进 stream anchor。
+     *
+     * 之前 O5.1 实现里只发 [ModelReasoningRoundStart] 不发 end,导致:
+     *   - 单轮推理时由 EventConsumer.sendDoneExpansion 在 Done 时补发
+     *     `model_reasoning_complete` (elapsedMs=0),但只发一次
+     *   - 多轮推理时,第二轮起再也不会触发 Complete(per-turn firstModelReasoningSent
+     *     标志已置 true),卡片永远停留在 "思考中…" 状态
+     *
+     * 现在改为每个 round 都发,前端处理逻辑保持向后兼容(`model_reasoning_complete`
+     * 仍能 complete 当前 modelReasoning 引用)。
+     */
+    data class ModelReasoningRoundEnd(val roundIndex: Int) : AgentStreamEvent()
 
     /**
      * 发生错误

@@ -309,8 +309,23 @@ class EnhancedAgentLoop(
 
                         // 处理 done chunk：保存 usage 后返回
                         if (chunk.done) {
+                            // O5.1 修正:如果流结束时推理 round 仍未关闭(例如纯 reasoning
+                            // 流到 done 才结束),在此处补发 RoundEnd,避免卡片卡在"思考中…"
+                            if (roundReasoningStarted) {
+                                roundReasoningStarted = false
+                                emitEvent(AgentStreamEvent.ModelReasoningRoundEnd(turnNumber))
+                            }
                             responseUsage = chunk.usage
                             return@collect
+                        }
+
+                        // O5.1 修正:检测 reasoning round 边界
+                        //   判定:本 chunk 没有 reasoningDelta(无论有没有 delta / 工具调用)
+                        //   即表示"上一段 reasoning 结束了,接下来是文本/工具/其他"
+                        //   必须在处理 delta / 工具调用之前先关闭,前端据此折叠当前卡片
+                        if (roundReasoningStarted && chunk.reasoningDelta.isNullOrEmpty()) {
+                            roundReasoningStarted = false
+                            emitEvent(AgentStreamEvent.ModelReasoningRoundEnd(turnNumber))
                         }
 
                         // 文本增量：实时 emit
@@ -320,12 +335,13 @@ class EnhancedAgentLoop(
                         }
 
                         // 模型推理内容：实时 emit
-                        // O5.1 修复:每轮首条 reasoningDelta 之前先补发 ModelReasoningRoundStart,
-                        // 后续 delta 不再发 — 这样:
-                        //   - 不支持 reasoning 的模型完全不触发,无空卡片
-                        //   - 本轮无 reasoning 的也不发,无空卡片
-                        //   - 多轮推理(同 turn 内多次调用模型)各自有独立卡片
-                        // per-loop 局部状态保证同一 round 内只发一次
+                        // O5.1 修正(用户反馈 2026-06):推理开始/结束事件严格按内容边界
+                        //   - RoundStart 只在首次解析到 reasoningDelta 时懒发射
+                        //   - RoundEnd 在"上一段 reasoning 结束、下一个是其他内容"时发射
+                        //   - 这保证:
+                        //       1) 不支持 reasoning 的模型完全不发,前端无空卡片
+                        //       2) 多轮推理(同 turn 内多次调用模型)每轮都有独立卡片
+                        //       3) 卡片不会卡在"思考中…"状态(每轮都有匹配的 End)
                         if (!chunk.reasoningDelta.isNullOrEmpty()) {
                             if (!roundReasoningStarted) {
                                 roundReasoningStarted = true

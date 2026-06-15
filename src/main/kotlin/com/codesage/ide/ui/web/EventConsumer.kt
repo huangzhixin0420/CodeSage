@@ -370,6 +370,10 @@ class EventConsumer(
                 // O5.1: 多轮推理起点 — 纯状态事件,无需额外日志
             }
 
+            is AgentStreamEvent.ModelReasoningRoundEnd -> {
+                // O5.1: 多轮推理终点 — 纯状态事件,无需额外日志
+            }
+
             is AgentStreamEvent.TextDelta,
             is AgentStreamEvent.Thinking,
             is AgentStreamEvent.ModelReasoning,

@@ -107,6 +107,11 @@ function handleBridgeMessage(msg) {
       case "model_reasoning_round_start":
         chat._onModelReasoningRoundStart(turnId, msg.roundIndex || 0);
         break;
+      // O5.1: 多轮推理卡片分离 — 每轮推理内容结束时折叠当前卡片
+      // 行为等价于 model_reasoning_complete,共享 handler
+      case "model_reasoning_round_end":
+        chat._onModelReasoningComplete(turnId, msg.elapsedMs || 0);
+        break;
       case "tool_call_start":
         chat._onToolCallStart(
           turnId,

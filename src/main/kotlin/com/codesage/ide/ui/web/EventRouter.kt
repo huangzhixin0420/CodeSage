@@ -77,6 +77,14 @@ class EventRouter {
                 "roundIndex" to e.roundIndex,
             )
         }
+        // O5.1: 多轮推理卡片分离 — 推理内容结束后发 end
+        register<AgentStreamEvent.ModelReasoningRoundEnd> { e, turnId ->
+            mapOf(
+                "type" to "model_reasoning_round_end",
+                "turnId" to turnId,
+                "roundIndex" to e.roundIndex,
+            )
+        }
 
         // === 工具调用 ===
         register<AgentStreamEvent.ToolCallStart> { e, turnId ->

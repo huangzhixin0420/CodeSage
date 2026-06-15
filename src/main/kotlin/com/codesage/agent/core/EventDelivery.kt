@@ -27,8 +27,10 @@ val AgentStreamEvent.delivery: EventDelivery
         is AgentStreamEvent.Thinking -> EventDelivery.Coalescable
         is AgentStreamEvent.ToolCallDelta -> EventDelivery.Coalescable
         is AgentStreamEvent.CommandOutputStream -> EventDelivery.Coalescable
-        // O5.1: 多轮推理起点 — 显式 Terminal 标注,确保不被 buffer 合并,前端能及时切卡
+        // O5.1: 多轮推理起点 / 终点 — 显式 Terminal 标注,确保不被 buffer 合并,
+        // 前端能及时切卡 / 折叠。RoundEnd 与 RoundStart 必须等序送达,合并会破坏时序。
         is AgentStreamEvent.ModelReasoningRoundStart -> EventDelivery.Terminal
+        is AgentStreamEvent.ModelReasoningRoundEnd -> EventDelivery.Terminal
         // 其余全部 Terminal:状态变更类,精确送达
         else -> EventDelivery.Terminal
     }
@@ -47,8 +49,9 @@ val AgentStreamEvent.coalesceKey: String?
         is AgentStreamEvent.Thinking -> "thinking"
         is AgentStreamEvent.ToolCallDelta -> "tool_delta/${this.toolCallId}"
         is AgentStreamEvent.CommandOutputStream -> "command_output/${this.toolCallId}"
-        // O5.1: 走 Terminal,不参与合并(null)
+        // O5.1: RoundStart / RoundEnd 都走 Terminal,不参与合并(null)
         is AgentStreamEvent.ModelReasoningRoundStart -> null
+        is AgentStreamEvent.ModelReasoningRoundEnd -> null
         else -> null
     }
 

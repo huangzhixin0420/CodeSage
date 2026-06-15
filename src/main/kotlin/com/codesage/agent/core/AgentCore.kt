@@ -1016,6 +1016,9 @@ open class AgentCore(
                 is AgentStreamEvent.ModelReasoningRoundStart -> {
                     // O5.1: 多轮推理起点,执行流日志忽略
                 }
+                is AgentStreamEvent.ModelReasoningRoundEnd -> {
+                    // O5.1: 多轮推理终点,执行流日志忽略
+                }
                 AgentStreamEvent.Done -> {}
             }
         }

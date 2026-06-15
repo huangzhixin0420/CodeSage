@@ -809,8 +809,14 @@ class EnhancedAgentLoopTest {
 
         val roundStarts = events.filterIsInstance<AgentStreamEvent.ModelReasoningRoundStart>()
         val reasonings = events.filterIsInstance<AgentStreamEvent.ModelReasoning>()
+        val roundEnds = events.filterIsInstance<AgentStreamEvent.ModelReasoningRoundEnd>()
         assertEquals(1, roundStarts.size, "Lazy emit: exactly 1 RoundStart when reasoning present, got ${'$'}{roundStarts.size}")
         assertEquals(2, reasonings.size, "Both reasoning chunks should be emitted")
+        // 修正 2026-06:每段 reasoning 都必须配对 1 个 RoundEnd
+        //   流序列:reasoning("step1 ") → reasoning("step2 ") → text("Answer") → done
+        //   RoundEnd 在 "Answer" chunk(无 reasoningDelta)处触发 1 次
+        assertEquals(1, roundEnds.size, "Each reasoning segment must be paired with a RoundEnd, got ${'$'}{roundEnds.size}")
+        assertEquals(roundStarts.size, roundEnds.size, "RoundStart count must equal RoundEnd count")
     }
 
     @Test
@@ -841,8 +847,11 @@ class EnhancedAgentLoopTest {
 
         val roundStarts = events.filterIsInstance<AgentStreamEvent.ModelReasoningRoundStart>()
         val reasonings = events.filterIsInstance<AgentStreamEvent.ModelReasoning>()
+        val roundEnds = events.filterIsInstance<AgentStreamEvent.ModelReasoningRoundEnd>()
         assertEquals(0, roundStarts.size, "No RoundStart when no reasoning, got ${'$'}{roundStarts.size}")
         assertEquals(0, reasonings.size, "No ModelReasoning chunks either")
+        // 没有 reasoning → 也不需要 RoundEnd
+        assertEquals(0, roundEnds.size, "No RoundEnd when no reasoning, got ${'$'}{roundEnds.size}")
         // 确认有 TextDelta(基础流式工作正常)
         assertTrue(events.any { it is AgentStreamEvent.TextDelta }, "Should still emit text")
     }
@@ -892,8 +901,17 @@ class EnhancedAgentLoopTest {
         // 由于工具调用可能不一定会真正发生(测试用的是 createFakeToolExecutor 默认 noop),
         // 我们只断言:凡是产生了 reasoning 的轮次,RoundStart 计数 == reasoning 出现次数
         val reasonings = events.filterIsInstance<AgentStreamEvent.ModelReasoning>()
+        val roundEnds = events.filterIsInstance<AgentStreamEvent.ModelReasoningRoundEnd>()
         assertEquals(reasonings.size, roundStarts.size,
             "RoundStart count must equal reasoning chunk count (one start per round)")
+        // 修正 2026-06:每个 reasoning round 必须配对 1 个 RoundEnd
+        // 之前 EventConsumer.sendDoneExpansion 只在每 turn 第一次 complete 时补发,
+        // 多轮推理第二轮起 Complete 永远不发,卡片卡在"思考中…"。现在每个 round
+        // 在内容边界(下个 chunk reasoningDelta 转空)或 done 时都发 End。
+        assertEquals(reasonings.size, roundEnds.size,
+            "RoundEnd count must equal reasoning chunk count (one end per round)")
+        assertEquals(roundStarts.size, roundEnds.size,
+            "RoundStart count must equal RoundEnd count (paired events)")
         // 至少要看到 1 个 RoundStart(第一轮就发出了 reasoning)
         assertTrue(roundStarts.isNotEmpty(), "Expected at least 1 RoundStart")
     }
