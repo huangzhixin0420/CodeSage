@@ -275,8 +275,9 @@ class EnhancedAgentLoop(
                     parallelToolCalls = if (tools != null) true else null
                 )
 
-                // O5.1: 标记新一轮模型推理开始,前端据此创建独立 StructuredThinking 卡片
-                emitEvent(AgentStreamEvent.ModelReasoningRoundStart(turnNumber))
+                // O5.1: 不再无条件 emit ModelReasoningRoundStart — 否则不支持 reasoning
+                // 的模型(或本轮没产生 reasoning)也会触发前端创建空卡片。
+                // 改为"懒发射":在收到第一条 reasoningDelta 时再补发(见下方)。
                 emitEvent(AgentStreamEvent.Thinking("思考中... (turn $turnNumber)"))
 
                 // === 详细请求日志 ===
@@ -285,6 +286,9 @@ class EnhancedAgentLoop(
                 logger.debug("[Turn $turnNumber] Tools list: ${toolRegistry.getAllTools().map { it.name }}")
 
                 // 流式请求：实时收集文本和工具调用增量
+                // O5.1: 标记"本轮是否已经补发过 RoundStart",在每轮循环开始时重置
+                var roundReasoningStarted = false
+
                 val result = try {
                     var assistantContent = ""
                     val streamingToolCalls = mutableMapOf<Int, StreamingToolCallBuilder>()
@@ -316,7 +320,17 @@ class EnhancedAgentLoop(
                         }
 
                         // 模型推理内容：实时 emit
+                        // O5.1 修复:每轮首条 reasoningDelta 之前先补发 ModelReasoningRoundStart,
+                        // 后续 delta 不再发 — 这样:
+                        //   - 不支持 reasoning 的模型完全不触发,无空卡片
+                        //   - 本轮无 reasoning 的也不发,无空卡片
+                        //   - 多轮推理(同 turn 内多次调用模型)各自有独立卡片
+                        // per-loop 局部状态保证同一 round 内只发一次
                         if (!chunk.reasoningDelta.isNullOrEmpty()) {
+                            if (!roundReasoningStarted) {
+                                roundReasoningStarted = true
+                                emitEvent(AgentStreamEvent.ModelReasoningRoundStart(turnNumber))
+                            }
                             emitEvent(AgentStreamEvent.ModelReasoning(chunk.reasoningDelta))
                         }
 

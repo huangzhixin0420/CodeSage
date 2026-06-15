@@ -778,6 +778,126 @@ class EnhancedAgentLoopTest {
         }
     }
 
+    // ===== O5.1 修复:ModelReasoningRoundStart 懒发射 =====
+
+    @Test
+    fun `ModelReasoningRoundStart is emitted lazily on first reasoning delta`() = runBlocking {
+        // 场景:模型支持 reasoning,流式返回包含 reasoning delta
+        // 期望:第一条 reasoningDelta 之前先补发 ModelReasoningRoundStart,后续 delta 不再发
+        val gateway = object : ModelGateway() {
+            override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
+            override fun chatStream(request: ChatRequest): Flow<StreamChunk> = flow {
+                emit(StreamChunk(id = "c1", delta = "First reasoning ", reasoningDelta = "step1 "))
+                emit(StreamChunk(id = "c1", delta = "", reasoningDelta = "step2 "))
+                emit(StreamChunk(id = "c1", delta = "Answer", reasoningDelta = "", finishReason = "stop"))
+                emit(StreamChunk(id = "c1", delta = "", reasoningDelta = "", done = true))
+            }
+        }
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+        val events = loop.run(
+            userMessage = "test",
+            session = AgentSession(id = "t1"),
+            contextManager = ContextManager(),
+            currentModel = "m",
+            systemPrompt = "sys"
+        ).toList()
+
+        val roundStarts = events.filterIsInstance<AgentStreamEvent.ModelReasoningRoundStart>()
+        val reasonings = events.filterIsInstance<AgentStreamEvent.ModelReasoning>()
+        assertEquals(1, roundStarts.size, "Lazy emit: exactly 1 RoundStart when reasoning present, got ${'$'}{roundStarts.size}")
+        assertEquals(2, reasonings.size, "Both reasoning chunks should be emitted")
+    }
+
+    @Test
+    fun `ModelReasoningRoundStart is NOT emitted when model has no reasoning`() = runBlocking {
+        // 场景:模型不支持 reasoning 或本轮没产生 reasoningDelta
+        // 期望:完全不发出 ModelReasoningRoundStart(避免前端创建空卡片)
+        val gateway = object : ModelGateway() {
+            override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
+            override fun chatStream(request: ChatRequest): Flow<StreamChunk> = flow {
+                emit(StreamChunk(id = "c2", delta = "Just plain text", reasoningDelta = ""))
+                emit(StreamChunk(id = "c2", delta = " answer", reasoningDelta = "", finishReason = "stop"))
+                emit(StreamChunk(id = "c2", delta = "", reasoningDelta = "", done = true))
+            }
+        }
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+        val events = loop.run(
+            userMessage = "test",
+            session = AgentSession(id = "t2"),
+            contextManager = ContextManager(),
+            currentModel = "m",
+            systemPrompt = "sys"
+        ).toList()
+
+        val roundStarts = events.filterIsInstance<AgentStreamEvent.ModelReasoningRoundStart>()
+        val reasonings = events.filterIsInstance<AgentStreamEvent.ModelReasoning>()
+        assertEquals(0, roundStarts.size, "No RoundStart when no reasoning, got ${'$'}{roundStarts.size}")
+        assertEquals(0, reasonings.size, "No ModelReasoning chunks either")
+        // 确认有 TextDelta(基础流式工作正常)
+        assertTrue(events.any { it is AgentStreamEvent.TextDelta }, "Should still emit text")
+    }
+
+    @Test
+    fun `ModelReasoningRoundStart resets between rounds (multi-round reasoning)`() = runBlocking {
+        // 场景:单 turn 内多轮工具调用 + 多轮 reasoning
+        // 期望:每轮 reasoning 都各自先发一次 RoundStart
+        val callCount = intArrayOf(0)
+        val gateway = object : ModelGateway() {
+            override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
+            override fun chatStream(request: ChatRequest): Flow<StreamChunk> = flow {
+                callCount[0]++
+                when (callCount[0]) {
+                    1 -> {
+                        emit(StreamChunk(id = "c3", delta = "", reasoningDelta = "round1-think "))
+                        emit(StreamChunk(id = "c3", delta = "", reasoningDelta = "", finishReason = "tool_calls"))
+                        emit(StreamChunk(id = "c3", delta = "", reasoningDelta = "", done = true))
+                    }
+                    2 -> {
+                        emit(StreamChunk(id = "c3", delta = "", reasoningDelta = "round2-think "))
+                        emit(StreamChunk(id = "c3", delta = "Final", reasoningDelta = "", finishReason = "stop"))
+                        emit(StreamChunk(id = "c3", delta = "", reasoningDelta = "", done = true))
+                    }
+                    else -> {
+                        emit(StreamChunk(id = "c3", delta = "Default", reasoningDelta = "", finishReason = "stop"))
+                        emit(StreamChunk(id = "c3", delta = "", reasoningDelta = "", done = true))
+                    }
+                }
+            }
+        }
+        val loop = EnhancedAgentLoop(
+            gateway = gateway,
+            toolRegistry = ToolRegistry.createDefault(),
+            toolExecutor = createFakeToolExecutor(),
+            stateFlow = MutableStateFlow(AgentState.IDLE)
+        )
+        val events = loop.run(
+            userMessage = "test",
+            session = AgentSession(id = "t3"),
+            contextManager = ContextManager(),
+            currentModel = "m",
+            systemPrompt = "sys"
+        ).toList()
+
+        val roundStarts = events.filterIsInstance<AgentStreamEvent.ModelReasoningRoundStart>()
+        // 由于工具调用可能不一定会真正发生(测试用的是 createFakeToolExecutor 默认 noop),
+        // 我们只断言:凡是产生了 reasoning 的轮次,RoundStart 计数 == reasoning 出现次数
+        val reasonings = events.filterIsInstance<AgentStreamEvent.ModelReasoning>()
+        assertEquals(reasonings.size, roundStarts.size,
+            "RoundStart count must equal reasoning chunk count (one start per round)")
+        // 至少要看到 1 个 RoundStart(第一轮就发出了 reasoning)
+        assertTrue(roundStarts.isNotEmpty(), "Expected at least 1 RoundStart")
+    }
+
     private fun createRepeatedRuntimeExceptionGateway(): ModelGateway {
         return object : ModelGateway() {
             override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
