@@ -134,6 +134,8 @@ abstract class OpenAICompatibleAdapter(
 
         val jsonStr = chunk.removePrefix("data:").trim()
         if (jsonStr == "[DONE]") {
+            // 关键日志:done sentinel 一定打印,排查 "STREAM END 不触发" 类问题
+            logger.info("[$providerName] DONE SENTINEL received")
             return StreamChunk(id = "", delta = "", done = true)
         }
 

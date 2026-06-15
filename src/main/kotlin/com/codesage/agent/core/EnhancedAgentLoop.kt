@@ -309,6 +309,8 @@ class EnhancedAgentLoop(
 
                         // 处理 done chunk：保存 usage 后返回
                         if (chunk.done) {
+                            // 关键日志:进入 done 分支(高频确认,排查 STREAM END 缺失)
+                            logger.info("[Turn ${'$'}turnNumber] DONE branch entered, content.len=${'$'}{assistantContent.length}")
                             // O5.1 修正:如果流结束时推理 round 仍未关闭(例如纯 reasoning
                             // 流到 done 才结束),在此处补发 RoundEnd,避免卡片卡在"思考中…"
                             if (roundReasoningStarted) {
