@@ -58,7 +58,7 @@ window.addEventListener("unhandledrejection", (e) => {
 //   start_turn / end_turn
 //   text_delta
 //   thinking_start / thinking_update / thinking_complete
-//   model_reasoning_start / model_reasoning_delta / model_reasoning_complete
+//   model_reasoning_delta / model_reasoning_round_start / model_reasoning_round_end
 //   tool_call_start / tool_call_delta / tool_call_complete / tool_call_error
 //   command_output_delta
 //   plan_generated / plan_approved / plan_rejected / plan_modified
@@ -94,14 +94,8 @@ function handleBridgeMessage(msg) {
       case "thinking_complete":
         chat._onThinkingComplete(turnId, msg.elapsedMs || 0);
         break;
-      case "model_reasoning_start":
-        chat._onModelReasoningStart(turnId);
-        break;
       case "model_reasoning_delta":
         chat._onModelReasoningDelta(turnId, msg.delta || "");
-        break;
-      case "model_reasoning_complete":
-        chat._onModelReasoningComplete(turnId, msg.elapsedMs || 0);
         break;
       // O5.1: 多轮推理卡片分离 — 每轮开始时创建新卡片
       case "model_reasoning_round_start":

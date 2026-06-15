@@ -197,20 +197,14 @@ class EventConsumer(
      */
     private fun sendDoneExpansion(turnId: String, state: TurnState) {
         val thinkingMsg = mapOf<String, Any?>("type" to "thinking_complete", "turnId" to turnId, "elapsedMs" to 0)
-        val modelReasoningMsg =
-            mapOf<String, Any?>("type" to "model_reasoning_complete", "turnId" to turnId, "elapsedMs" to 0)
         val turnMsg = mapOf<String, Any?>("type" to "turn_complete", "turnId" to turnId)
         try {
             sendToJS(thinkingMsg)
             state.metrics.delivered++
-            if (state.firstModelReasoningSent) {
-                sendToJS(modelReasoningMsg)
-                state.metrics.delivered++
-            }
             sendToJS(turnMsg)
             state.metrics.delivered++
             if (logger.isDebugEnabled) {
-                logger.debug("[EventConsumer] Done expanded: thinking_complete + model_reasoning_complete + turn_complete, turnId=$turnId")
+                logger.debug("[EventConsumer] Done expanded: thinking_complete + turn_complete, turnId=$turnId")
             }
         } catch (e: Throwable) {
             logger.warn("[EventConsumer] sendToJS threw during Done expansion: turnId=$turnId", e)
@@ -249,14 +243,13 @@ class EventConsumer(
                     }
                 }
 
-                is AgentStreamEvent.ModelReasoning -> {
-                    if (!state.firstModelReasoningSent) {
-                        state.firstModelReasoningSent = true
-                        rawMsg.toMutableMap().apply { this["type"] = "model_reasoning_start" }
-                    } else {
-                        rawMsg
-                    }
-                }
+                // 修正 2026-06:O5.1 之后,ModelReasoning 全部路由为 model_reasoning_delta。
+                //   不再在首条 ModelReasoning 上重写 type 为 model_reasoning_start。
+                //   卡片创建由 ModelReasoningRoundStart 事件(model_reasoning_round_start)
+                //   单独驱动,首条 ModelReasoning 只是首个 delta,不再触发旧"创建卡片"路径。
+                //   否则会出现:round_start 先建空卡 → 旧 start 重命名又建空卡 →
+                //   round_end 折叠第二张 → 留下第一张空 "已思考" 卡片。
+                is AgentStreamEvent.ModelReasoning -> rawMsg
 
                 else -> rawMsg
             }
@@ -404,11 +397,9 @@ class EventConsumer(
          */
         var firstThinkingSent: Boolean = false
 
-        /**
-         * ModelReasoning 事件首/续状态 — per-turn 隔离。
-         * 首次 ModelReasoning 路由为 "model_reasoning_start",后续为 "model_reasoning_delta"。
-         */
-        var firstModelReasoningSent: Boolean = false
+        // 修正 2026-06:不再使用 firstModelReasoningSent 标志做 type 改写。
+        // 卡片生命周期由 ModelReasoningRoundStart / ModelReasoningRoundEnd 事件严格驱动,
+        // ModelReasoning delta 事件保持单一 type=model_reasoning_delta。
     }
 }
 

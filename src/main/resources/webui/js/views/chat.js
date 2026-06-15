@@ -1375,15 +1375,16 @@ class ChatView {
     // 2026-06: Thinking 不再渲染 UI 卡片,此处无需创建 stream segment。
   }
 
-  _onModelReasoningStart(turnId) {
-    // O5.1: 兼容路径。新的多轮推理流走 _onModelReasoningRoundStart,
-    // 这里保留作为兜底:若后端只发了 model_reasoning_start(没有 round_start),
-    // 仍能创建一张卡片。
-    // 修复:不能对三元/取值为 rvalue 的表达式做 ++(语法错误),改成"读出 + 1 写回"。
-    const turn = this.turns.get(turnId);
-    const next = (turn?.modelReasoningRound || 0) + 1;
-    if (turn) turn.modelReasoningRound = next;
-    this._onModelReasoningRoundStart(turnId, next);
+  _onModelReasoningStart(_turnId) {
+    // 修正 2026-06:已废弃。卡片创建由 _onModelReasoningRoundStart 单独驱动。
+    // 历史:此 handler 之前是"首条 ModelReasoning delta 重命名为 model_reasoning_start"路径,
+    //     作用是兜底建卡。但与新 model_reasoning_round_start 共存时,会出现:
+    //       1) round_start 建空卡 A
+    //       2) start 路径又调 _onModelReasoningRoundStart(round=N+1),看到 A 非空,完成 A 推到数组
+    //       3) 后续 delta 进入 round N+1 的新卡
+    //       4) 留下空"已思考 0.0s"卡 A(用户报告的 bug)
+    // 后端已停止重命名 type,主.js 也不再路由 model_reasoning_start。
+    // 此处保留空方法仅为防御:若旧后端意外发来,不创建新卡片(让 round_start 负责)。
   }
 
   _onModelReasoningRoundStart(turnId, roundIndex) {

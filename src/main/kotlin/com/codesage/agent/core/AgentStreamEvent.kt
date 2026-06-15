@@ -101,6 +101,11 @@ sealed class AgentStreamEvent {
      *   - 同一 round 内只发一次(配合 roundReasoningStarted 标志)
      *   - 必须配对 [ModelReasoningRoundEnd] 使用,前端才能正确 complete 卡片
      *
+     * 前端契约:收到本事件时创建空 [StructuredThinking] 卡片并设为 turn.modelReasoning;
+     * 收到 [ModelReasoning] delta 时调用 card.appendContent(delta);
+     * 收到 [ModelReasoningRoundEnd] 时调用 card.complete(elapsedMs) 并归档。
+     * 严格按此配对,卡片一定有内容。
+     *
      * @param roundIndex 从 1 开始的轮次编号(与 [EnhancedAgentLoop.turnNumber] 对齐)
      */
     data class ModelReasoningRoundStart(val roundIndex: Int) : AgentStreamEvent()

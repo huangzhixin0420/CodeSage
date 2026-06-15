@@ -226,6 +226,67 @@ class EventConsumerTest {
         assertEquals(1, callbackCount)
     }
 
+    // ===== 修正 2026-06:首条 ModelReasoning 不再重命名为 model_reasoning_start =====
+
+    @Test
+    fun `coalesce -- first ModelReasoning of turn is model_reasoning_delta, NOT model_reasoning_start`() = runBlocking {
+        // 修正 2026-06:O5.1 之后,卡片创建由 ModelReasoningRoundStart 事件单独驱动。
+        // 首条 ModelReasoning 不再重命名 type — 旧"model_reasoning_start"路径会导致
+        // 双重建卡(round_start 建一张,旧 start 路径又建一张),留下空"已思考"卡。
+        val consumer = newConsumer()
+        val flow = flowOf(
+            AgentStreamEvent.ModelReasoning(delta = "think part 1 "),
+            // 立即跟一个 Terminal 强制 flush
+            AgentStreamEvent.ModelReasoningRoundStart(roundIndex = 1),
+            AgentStreamEvent.ModelReasoning(delta = "think part 2 "),
+            AgentStreamEvent.ModelReasoningRoundEnd(roundIndex = 1),
+            AgentStreamEvent.Done,
+        )
+
+        consumer.consumeTurn(flow, turnId = "t1")
+
+        val reasonings = delivered.filter {
+            it["type"] == "model_reasoning_delta" || it["type"] == "model_reasoning_start"
+        }
+        // 2 条 ModelReasoning 都应是 model_reasoning_delta,不应有 model_reasoning_start
+        assertEquals(2, reasonings.size, "Both ModelReasoning events should be delivered as delta, got ${reasonings.size}")
+        assertTrue(reasonings.all { it["type"] == "model_reasoning_delta" },
+            "No legacy model_reasoning_start should be emitted, got types: ${reasonings.map { it["type"] }}")
+
+        // 同时 round_start / round_end 正常发出
+        val roundStart = delivered.find { it["type"] == "model_reasoning_round_start" }
+        val roundEnd = delivered.find { it["type"] == "model_reasoning_round_end" }
+        assertNotNull(roundStart, "RoundStart should still be delivered")
+        assertNotNull(roundEnd, "RoundEnd should still be delivered")
+
+        // Done 展开不再含 model_reasoning_complete
+        val complete = delivered.find { it["type"] == "model_reasoning_complete" }
+        assertNull(complete, "Done expansion should NOT emit model_reasoning_complete (replaced by round_end)")
+    }
+
+    @Test
+    fun `done expansion -- no model_reasoning_complete emitted even when ModelReasoning was present`() = runBlocking {
+        // 边界:即使 turn 内有 ModelReasoning delta,Done 展开也只发 thinking_complete + turn_complete,
+        // 卡片归档由 model_reasoning_round_end 负责。
+        val consumer = newConsumer()
+        val flow = flowOf(
+            AgentStreamEvent.ModelReasoningRoundStart(roundIndex = 1),
+            AgentStreamEvent.ModelReasoning(delta = "some reasoning"),
+            AgentStreamEvent.ModelReasoningRoundEnd(roundIndex = 1),
+            AgentStreamEvent.Done,
+        )
+
+        consumer.consumeTurn(flow, turnId = "t1")
+
+        val types = delivered.map { it["type"] }
+        assertFalse(types.contains("model_reasoning_complete"),
+            "Done expansion should not emit model_reasoning_complete, got types: ${types}")
+        // Done 展开固定两条:thinking_complete + turn_complete
+        val doneExpansion = types.takeLast(2)
+        assertEquals(listOf("thinking_complete", "turn_complete"), doneExpansion,
+            "Done expansion order must be preserved, got: ${doneExpansion}")
+    }
+
     // ===== Coalescable 行为 =====
 
     @Test
