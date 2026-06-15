@@ -199,6 +199,8 @@ open class ModelGateway(
         var bytesRead = 0L
         var lastUsage: Usage? = null
         var lastFinishReason: String? = null
+        // 关键日志:跟踪最后 emit 的 chunk 的 done 状态,用于在 SSE 关闭但无 [DONE] 时补发
+        var lastChunkDone: Boolean = false
 
         try {
             // 重置 adapter 跨 turn 流式状态(<think> 状态机 + 累积 buffer)
@@ -247,6 +249,7 @@ open class ModelGateway(
                                 chunkCount++
                                 if (chunk.usage != null) lastUsage = chunk.usage
                                 if (chunk.finishReason != null) lastFinishReason = chunk.finishReason
+                                lastChunkDone = chunk.done
                                 emit(chunk)
                                 if (chunk.done) break
                             } else {
@@ -262,6 +265,19 @@ open class ModelGateway(
                         // 兜底：如果整个响应体没有 emit 任何 chunk，至少 emit done
                         if (!emittedAnyChunk) {
                             emit(StreamChunk(id = "", delta = "", done = true, usage = null))
+                        } else if (!lastChunkDone) {
+                            // 关键日志:某些 OpenAI 兼容 provider(MiniMax-M3 等)不发送
+                            // `[DONE]` sentinel,而是直接关闭 SSE 连接。在这种场景下,
+                            // SSE 循环自然结束但最后一个数据 chunk 的 done=false,
+                            // EnhancedAgentLoop 永远看不到 done=true → STREAM END 不打印、
+                            // reasoning 状态卡死、UI 卡片可能残留。
+                            // 修复:循环结束后,如果发出过 chunk 且最后一个 chunk 的 done=false,
+                            // 兜底 emit 一个 done=true 的终态 chunk。
+                            logger.info(
+                                "[Gateway.chatStream] SSE closed without [DONE], " +
+                                "emitting synthetic done=true for ${'$'}{request.model}"
+                            )
+                            emit(StreamChunk(id = "", delta = "", done = true, usage = lastUsage))
                         }
                     }
                 }
