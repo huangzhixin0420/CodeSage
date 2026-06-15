@@ -60,9 +60,11 @@ export class StructuredThinking {
 
     // 渲染纯文本:escape + 把换行变 <br>。不解析 markdown / 不提取 <think> 标签 —
     // 后端 ModelReasoning 已是纯推理片段,前端只负责"原样展示"。
+    // 修复 2026-06:content 为空时 body 也保持空(不显示"暂无内容"占位符)。
+    // 如果 complete() 时 content 仍为空,调用方负责通过 isEmpty() 判定后销毁卡片。
     const bodyHtml = this.content
       ? `<div class="thinking-raw"><pre>${escapeHtml(this.content)}</pre></div>`
-      : `<div class="thinking-raw thinking-raw-empty"><pre>（暂无内容）</pre></div>`;
+      : "";
 
     this.el.innerHTML = `
       <div class="thinking-header" data-cs-role="header" role="button" tabindex="0" aria-expanded="false">
@@ -111,6 +113,14 @@ export class StructuredThinking {
    */
   setMode(_mode) {
     /* no-op: 2026-06 简化为单一展示模式 */
+  }
+
+  /**
+   * 是否整张卡片没有任何内容(从未收到过 appendContent 或 setContent)。
+   * 调用方在 complete() 后可据此销毁卡片,避免空"暂无内容"占位卡。
+   */
+  isEmpty() {
+    return !this.content;
   }
 
   complete(elapsedMs) {

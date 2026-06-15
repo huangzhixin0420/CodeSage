@@ -427,11 +427,6 @@
     border: none;
 }
 
-.thinking-raw-empty > pre {
-    color: var(--fg-tertiary);
-    font-style: italic;
-}
-
 .thinking-body.open .thinking-raw {
     padding: var(--space-2) var(--space-3) var(--space-3);
     opacity: 1;

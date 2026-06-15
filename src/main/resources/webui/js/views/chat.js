@@ -1394,11 +1394,17 @@ class ChatView {
       turnId,
       thinkingId: "reasoning-" + turnId + "-" + roundIndex,
     });
-    // 若已有当前活跃推理卡片,先 complete 归档(以防上游漏发 complete)
+    // 若已有当前活跃推理卡片,先归档(以防上游漏发 complete)
+    // 修复 2026-06:空卡片直接销毁,不再推送进 modelReasonings 数组
     if (turn.modelReasoning) {
-      turn.modelReasoning.complete(0);
-      turn.modelReasonings.push(turn.modelReasoning);
+      const prev = turn.modelReasoning;
       turn.modelReasoning = null;
+      if (prev.isEmpty()) {
+        prev.destroy();
+      } else {
+        prev.complete(0);
+        turn.modelReasonings.push(prev);
+      }
     }
     turn.modelReasoningRound = roundIndex;
     const card = new StructuredThinking({});
@@ -1436,10 +1442,17 @@ class ChatView {
       thinkingId: "reasoning-" + turnId + "-" + (turn.modelReasoningRound || 0),
       elapsedMs,
     });
-    turn.modelReasoning.complete(elapsedMs);
-    // O5.1: 归档当前卡片,清空引用,下一轮 RoundStart 时会创建新卡片
-    turn.modelReasonings.push(turn.modelReasoning);
+    const card = turn.modelReasoning;
     turn.modelReasoning = null;
+    // 修复 2026-06:若整张卡片没有任何内容(异常路径/事件乱序),直接销毁 —
+    // 避免出现空 "暂无内容" 卡片
+    if (card.isEmpty()) {
+      card.destroy();
+    } else {
+      card.complete(elapsedMs);
+      // O5.1: 归档当前卡片,下一轮 RoundStart 时会创建新卡片
+      turn.modelReasonings.push(card);
+    }
     // 推理完成后,创建新的 stream segment(在 modelReasoning 之后)
     turn.currentStreamSegment = null;
     this._ensureStreamSegment(turn);
