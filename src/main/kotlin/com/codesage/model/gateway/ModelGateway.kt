@@ -275,7 +275,7 @@ open class ModelGateway(
                             // 兜底 emit 一个 done=true 的终态 chunk。
                             logger.info(
                                 "[Gateway.chatStream] SSE closed without [DONE], " +
-                                "emitting synthetic done=true for ${'$'}{request.model}"
+                                "emitting synthetic done=true for ${request.model}"
                             )
                             emit(StreamChunk(id = "", delta = "", done = true, usage = lastUsage))
                         }
