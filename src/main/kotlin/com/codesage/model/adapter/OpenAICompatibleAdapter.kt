@@ -30,6 +30,8 @@ abstract class OpenAICompatibleAdapter(
     // 状态机每次推进消费一段 delta,产出 reasoning 跟 content 拆分。
     private var inThinkBlock: Boolean = false
     private var pendingThink: StringBuilder = StringBuilder()
+    // 关键日志:首块 dump 标志。turn 间由 resetStreamState() 重置。
+    private var firstChunkDumped: Boolean = false
 
     protected val logger = com.codesage.shared.utils.Logger.getLogger(this::class.java)
 
@@ -68,6 +70,7 @@ abstract class OpenAICompatibleAdapter(
     fun resetStreamState() {
         inThinkBlock = false
         pendingThink.setLength(0)
+        firstChunkDumped = false
     }
 
     override fun toVendorRequest(request: ChatRequest): String {
@@ -134,12 +137,26 @@ abstract class OpenAICompatibleAdapter(
             return StreamChunk(id = "", delta = "", done = true)
         }
 
-        // === 临时诊断: 一次性 dump 第一个非空 chunk,用于定位 reasoning 字段名 ===
-
         return try {
             val streamData = json.decodeFromString<VendorStreamData>(jsonStr)
             val choice = streamData.choices.firstOrNull()
             val rawDelta = choice?.delta?.content ?: ""
+            // 关键日志:每个 provider 实例只 dump 一次首个非空 chunk,便于定位 reasoning 字段名。
+            // 用 instance 级标志避免 100+ chunks 时刷屏;resetStreamState() 时会重置。
+            if (rawDelta.isNotEmpty() && !firstChunkDumped) {
+                firstChunkDumped = true
+                val d = choice?.delta
+                logger.info(
+                    "[$providerName] FIRST CHUNK raw: " +
+                        "content.len=${rawDelta.length} " +
+                        "reasoningContent.len=${d?.reasoningContent?.length ?: 0} " +
+                        "reasoning.len=${d?.reasoning?.length ?: 0} " +
+                        "thinking.len=${d?.thinking?.length ?: 0} " +
+                        "finishReason=${choice?.finishReason} " +
+                        "content.head=${rawDelta.take(200).replace("\n", "\\n")} " +
+                        "rawJson.head=${jsonStr.take(500)}"
+                )
+            }
             // === reasoning 提取,按优先级支持三种模式:
             //   1) 供应商专有字段: reasoning_content / reasoning / thinking
             //   2) <think>...</think> 标签包裹在 delta.content 内

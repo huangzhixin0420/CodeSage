@@ -316,6 +316,24 @@ class EnhancedAgentLoop(
                                 emitEvent(AgentStreamEvent.ModelReasoningRoundEnd(turnNumber))
                             }
                             responseUsage = chunk.usage
+                            // 关键日志:流结束摘要,排查 reasoning 被吞 / 混入正文 / ```text``` 包裹等 bug。
+                            // 内容片段只截前 300 字符,避免日志膨胀。
+                            val hasThinkTag = assistantContent.contains("<think>")
+                            val hasTextCodeBlock = Regex("""`{3}text\b""").containsMatchIn(assistantContent) ||
+                                Regex("""`{3}\s*\n\s*[A-Za-z]""").containsMatchIn(assistantContent)
+                            val hasAnyCodeFence = assistantContent.contains("```")
+                            logger.info(
+                                "[Turn $turnNumber] STREAM END " +
+                                    "model=$currentModelLocal " +
+                                    "content.len=${assistantContent.length} " +
+                                    "hasThinkTag=$hasThinkTag " +
+                                    "hasTextCodeBlock=$hasTextCodeBlock " +
+                                    "hasAnyCodeFence=$hasAnyCodeFence " +
+                                    "finishReason=$finishReason " +
+                                    "hasToolCalls=$hasToolCalls " +
+                                    "usage=$responseUsage " +
+                                    "content.head=${assistantContent.take(300).replace("\n", "\\n")}"
+                            )
                             return@collect
                         }
 
