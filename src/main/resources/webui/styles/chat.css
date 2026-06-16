@@ -1413,221 +1413,6 @@ details.json-object > ul {
     border-color: var(--error);
 }
 
-/* ===================== Code Block (assistant content) ===================== */
-
-.code-block {
-    position: relative;
-    background: var(--code-bg);
-    color: var(--code-fg);
-    border-radius: var(--radius-md);
-    overflow: hidden;
-    margin: var(--space-3) 0;
-    border: 1px solid var(--border-default);
-}
-
-.code-block-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    height: 36px;
-    padding: 0 var(--space-3);
-    background: rgba(255, 255, 255, 0.02);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-    font-size: var(--text-xs);
-    color: var(--fg-tertiary);
-    font-family: var(--font-mono);
-    user-select: none;
-}
-
-.code-block-lang {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--fg-tertiary);
-    text-transform: lowercase;
-    letter-spacing: 0.3px;
-    font-size: var(--text-2xs);
-    font-weight: var(--weight-semibold);
-}
-
-.code-block-lang::before {
-    content: "";
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--lang-color, var(--accent));
-}
-
-.code-block-lang[data-lang="kotlin"] {
-    --lang-color: #a97bff;
-}
-.code-block-lang[data-lang="java"] {
-    --lang-color: #f89820;
-}
-.code-block-lang[data-lang="python"] {
-    --lang-color: #3776ab;
-}
-.code-block-lang[data-lang="typescript"] {
-    --lang-color: #3178c6;
-}
-.code-block-lang[data-lang="javascript"] {
-    --lang-color: #f7df1e;
-}
-.code-block-lang[data-lang="json"] {
-    --lang-color: #94a3b8;
-}
-.code-block-lang[data-lang="bash"] {
-    --lang-color: #4eaa25;
-}
-.code-block-lang[data-lang="go"] {
-    --lang-color: #00add8;
-}
-.code-block-lang[data-lang="rust"] {
-    --lang-color: #dea584;
-}
-.code-block-lang[data-lang="sql"] {
-    --lang-color: #f29111;
-}
-.code-block-lang[data-lang="yaml"] {
-    --lang-color: #cb171e;
-}
-.code-block-lang[data-lang="xml"] {
-    --lang-color: #e44d26;
-}
-.code-block-lang[data-lang="css"] {
-    --lang-color: #264de4;
-}
-.code-block-lang[data-lang="html"] {
-    --lang-color: #e44d26;
-}
-
-.code-block-actions {
-    display: flex;
-    gap: 2px;
-}
-
-.code-block-action {
-    width: 28px;
-    height: 28px;
-    border-radius: var(--radius-sm);
-    color: var(--fg-tertiary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 10px;
-    transition: all var(--duration-fast) var(--ease-out);
-}
-
-.code-block-action:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--code-fg);
-}
-
-.code-block-action.copied {
-    color: var(--success);
-}
-
-/* O9 / T6: 拒绝按钮 — 默认灰,hover 红 */
-.code-block-action.code-block-action-reject:hover {
-    background: var(--error-soft);
-    color: var(--error);
-}
-
-.code-block-path {
-    margin-left: var(--space-2);
-    padding-left: var(--space-2);
-    border-left: 1px solid rgba(255, 255, 255, 0.08);
-    color: var(--fg-secondary);
-    max-width: 280px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.code-block-body {
-    position: relative;
-    max-height: 480px;
-    overflow: auto;
-}
-
-.code-block-body.has-overflow::after {
-    content: "";
-    position: sticky;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 24px;
-    display: block;
-    background: linear-gradient(to bottom, transparent, var(--code-bg));
-    pointer-events: none;
-}
-
-.code-block-diff-viewer {
-    font-size: var(--text-sm);
-    max-height: 360px;
-    overflow: auto;
-}
-
-.code-block-diff-viewer .cs-diff-hunk {
-    margin: 0;
-    border-radius: 0;
-    border-left: none;
-    border-right: none;
-}
-
-.code-block-diff-viewer .cs-diff-hunk:first-child {
-    border-top: none;
-}
-
-.code-block-body pre {
-    margin: 0;
-    padding: var(--space-3) 0;
-    overflow-x: auto;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    line-height: 20px;
-    color: var(--code-fg);
-}
-
-.code-block-body pre code {
-    font-family: inherit;
-    background: transparent;
-    padding: 0;
-}
-
-.code-block-body .ln-line {
-    display: block;
-}
-
-.code-block-body .ln {
-    display: inline-block;
-    width: 3ch;
-    margin-right: var(--space-3);
-    padding: 0 var(--space-2) 0 var(--space-4);
-    color: var(--code-line-number);
-    user-select: none;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-    border-right: 1px solid var(--border-subtle);
-}
-
-.code-block-body .ln-code {
-    display: inline;
-}
-
-/* inline code */
-.assistant-content :not(pre) > code {
-    font-family: var(--font-mono);
-    font-size: 0.88em;
-    background: var(--surface-sunken);
-    color: var(--fg-primary);
-    padding: 1px 5px;
-    border-radius: var(--radius-xs);
-    border: 1px solid var(--border-subtle);
-    word-break: break-word;
-}
-
 /* ===================== Streaming Cursor ===================== */
 
 .stream-cursor {
@@ -2426,7 +2211,6 @@ details.json-object > ul {
 .icon-btn,
 .input-tool-btn,
 .send-btn,
-.code-block-action,
 .tool-toggle {
     transition:
         transform var(--duration-fast) var(--ease-out),
@@ -2437,7 +2221,6 @@ details.json-object > ul {
 .icon-btn:hover,
 .input-tool-btn:hover,
 .send-btn:hover,
-.code-block-action:hover,
 .tool-toggle:hover {
     transform: scale(1.05);
 }
@@ -2445,7 +2228,6 @@ details.json-object > ul {
 .icon-btn:active,
 .input-tool-btn:active,
 .send-btn:active,
-.code-block-action:active,
 .tool-toggle:active {
     transform: scale(0.96);
 }

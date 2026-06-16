@@ -56,7 +56,6 @@ import { toast } from "../components/cs-toast.js";
 import { bridge } from "../bridge.js";
 import { state } from "../state.js";
 import { renderMarkdown, preloadMarkdown } from "../markdown.js";
-import { enhanceCodeBlocks } from "../markdown.js";
 import { icon } from "../icons.js";
 import {
   escapeHtml,
@@ -1195,9 +1194,8 @@ class ChatView {
     // 移除光标
     const cursor = turn.el?.querySelector('[data-cs-role="cursor"]');
     cursor?.remove();
-    // v2.1: 流式收尾 — 给所有 stable 块 + tail 挂上 code-block 包装
-    // (复制按钮 / 语言徽标),endAITurn 是一次性 normalize 的好时机。
-    if (turn.content) enhanceCodeBlocks(turn.content);
+    // 2026-06: 代码块增强已改为流式事件驱动(CodeBlockCard 组件 + code_block_* 事件)
+    // endAITurn 不再需要 enhanceCodeBlocks 后处理。
     // 显示 turn actions
     const actions = turn.el?.querySelector('[data-cs-role="actions"]');
     if (actions) actions.style.opacity = "";
