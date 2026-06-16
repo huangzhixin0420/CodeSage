@@ -401,6 +401,18 @@ class EnhancedAgentLoop(
                             emitEvent(AgentStreamEvent.ModelReasoning(chunk.reasoningDelta))
                         }
 
+                        // 2026-06: 代码块事件转发(由 OpenAI 围栏状态机产出)
+                        // Start / Delta / End 三选一,直接 emit 对应 AgentStreamEvent
+                        when (val cb = chunk.codeBlock) {
+                            is com.codesage.model.dto.CodeBlockEvent.Start ->
+                                emitEvent(AgentStreamEvent.CodeBlockStart(cb.codeBlockId, cb.language, cb.filePath))
+                            is com.codesage.model.dto.CodeBlockEvent.Delta ->
+                                emitEvent(AgentStreamEvent.CodeBlockDelta(cb.codeBlockId, cb.delta))
+                            is com.codesage.model.dto.CodeBlockEvent.End ->
+                                emitEvent(AgentStreamEvent.CodeBlockEnd(cb.codeBlockId, cb.filePath))
+                            null -> {}
+                        }
+
                         // 工具调用增量：检测开始、累积参数
                         for (tcDelta in chunk.toolCallDeltas) {
                             val builder = streamingToolCalls.getOrPut(tcDelta.index) {
