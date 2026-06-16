@@ -1,8 +1,11 @@
-# StreamChunk 中转层重构
+# StreamChunk 中转层重构 (ARCHIVED — 草稿,已被 02 文档替代)
 
 - **创建日期**: 2026-06-16
 - **递增 ID**: 01
-- **状态**: 待启动(本任务输入,尚未排期)
+- **状态**: 🗄️ ARCHIVED — 已被 [02 文档](../StreamChunk中转层重构-2026-06-16-02.md) 替代
+- **归档日期**: 2026-06-17
+- **归档原因**: 02 文档基于 01 草稿的反馈迭代到收敛方案,本任务按 02 文档执行完成
+- **本任务范围**: 仅供历史参考,新设计/讨论请查阅 02 文档
 - **触发来源**: CodeBlock 事件化重构(2026-06-16)过程中识别
 - **影响范围**: OpenAICompatibleAdapter / AnthropicStreamParser / GeminiAdapter / ModelGateway / EnhancedAgentLoop / 单元测试
 
