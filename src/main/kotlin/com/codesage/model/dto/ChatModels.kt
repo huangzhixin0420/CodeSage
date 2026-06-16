@@ -55,8 +55,14 @@ data class Usage(
 )
 
 /**
- * 流式工具调用增量片段
+ * 2026-06: 流式工具调用增量片段 — DEPRECATED, 2026-06-16 起被
+ * [com.codesage.model.adapter.StreamEvent.ToolCall.Delta] 取代。
+ * 保留该类用于既有 adapter / 既有测试的过渡期,新代码应使用 StreamEvent.ToolCall.Delta。
  */
+@Deprecated(
+    message = "Use StreamEvent.ToolCall.Delta. Kept temporarily for refactor transition.",
+    replaceWith = ReplaceWith("com.codesage.model.adapter.StreamEvent.ToolCall.Delta")
+)
 data class StreamToolCallDelta(
     val index: Int = 0,
     val id: String? = null,
@@ -65,10 +71,10 @@ data class StreamToolCallDelta(
 )
 
 /**
- * 2026-06: 流式代码块事件 (fenced code block 的 Start / Delta / End 三选一)
- *
- * 由 [com.codesage.model.adapter.OpenAICompatibleAdapter] 等 adapter 在解析到
- * fenced code block 边界时产出,塞进 [StreamChunk.codeBlock] 字段。
+ * 2026-06: 流式代码块事件 (fenced code block 的 Start / Delta / End 三选一) — DEPRECATED,
+ * 2026-06-16 起被 [com.codesage.model.adapter.StreamEvent.CodeBlock] 取代。
+ * 保留该 sealed class 用于既有 adapter / 既有测试的过渡期,新代码应使用
+ * StreamEvent.CodeBlock.Started / Delta / Ended。
  *
  * 设计目的:让 adapter 直接 emit 结构化的代码块事件,而不是把代码块字符混在
  * [StreamChunk.delta] 里,这样:
@@ -76,9 +82,11 @@ data class StreamToolCallDelta(
  *   2) 代码块字符不再进 assistantContent,避免前端的 markdown 二次解析
  *   3) 后续对接 Anthropic(Gemini)时,Anthropic 的 `content_block_start/delta/stop`
  *      可以直接透传为本 sealed 的 3 个成员
- *
- * 调研依据: docs/research/CodeBlock围栏格式调研-2026-06-16-01.md
  */
+@Deprecated(
+    message = "Use StreamEvent.CodeBlock. Kept temporarily for refactor transition.",
+    replaceWith = ReplaceWith("com.codesage.model.adapter.StreamEvent.CodeBlock")
+)
 sealed class CodeBlockEvent {
     /**
      * 开围栏识别成功时产生;codeBlockId 由 adapter 内部计数器生成(`cb-N`),
@@ -108,8 +116,17 @@ sealed class CodeBlockEvent {
 }
 
 /**
- * 流式响应片段
+ * 2026-06: 流式响应片段 — DEPRECATED, 2026-06-16 起被
+ * [com.codesage.model.adapter.StreamEvent] 取代。
+ *
+ * 保留该类用于既有 adapter / 既有测试的过渡期。2026-06-16 重构后
+ * 整个项目不再 emit / consume 该类 — 改为 [com.codesage.model.adapter.StreamEvent]
+ * 的分形 sealed tree。
  */
+@Deprecated(
+    message = "Use StreamEvent sealed tree. Kept temporarily for refactor transition.",
+    replaceWith = ReplaceWith("com.codesage.model.adapter.StreamEvent")
+)
 data class StreamChunk(
     val id: String,
     val delta: String,
