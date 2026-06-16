@@ -2543,3 +2543,95 @@ details.json-object > ul {
         transform: none !important;
     }
 }
+
+/* ===================== Code Block Card (2026-06) =====================
+ * 流式事件驱动的代码块卡片,由 CodeBlockCard 组件渲染。
+ * 替代旧 .code-block 增强样式(markdown.js:enhanceCodeBlocks 的产物)。
+ * 风格与 .thinking-card 保持一致(可折叠卡片视觉)。
+ */
+.code-block-card {
+    margin: var(--space-2) 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+}
+
+.code-block-card.running {
+    border-color: var(--accent-primary);
+    opacity: 0.92;
+}
+
+.code-block-card.completed {
+    border-color: var(--border-subtle);
+}
+
+.code-block-card .code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-elevated);
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--font-sans);
+    font-size: var(--text-xs);
+}
+
+.code-block-card .code-block-lang {
+    color: var(--fg-secondary);
+    font-weight: 500;
+    text-transform: lowercase;
+}
+
+.code-block-card .code-block-actions {
+    display: flex;
+    gap: var(--space-1);
+}
+
+.code-block-card .code-block-action {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--fg-secondary);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: var(--text-xs);
+    transition: all var(--duration-fast) var(--ease-out);
+}
+
+.code-block-card .code-block-action:hover {
+    background: var(--bg-surface);
+    border-color: var(--border-subtle);
+    color: var(--fg-primary);
+}
+
+.code-block-card .code-block-action-reject {
+    color: var(--color-danger, #ef4444);
+}
+
+.code-block-card .code-block-body {
+    padding: var(--space-3);
+    overflow-x: auto;
+}
+
+.code-block-card .code-block-body pre {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: inherit;
+    font-size: inherit;
+    line-height: var(--leading-relaxed);
+    color: var(--fg-primary);
+}
+
+.code-block-card .code-block-body code {
+    background: transparent;
+    padding: 0;
+    font-family: inherit;
+    color: inherit;
+}

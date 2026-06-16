@@ -40,6 +40,7 @@
  */
 
 import { StructuredThinking } from "../components/cs-thinking-v2.js";
+import { CodeBlockCard } from "../components/cs-code-block.js";
 import { ToolCall } from "../components/cs-tool-call.js";
 import { Plan } from "../components/cs-plan.js";
 import { PlanV2 } from "../components/cs-plan-v2.js";
@@ -1448,6 +1449,62 @@ class ChatView {
     // 推理完成后,创建新的 stream segment(在 modelReasoning 之后)
     turn.currentStreamSegment = null;
     this._ensureStreamSegment(turn);
+  }
+
+  // ===== 2026-06: 代码块事件 handler =====
+  // 由 main.js 路由 code_block_start/delta/end 消息过来。
+  // CodeBlockCard 是自管组件,直接挂在 turn.content。
+  _onCodeBlockStart(turnId, codeBlockId, language, filePath) {
+    const turn = this.turns.get(turnId);
+    if (!turn) return;
+    this.runLogBuilder.processEvent({
+      type: "code_block_start",
+      turnId,
+      codeBlockId,
+      language,
+      filePath,
+    });
+    // 结束当前 stream segment,让代码块独立显示
+    turn.currentStreamSegment = null;
+    const card = new CodeBlockCard({ codeBlockId, language, filePath });
+    turn.codeBlocks = turn.codeBlocks || new Map();
+    turn.codeBlocks.set(codeBlockId, card);
+    // 插入到 content 内、cursor 之前
+    const cursor = turn.content.querySelector('[data-cs-role="cursor"]');
+    if (cursor) {
+      turn.content.insertBefore(card.el, cursor);
+    } else {
+      turn.content.appendChild(card.el);
+    }
+  }
+
+  _onCodeBlockDelta(turnId, codeBlockId, delta) {
+    const turn = this.turns.get(turnId);
+    if (!turn) return;
+    const card = turn.codeBlocks?.get(codeBlockId);
+    if (!card) return;
+    this.runLogBuilder.processEvent({
+      type: "code_block_delta",
+      turnId,
+      codeBlockId,
+      delta,
+    });
+    card.appendContent(delta);
+  }
+
+  _onCodeBlockEnd(turnId, codeBlockId, filePath) {
+    const turn = this.turns.get(turnId);
+    if (!turn) return;
+    const card = turn.codeBlocks?.get(codeBlockId);
+    if (!card) return;
+    this.runLogBuilder.processEvent({
+      type: "code_block_end",
+      turnId,
+      codeBlockId,
+      filePath,
+    });
+    if (filePath) card.filePath = filePath;
+    card.complete();
   }
 
   _onToolCallStart(turnId, toolId, toolName, summary, args, icon) {

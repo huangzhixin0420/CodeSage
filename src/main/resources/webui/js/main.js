@@ -106,6 +106,16 @@ function handleBridgeMessage(msg) {
       case "model_reasoning_round_end":
         chat._onModelReasoningComplete(turnId, msg.elapsedMs || 0);
         break;
+      // 2026-06: 代码块事件驱动 — 替代 enhanceCodeBlocks post-processing
+      case "code_block_start":
+        chat._onCodeBlockStart(turnId, msg.codeBlockId, msg.language, msg.filePath);
+        break;
+      case "code_block_delta":
+        chat._onCodeBlockDelta(turnId, msg.codeBlockId, msg.delta || "");
+        break;
+      case "code_block_end":
+        chat._onCodeBlockEnd(turnId, msg.codeBlockId, msg.filePath);
+        break;
       case "tool_call_start":
         chat._onToolCallStart(
           turnId,
