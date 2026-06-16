@@ -26,7 +26,7 @@ class OpenAICompatibleCodeBlockParseTest {
     private fun sse(jsonContent: String) = "data: $jsonContent"
 
     private fun chunk(jsonContent: String): StreamChunk? =
-        newAdapter().apply { resetStreamState() }.parseStreamChunk(sse(jsonContent)).firstOrNull()
+        newAdapter().apply { resetStreamState() }.parseStreamChunkLegacy(sse(jsonContent)).firstOrNull()
 
     private fun runSse(input: List<String>, resetBetween: Boolean = false): List<StreamChunk> {
         val adapter = newAdapter()
@@ -34,7 +34,7 @@ class OpenAICompatibleCodeBlockParseTest {
         val out = mutableListOf<StreamChunk>()
         for (line in input) {
             if (resetBetween) adapter.resetStreamState()
-            out += adapter.parseStreamChunk(sse(line))
+            out += adapter.parseStreamChunkLegacy(sse(line))
         }
         return out
     }
@@ -103,7 +103,7 @@ class OpenAICompatibleCodeBlockParseTest {
         val adapter = newAdapter()
         adapter.resetStreamState()
         // 模拟流中断:只发开围栏和部分代码,不发闭围栏
-        adapter.parseStreamChunk(sse("""{"id":"x","choices":[{"delta":{"content":"```kotlin\nfun a() {}"}}]}"""))
+        adapter.parseStreamChunkLegacy(sse("""{"id":"x","choices":[{"delta":{"content":"```kotlin\nfun a() {}"}}]}"""))
         // 流结束 — 调 flushCodeBlockEvents
         if (adapter is OpenAICompatibleAdapter) {
             val events = adapter.flushCodeBlockEvents()

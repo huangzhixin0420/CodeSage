@@ -1,4 +1,5 @@
 package com.codesage.agent.core
+import com.codesage.model.adapter.StreamEvent
 
 import com.codesage.agent.tools.ToolRegistry
 import com.codesage.model.adapter.ModelAdapter
@@ -357,7 +358,7 @@ class SubAgentExecutorTest {
         override fun fromVendorResponse(response: String): ChatResponse =
             ChatResponse("", "", emptyList(), null)
 
-        override fun parseStreamChunk(chunk: String): List<StreamChunk> = emptyList()
+        override fun parseStreamChunk(chunk: String): List<StreamEvent> = emptyList()
         override fun getStreamEndpoint(): String = "http://fake"
         override fun getChatEndpoint(): String = "http://fake"
         override fun getHeaders(): Map<String, String> = emptyMap()
@@ -1075,7 +1076,7 @@ class SubAgentExecutorTest {
      */
     private fun createNonStreamingFakeGateway(): ModelGateway = object : ModelGateway() {
         override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
-        override fun chatStream(request: ChatRequest): kotlinx.coroutines.flow.Flow<StreamChunk> =
+        override fun chatStreamLegacy(request: ChatRequest): kotlinx.coroutines.flow.Flow<StreamChunk> =
             kotlinx.coroutines.flow.emptyFlow()
     }
 

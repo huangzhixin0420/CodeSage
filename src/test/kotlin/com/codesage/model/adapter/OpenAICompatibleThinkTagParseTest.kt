@@ -29,7 +29,7 @@ class OpenAICompatibleThinkTagParseTest {
     fun `DEBUG - single chunk returns what`() {
         val a = newAdapter()
         val sse = """data: {"id":"x","choices":[{"delta":{"content":"<think>\n让我分析\n</think>\n\n## 答案\n正文"}}]}"""
-        val chunk = a.parseStreamChunk(sse).firstOrNull()
+        val chunk = a.parseStreamChunkLegacy(sse).firstOrNull()
         println("===DEBUG chunk class=${chunk?.javaClass}===")
         println("===DEBUG chunk=$chunk===")
         println("===DEBUG reasoningDelta=${chunk?.reasoningDelta}===")
@@ -45,7 +45,7 @@ class OpenAICompatibleThinkTagParseTest {
         var content = ""
         for (c in chunks) {
             val sse = "data: $c"
-            val parsed = adapter.parseStreamChunk(sse).firstOrNull() ?: continue
+            val parsed = adapter.parseStreamChunkLegacy(sse).firstOrNull() ?: continue
             if (parsed.done) break
             if (!parsed.reasoningDelta.isNullOrEmpty()) reasoning += parsed.reasoningDelta
             if (parsed.delta.isNotEmpty()) content += parsed.delta

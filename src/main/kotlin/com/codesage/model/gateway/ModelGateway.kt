@@ -1,6 +1,8 @@
 package com.codesage.model.gateway
 
 import com.codesage.model.adapter.ModelAdapter
+import com.codesage.model.adapter.StreamEvent
+import com.codesage.model.adapter.StreamEventNormalizer
 import com.codesage.model.dto.*
 import com.codesage.model.registry.ModelRegistry
 import com.codesage.shared.exceptions.AppException
@@ -114,20 +116,42 @@ open class ModelGateway(
      * 流式聊天请求
      * 支持 stream=true + tools 参数，若模型不支持流式则自动回退到非流式并包装为 Flow
      */
-    open fun chatStream(request: ChatRequest): Flow<StreamChunk> = flow {
+    /**
+     * 2026-06: 旧 API — 返回 Flow<StreamChunk> 的版本,供既有调用方使用(向后兼容)。
+     * 新代码应使用 [chatStream](返回 Flow<StreamEvent>)。
+     */
+    open fun chatStreamLegacy(request: ChatRequest): Flow<StreamChunk> = flow {
+        chatStream(request).collect { event ->
+            for (chunk in streamEventToChunk(event)) {
+                emit(chunk)
+            }
+        }
+    }
+
+    /**
+     * 2026-06: 切到 [Flow]<[StreamEvent]> 的新签名(替代旧的 `Flow<StreamChunk>`)。
+     *
+     * 一次 SSE 行可能产生多个 StreamEvent(典型:code block Delta + Ended),
+     * for-loop 消费整个列表,语义无变化。
+     *
+     * 内部结构:
+     *   1. 非流式回退(若 provider 不支持流式)
+     *   2. 流式循环: read SSE 行 → adapter.parseStreamChunk(line) → emit StreamEvent
+     *   3. 兜底: onStreamEnd 兜底(代码块未闭合等)
+     */
+    open fun chatStream(request: ChatRequest): Flow<StreamEvent> = flow {
         val startMs = System.currentTimeMillis()
         logger.info(
-            "[Gateway.chatStream] → ${request.model} | " +
-                    "messages=${request.messages.size}, " +
-                    "tools=${request.tools?.size ?: 0}, " +
-                    "promptChars=${request.messages.sumOf { it.content.length }}"
+            "[Gateway.chatStream] → ${'$'}{request.model} | " +
+                    "messages=${'$'}{request.messages.size}, " +
+                    "tools=${'$'}{request.tools?.size ?: 0}, " +
+                    "promptChars=${'$'}{request.messages.sumOf { it.content.length }}"
         )
         val adapter = getCurrentAdapter(request.model)
-            ?: throw ModelNotFoundException("Model not found: ${request.model}")
+            ?: throw ModelNotFoundException("Model not found: ${'$'}{request.model}")
 
         if (!adapter.supportsStreaming()) {
-            // 非流式回退：调用 chat() 并将完整响应包装为 StreamChunk 序列
-            logger.info("[Gateway.chatStream] Adapter does not support streaming, falling back to sync chat for model=${request.model}")
+            logger.info("[Gateway.chatStream] Adapter does not support streaming, falling back to sync chat for model=${'$'}{request.model}")
             val syncRequest = request.copy(stream = false)
             val result = chat(syncRequest)
             result.fold(
@@ -136,55 +160,46 @@ open class ModelGateway(
                     val message = choice?.message
                     val responseId = response.id
                     if (message != null) {
-                        // 文本内容
                         if (!message.content.isNullOrBlank()) {
-                            emit(StreamChunk(id = responseId, delta = message.content))
+                            emit(StreamEvent.Content.Text(delta = message.content))
                         }
-                        // 工具调用（以增量形式发出，确保下游统一处理）
-                        // 2026-06 修复：为每个 tool_call 分配递增的 index，避免 map key 冲突导致只保留最后一个。
                         message.toolCalls?.forEachIndexed { idx, toolCall ->
-                            emit(
-                                StreamChunk(
-                                    id = responseId,
-                                    delta = "",
-                                    toolCallDeltas = listOf(
-                                        StreamToolCallDelta(
-                                            index = idx,
-                                            id = toolCall.id,
-                                            name = toolCall.name,
-                                            arguments = toolCall.arguments
-                                        )
-                                    )
-                                )
-                            )
+                            emit(StreamEvent.ToolCall.Delta(
+                                toolCallId = toolCall.id,
+                                toolName = toolCall.name,
+                                argumentsFragment = toolCall.arguments,
+                            ))
                         }
-                        // finish reason
                         if (choice.finishReason != null) {
-                            emit(StreamChunk(id = responseId, delta = "", finishReason = choice.finishReason))
+                            emit(StreamEvent.Flow.Finished(
+                                finishReason = com.codesage.model.dto.FinishReason.from(choice.finishReason),
+                                usage = response.usage,
+                            ))
                         }
                     }
-                    emit(StreamChunk(id = responseId, delta = "", done = true, usage = response.usage))
+                    if (response.usage != null) {
+                        emit(StreamEvent.Flow.Finished(
+                            finishReason = com.codesage.model.dto.FinishReason.STOP,
+                            usage = response.usage,
+                        ))
+                    }
                 },
-                onFailure = { error ->
-                    throw error
-                }
+                onFailure = { error -> throw error }
             )
             return@flow
         }
 
         val vendorRequest = adapter.toVendorRequest(request)
         logger.info(
-            "[Gateway.chatStream] → ${request.model} | " +
-                    "requestSize=${vendorRequest.length}B, " +
-                    "bodyPreview=${vendorRequest.take(500)}"
+            "[Gateway.chatStream] → ${'$'}{request.model} | " +
+                    "requestSize=${'$'}{vendorRequest.length}B, " +
+                    "bodyPreview=${'$'}{vendorRequest.take(500)}"
         )
-        // 子 Agent 触发的请求 > 8KB 视为可疑（独立 prompt ~1.2KB + 任务 ~1KB + 工具 schema ~2-4KB = 4-6KB）
-        // 历史上曾因父 Agent 历史被 restore 进子 Agent 导致 requestSize 膨胀到 39KB+ 触发 MiniMax 2013 错误
         if (vendorRequest.length > 8 * 1024) {
             logger.warn(
                 "[Gateway.chatStream] Suspiciously large request " +
-                        "size=${vendorRequest.length}B, " +
-                        "firstMessageRoles=${request.messages.take(3).map { it.role }}; " +
+                        "size=${'$'}{vendorRequest.length}B, " +
+                        "firstMessageRoles=${'$'}{request.messages.take(3).map { it.role }}; " +
                         "this may indicate session contamination from parent agent"
             )
         }
@@ -198,65 +213,68 @@ open class ModelGateway(
         var chunkCount = 0
         var bytesRead = 0L
         var lastUsage: Usage? = null
-        var lastFinishReason: String? = null
-        // 关键日志:跟踪最后 emit 的 chunk 的 done 状态,用于在 SSE 关闭但无 [DONE] 时补发
-        var lastChunkDone: Boolean = false
+        var lastFinishReason: com.codesage.model.dto.FinishReason? = null
+        var emittedAnyEvent = false
+        var seenFinished = false
 
         try {
             // 重置 adapter 跨 turn 流式状态(<think> 状态机 + 累积 buffer)
-            // — 同 adapter 实例被多 turn 复用, 上一轮若未正常结束(inThinkBlock
-            // 残留 true) 会让下一轮正文被当 thinking。
             if (adapter is com.codesage.model.adapter.OpenAICompatibleAdapter) {
-                adapter.resetStreamState()
+                adapter.resetStreamNormalizer()
             }
-            // 绑定 Call 句柄，让 cancelCurrentRequest() 能跨线程中断阻塞 IO
             val call = httpClient.newCall(req)
             currentCall.set(call)
             try {
                 call.execute().use { response ->
                     if (!response.isSuccessful) {
-                        // 重要：必须读出 body！LLM API 返 4xx/5xx 时的 body 通常是 JSON
-                        // {"error":{"message":"tools[0].function.name is required","type":"..."}}，
-                        // 不读 body 调试时只能看到 "HTTP 400: " 干入栈。
                         val errorBody = response.body?.string()?.take(2000) ?: "(empty body)"
                         logger.error(
-                            "[Gateway.chatStream] ✗ ${request.model} | " +
-                                    "status=${response.code} requestSize=${vendorRequest.length}B " +
-                                    "durationMs=${System.currentTimeMillis() - startMs} | " +
+                            "[Gateway.chatStream] ✗ ${'$'}{request.model} | " +
+                                    "status=${'$'}{response.code} requestSize=${'$'}{vendorRequest.length}B " +
+                                    "durationMs=${'$'}{System.currentTimeMillis() - startMs} | " +
                                     "body=$errorBody"
                         )
-                        throw NetworkException("HTTP ${response.code} (requestSize=${vendorRequest.length}B): $errorBody")
+                        throw NetworkException("HTTP ${'$'}{response.code} (requestSize=${'$'}{vendorRequest.length}B): $errorBody")
                     }
 
                     val body = response.body ?: throw NetworkException("Empty response body in stream")
+                    val normalizer = adapter.streamNormalizer()
+                    val state = StreamEventNormalizer.StreamState()
+
                     body.source().let { source ->
                         var consecutiveNullChunks = 0
                         val maxConsecutiveNullChunks = 1000
-                        var emittedAnyChunk = false
 
                         while (true) {
                             val line = source.readUtf8Line() ?: break
-                            bytesRead += line.length + 1  // 近似估算
+                            bytesRead += line.length + 1
                             if (line.isBlank()) {
                                 consecutiveNullChunks = 0
                                 continue
                             }
 
-                            // 2026-06: parseStreamChunk 返回 List<StreamChunk>
-                            // 一次 SSE 行可能产生多个 chunk(典型:Delta + End 配对)。
-                            val chunks = adapter.parseStreamChunk(line)
-                            if (chunks.isNotEmpty()) {
+                            val events = normalizer.normalize(line, state)
+                            if (events.isNotEmpty()) {
                                 consecutiveNullChunks = 0
-                                emittedAnyChunk = true
-                                chunkCount += chunks.size
-                                for (chunk in chunks) {
-                                    if (chunk.usage != null) lastUsage = chunk.usage
-                                    if (chunk.finishReason != null) lastFinishReason = chunk.finishReason
-                                    lastChunkDone = chunk.done
-                                    emit(chunk)
-                                    if (chunk.done) break
+                                emittedAnyEvent = true
+                                chunkCount += events.size
+                                for (event in events) {
+                                    when (event) {
+                                        is StreamEvent.Flow.Finished -> {
+                                            seenFinished = true
+                                            if (event.usage != null) lastUsage = event.usage
+                                            lastFinishReason = event.finishReason
+                                        }
+                                        else -> {}
+                                    }
+                                    emit(event)
+                                    if (event is StreamEvent.Flow.Finished) {
+                                        // finished 信号,流结束
+                                        @Suppress("UNREACHABLE_CODE")
+                                        break
+                                    }
                                 }
-                                if (chunks.any { it.done }) break
+                                if (seenFinished) break
                             } else {
                                 consecutiveNullChunks++
                                 if (consecutiveNullChunks > maxConsecutiveNullChunks) {
@@ -267,69 +285,108 @@ open class ModelGateway(
                             }
                         }
 
-                        // 2026-06: 流结束前先 flush 围栏状态机可能残留的 codeBlock 事件
-                        // (典型:代码块未闭合,流中断时 splitter.flush() 兜底 emit Delta + End)
-                        if (adapter is com.codesage.model.adapter.OpenAICompatibleAdapter) {
-                            val pendingCodeEvents = adapter.flushCodeBlockEvents()
-                            for (cbEvent in pendingCodeEvents) {
-                                emittedAnyChunk = true
-                                chunkCount++
-                                emit(StreamChunk(
-                                    id = "",
-                                    delta = "",
-                                    reasoningDelta = null,
-                                    done = false,
-                                    codeBlock = cbEvent,
-                                ))
-                            }
+                        // 兜底: 流结束前调 onStreamEnd 拿残余 events
+                        val pendingEvents = normalizer.onStreamEnd(state)
+                        for (event in pendingEvents) {
+                            emittedAnyEvent = true
+                            chunkCount++
+                            emit(event)
                         }
-                        // 兜底:如果整个响应体没有 emit 任何 chunk,至少 emit done
-                        if (!emittedAnyChunk) {
-                            emit(StreamChunk(id = "", delta = "", done = true, usage = null))
-                        } else if (!lastChunkDone) {
+
+                        // 兜底:如果整个响应体没有 emit 任何 event,emit Flow.Finished
+                        if (!emittedAnyEvent) {
+                            emit(StreamEvent.Flow.Finished(
+                                finishReason = com.codesage.model.dto.FinishReason.STOP,
+                                usage = null,
+                            ))
+                        } else if (!seenFinished) {
                             // 关键日志:某些 OpenAI 兼容 provider(MiniMax-M3 等)不发送
-                            // `[DONE]` sentinel,而是直接关闭 SSE 连接。在这种场景下,
-                            // SSE 循环自然结束但最后一个数据 chunk 的 done=false,
-                            // EnhancedAgentLoop 永远看不到 done=true → STREAM END 不打印、
-                            // reasoning 状态卡死、UI 卡片可能残留。
-                            // 修复:循环结束后,如果发出过 chunk 且最后一个 chunk 的 done=false,
-                            // 兜底 emit 一个 done=true 的终态 chunk。
+                            // `[DONE]` sentinel,而是直接关闭 SSE 连接。
                             logger.info(
-                                "[Gateway.chatStream] SSE closed without [DONE], " +
-                                "emitting synthetic done=true for ${request.model}"
+                                "[Gateway.chatStream] SSE closed without Finished, " +
+                                "emitting synthetic Finished(STOP) for ${'$'}{request.model}"
                             )
-                            emit(StreamChunk(id = "", delta = "", done = true, usage = lastUsage))
+                            emit(StreamEvent.Flow.Finished(
+                                finishReason = com.codesage.model.dto.FinishReason.STOP,
+                                usage = lastUsage,
+                            ))
                         }
                     }
                 }
             } finally {
-                // 无论成功 / 失败 / 取消，都把 Call 句柄清掉
                 currentCall.compareAndSet(call, null)
             }
-            // 流式成功后汇总统计
             logger.info(
-                "[Gateway.chatStream] ← ${request.model} | " +
-                        "status=200 chunks=$chunkCount " +
-                        "bytes~${bytesRead} " +
-                        "finishReason=$lastFinishReason " +
-                        "usage=${lastUsage?.totalTokens ?: "?"}tok " +
-                        "durationMs=${System.currentTimeMillis() - startMs}"
+                "[Gateway.chatStream] ← ${'$'}{request.model} | " +
+                        "status=200 events=$chunkCount " +
+                        "bytes~${'$'}{bytesRead} " +
+                        "finishReason=${'$'}{lastFinishReason} " +
+                        "usage=" + (lastUsage?.totalTokens?.toString() ?: "?") + "tok " +
+                        "durationMs=${'$'}{System.currentTimeMillis() - startMs}"
             )
         } catch (e: java.io.InterruptedIOException) {
-            // OkHttp Call.cancel() 会抛这个，单独 catch 上报为 info
-            logger.info("[Gateway.chatStream] request cancelled mid-stream after ${chunkCount} chunks")
+            logger.info("[Gateway.chatStream] request cancelled mid-stream after ${'$'}{chunkCount} events")
             throw e
         } catch (e: Exception) {
             logger.error(
-                "[Gateway.chatStream] ✗ ${request.model} | " +
-                        "${e.javaClass.simpleName}: ${e.message?.take(200)} | " +
-                        "chunksBeforeFail=$chunkCount durationMs=${System.currentTimeMillis() - startMs}",
+                "[Gateway.chatStream] ✗ ${'$'}{request.model} | " +
+                        "${'$'}{e.javaClass.simpleName}: ${'$'}{e.message?.take(200)} | " +
+                        "eventsBeforeFail=$chunkCount durationMs=${'$'}{System.currentTimeMillis() - startMs}",
                 e
             )
             throw e
         }
     }.flowOn(Dispatchers.IO)
 
+    /**
+     * 2026-06: 把 [StreamEvent] 转换为 [StreamChunk] 的辅助 — 用于 [chatStream] 兼容层。
+     * 这是一个临时的桥接,后续 commit 5 + 6 完成后 [chatStream] 这个旧 API 会被删除。
+     */
+    private var toolCallIndexCounter: Int = 0
+
+    private fun streamEventToChunk(event: StreamEvent): List<StreamChunk> = when (event) {
+        is StreamEvent.Content.Text -> listOf(StreamChunk(id = "", delta = event.delta))
+        is StreamEvent.Content.Reasoning -> listOf(StreamChunk(id = "", delta = "", reasoningDelta = event.delta))
+        is StreamEvent.Content.PlanStep -> listOf(StreamChunk(id = "", delta = event.delta))
+        is StreamEvent.ToolCall.Delta -> listOf(StreamChunk(
+            id = "",
+            delta = "",
+            toolCallDeltas = listOf(StreamToolCallDelta(
+                index = toolCallIndexCounter++,
+                id = event.toolCallId,
+                name = event.toolName,
+                arguments = event.argumentsFragment,
+            )),
+        ))
+        is StreamEvent.CodeBlock.Started -> listOf(StreamChunk(
+            id = "",
+            delta = "",
+            codeBlock = CodeBlockEvent.Start(event.codeBlockId, event.language),
+        ))
+        is StreamEvent.CodeBlock.Delta -> listOf(StreamChunk(
+            id = "",
+            delta = "",
+            codeBlock = CodeBlockEvent.Delta(event.codeBlockId, event.delta),
+        ))
+        is StreamEvent.CodeBlock.Ended -> listOf(StreamChunk(
+            id = "",
+            delta = "",
+            codeBlock = CodeBlockEvent.End(event.codeBlockId),
+        ))
+        is StreamEvent.Flow.Started -> emptyList()
+        is StreamEvent.Flow.Finished -> listOf(StreamChunk(
+            id = "",
+            delta = "",
+            done = true,
+            finishReason = event.finishReason.name.lowercase(),
+            usage = event.usage,
+        ))
+        is StreamEvent.Flow.Cancelled -> listOf(StreamChunk(id = "", delta = "", done = true))
+        is StreamEvent.Flow.Error -> listOf(StreamChunk(id = "", delta = "", done = true))
+        is StreamEvent.Citation.Delta -> emptyList()
+        is StreamEvent.Media.ImageFragment -> emptyList()
+        is StreamEvent.Media.AudioFragment -> emptyList()
+    }
     /**
      * 获取可用模型列表
      */

@@ -740,7 +740,7 @@ open class AgentCore(
 
                 val fullResponse = StringBuilder()
 
-                gateway.chatStream(request).collect { chunk ->
+                gateway.chatStreamLegacy(request).collect { chunk ->
                     if (!chunk.done) {
                         fullResponse.append(chunk.delta)
                         emit(chunk.delta)

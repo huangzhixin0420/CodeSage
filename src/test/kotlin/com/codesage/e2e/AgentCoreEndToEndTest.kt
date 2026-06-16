@@ -1,4 +1,5 @@
 package com.codesage.e2e
+import com.codesage.model.adapter.StreamEvent
 
 import com.codesage.agent.core.AgentConfig
 import com.codesage.agent.core.AgentCore
@@ -189,7 +190,7 @@ class AgentCoreEndToEndTest {
         override fun fromVendorResponse(response: String): ChatResponse =
             ChatResponse("resp", "fake-model", emptyList(), null)
 
-        override fun parseStreamChunk(chunk: String): List<StreamChunk> = emptyList()
+        override fun parseStreamChunk(chunk: String): List<StreamEvent> = emptyList()
         override fun getStreamEndpoint(): String = "http://fake-e2e"
         override fun getChatEndpoint(): String = "http://fake-e2e"
         override fun getHeaders(): Map<String, String> = emptyMap()
@@ -246,7 +247,7 @@ class AgentCoreEndToEndTest {
             return runCatching { adapter.handleChat(request) }
         }
 
-        override fun chatStream(request: ChatRequest): kotlinx.coroutines.flow.Flow<StreamChunk> =
+        override fun chatStreamLegacy(request: ChatRequest): kotlinx.coroutines.flow.Flow<StreamChunk> =
             kotlinx.coroutines.flow.flow {
                 // 将 ChatResponse 转为 StreamChunk 序列
                 val resp = adapter.handleChat(request)

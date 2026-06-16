@@ -37,6 +37,22 @@ abstract class OpenAICompatibleAdapter(
 
     protected val logger = com.codesage.shared.utils.Logger.getLogger(this::class.java)
 
+    /**
+     * 2026-06: 该 adapter 用的协议层 normalizer(per-adapter 单例,跨 chunk 累积状态)。
+     */
+    private val openAINormalizer: OpenAIStreamNormalizer by lazy {
+        OpenAIStreamNormalizer(providerName = providerName)
+    }
+
+    override fun streamNormalizer(): StreamEventNormalizer = openAINormalizer
+
+    /**
+     * 2026-06: 重置 normalizer 跨 chunk 状态机(每轮流开始时由 ModelGateway 调)。
+     */
+    fun resetStreamNormalizer() {
+        openAINormalizer.reset()
+    }
+
     abstract override val providerName: String
     abstract override val supportedModels: List<String>
     abstract val chatEndpointPath: String
@@ -145,7 +161,11 @@ abstract class OpenAICompatibleAdapter(
      * 其他 adapter (AnthropicStreamParser / GeminiAdapter) 保留 StreamChunk? 旧契约,
      * ModelGateway 已做兼容:若 parseStreamChunk 返回 null 当成空 list。
      */
-    override fun parseStreamChunk(chunk: String): List<StreamChunk> {
+        override fun parseStreamChunk(chunk: String): List<StreamEvent> {
+        return openAINormalizer.normalize(chunk, StreamEventNormalizer.StreamState())
+    }
+
+    fun parseStreamChunkLegacy(chunk: String): List<StreamChunk> {
         if (!chunk.startsWith("data:")) return emptyList()
 
         val jsonStr = chunk.removePrefix("data:").trim()

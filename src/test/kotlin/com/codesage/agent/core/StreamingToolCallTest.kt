@@ -1,4 +1,5 @@
 package com.codesage.agent.core
+import com.codesage.model.adapter.StreamEvent
 
 import com.codesage.agent.context.ContextManager
 import com.codesage.agent.tools.ToolExecutor
@@ -159,7 +160,7 @@ class StreamingToolCallTest {
             override fun fromVendorResponse(response: String): ChatResponse =
                 ChatResponse("", "", emptyList(), null)
 
-            override fun parseStreamChunk(chunk: String): List<StreamChunk> = emptyList()
+            override fun parseStreamChunk(chunk: String): List<StreamEvent> = emptyList()
             override fun getStreamEndpoint(): String = "http://fake"
             override fun getChatEndpoint(): String = "http://fake"
             override fun getHeaders(): Map<String, String> = emptyMap()
@@ -174,7 +175,7 @@ class StreamingToolCallTest {
         var callCount = 0
         return object : ModelGateway() {
             override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
-            override fun chatStream(request: ChatRequest): kotlinx.coroutines.flow.Flow<StreamChunk> =
+            override fun chatStreamLegacy(request: ChatRequest): kotlinx.coroutines.flow.Flow<StreamChunk> =
                 kotlinx.coroutines.flow.flow {
                     callCount++
                     if (callCount == 1) {
@@ -231,7 +232,7 @@ class StreamingToolCallTest {
         var callCount = 0
         return object : ModelGateway() {
             override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
-            override fun chatStream(request: ChatRequest): kotlinx.coroutines.flow.Flow<StreamChunk> =
+            override fun chatStreamLegacy(request: ChatRequest): kotlinx.coroutines.flow.Flow<StreamChunk> =
                 kotlinx.coroutines.flow.flow {
                     callCount++
                     if (callCount == 1) {
@@ -288,7 +289,7 @@ class StreamingToolCallTest {
         var callCount = 0
         return object : ModelGateway() {
             override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
-            override fun chatStream(request: ChatRequest): kotlinx.coroutines.flow.Flow<StreamChunk> =
+            override fun chatStreamLegacy(request: ChatRequest): kotlinx.coroutines.flow.Flow<StreamChunk> =
                 kotlinx.coroutines.flow.flow {
                     callCount++
                     if (callCount == 1) {

@@ -19,12 +19,6 @@ interface ModelAdapter {
 
     /**
      * T1.1 修复：模型能力声明
-     *
-     * 所有 ModelAdapter 实现必须提供完整的能力描述。
-     * 原来散落在 supportsStreaming/supportsFunctionCalling/supportsVision 三个方法里的
-     * 信息集中到 immutable 数据类里，便于智能路由和 UI 展示。
-     *
-     * 默认实现为最小能力集（仅流式）。推荐子类覆盖。
      */
     val capabilities: ModelCapabilities
         get() = ModelCapabilities()
@@ -55,9 +49,26 @@ interface ModelAdapter {
     fun fromVendorResponse(response: String): ChatResponse
 
     /**
-     * 解析流式响应片段
+     * 2026-06: 解析一行 SSE 数据, 返回 0..N 个 [StreamEvent]。
+     *
+     * 替代旧的 `parseStreamChunk: List<StreamChunk>` 签名。一行可能产生多个事件
+     * (典型: code block Delta + End), [com.codesage.model.gateway.ModelGateway]
+     * 负责 for-loop 消费。
+     *
+     * Adapter 委托给 [StreamEventNormalizer] 实现具体映射逻辑。
+     * 默认实现委托给 [streamNormalizer]。
      */
-    fun parseStreamChunk(chunk: String): List<StreamChunk>
+    fun parseStreamChunk(chunk: String): List<StreamEvent> {
+        return streamNormalizer().normalize(chunk, StreamEventNormalizer.StreamState())
+    }
+
+    /**
+     * 2026-06: 返回该 adapter 用的协议层 [StreamEventNormalizer]。
+     *
+     * 子类应该重写以返回对应的 provider-specific normalizer。
+     * 默认返回 [OpenAIStreamNormalizer] (向后兼容: OpenAI 兼容协议是最常见的)。
+     */
+    fun streamNormalizer(): StreamEventNormalizer = OpenAIStreamNormalizer(providerName = providerName)
 
     /**
      * 获取模型信息

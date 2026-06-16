@@ -298,7 +298,7 @@ class EnhancedAgentLoop(
                     var finishReason: String? = null
                     var responseUsage: Usage? = null
 
-                    gateway.chatStream(request).collect { chunk ->
+                    gateway.chatStreamLegacy(request).collect { chunk ->
                         if (interrupted) return@collect
 
                         // 先处理 finishReason（即使 done chunk 也可能携带）

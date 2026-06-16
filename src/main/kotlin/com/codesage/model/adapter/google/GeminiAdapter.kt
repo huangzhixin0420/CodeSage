@@ -1,6 +1,8 @@
 package com.codesage.model.adapter.google
 
 import com.codesage.model.adapter.ModelAdapter
+import com.codesage.model.adapter.StreamEvent
+import com.codesage.model.adapter.StreamEventNormalizer
 import com.codesage.model.dto.*
 import com.codesage.shared.exceptions.NetworkException
 import com.codesage.shared.utils.Logger
@@ -71,6 +73,15 @@ class GeminiAdapter(
         pricePer1kInput = 0.00125,
         pricePer1kOutput = 0.005
     )
+
+    /**
+     * 2026-06: 该 adapter 用的协议层 normalizer(per-adapter 单例)。
+     */
+    private val geminiNormalizer: GeminiStreamNormalizer by lazy {
+        GeminiStreamNormalizer()
+    }
+
+    override fun streamNormalizer(): StreamEventNormalizer = geminiNormalizer
 
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -253,29 +264,26 @@ class GeminiAdapter(
      * - toolCallDeltas：拼接所有 part.functionCall
      * - done：finishReason == "STOP" 时为 true
      */
-    override fun parseStreamChunk(chunk: String): List<StreamChunk> {
-        // 跳过 SSE 注释行
-        if (chunk.startsWith(":")) return emptyList()
-        // 跳过空行
-        if (chunk.isBlank()) return emptyList()
-        // 提取 data: 后面的 JSON（如果是 SSE）
-        val jsonContent = if (chunk.startsWith("data:")) {
-            chunk.removePrefix("data:").trim()
-        } else {
-            chunk
-        }
-        if (jsonContent.isEmpty() || jsonContent == "[DONE]") return emptyList()
+    override fun parseStreamChunk(chunk: String): List<StreamEvent> {
+        return geminiNormalizer.normalize(chunk, StreamEventNormalizer.StreamState())
+    }
 
+    /**
+     * 2026-06: 旧 API — 返回 List<StreamChunk> 的版本,供既有测试使用。
+     * 新代码应使用 [parseStreamChunk](返回 List<StreamEvent>)。
+     */
+    fun parseStreamChunkLegacy(chunk: String): List<StreamChunk> {
+        if (chunk.startsWith(":")) return emptyList()
+        if (chunk.isBlank()) return emptyList()
+        val jsonContent = if (chunk.startsWith("data:")) chunk.removePrefix("data:").trim() else chunk
+        if (jsonContent.isEmpty() || jsonContent == "[DONE]") return emptyList()
         val geminiResp = try {
             json.decodeFromString(GeminiStreamChunk.serializer(), jsonContent)
         } catch (e: Exception) {
-            // 忽略无法解析的行
             return emptyList()
         }
-
         val candidate = geminiResp.candidates.firstOrNull() ?: return emptyList()
         val parts = candidate.content?.parts.orEmpty()
-
         val text = parts.mapNotNull { it.text }.joinToString("")
         val toolCallDeltas = parts.mapNotNull { part ->
             part.functionCall?.let { fc ->
@@ -283,11 +291,10 @@ class GeminiAdapter(
                     index = 0,
                     id = "gemini_stream_${System.nanoTime()}_${parts.indexOf(part)}",
                     name = fc.name,
-                    arguments = fc.args.toString()
+                    arguments = fc.args.toString(),
                 )
             }
         }
-
         return listOf(StreamChunk(
             id = "",
             delta = text,
@@ -298,9 +305,9 @@ class GeminiAdapter(
                 Usage(
                     promptTokens = u.promptTokenCount,
                     completionTokens = u.candidatesTokenCount,
-                    totalTokens = u.totalTokenCount
+                    totalTokens = u.totalTokenCount,
                 )
-            }
+            },
         ))
     }
 

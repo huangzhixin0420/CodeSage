@@ -1,4 +1,5 @@
 package com.codesage.agent.core
+import com.codesage.model.adapter.StreamEvent
 
 import com.codesage.agent.context.ContextManager
 import com.codesage.agent.tools.ToolExecutor
@@ -285,7 +286,7 @@ class EnhancedAgentLoopTest {
             override fun fromVendorResponse(response: String): ChatResponse =
                 ChatResponse("", "", emptyList(), null)
 
-            override fun parseStreamChunk(chunk: String): List<StreamChunk> = emptyList()
+            override fun parseStreamChunk(chunk: String): List<StreamEvent> = emptyList()
             override fun getStreamEndpoint(): String = "http://fake"
             override fun getChatEndpoint(): String = "http://fake"
             override fun getHeaders(): Map<String, String> = emptyMap()
@@ -769,7 +770,7 @@ class EnhancedAgentLoopTest {
     private fun createRepeatedBadRequestGateway(): ModelGateway {
         return object : ModelGateway() {
             override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
-            override fun chatStream(request: ChatRequest): Flow<StreamChunk> = flow {
+            override fun chatStreamLegacy(request: ChatRequest): Flow<StreamChunk> = flow {
                 throw com.codesage.shared.exceptions.NetworkException(
                     "HTTP 400 (requestSize=152892B): " +
                             "{\"type\":\"error\",\"error\":{\"type\":\"bad_request_error\",\"message\":\"invalid params, tool call result does not follow tool call (2013)\",\"http_code\":\"400\"}}"
@@ -786,7 +787,7 @@ class EnhancedAgentLoopTest {
         // 期望:第一条 reasoningDelta 之前先补发 ModelReasoningRoundStart,后续 delta 不再发
         val gateway = object : ModelGateway() {
             override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
-            override fun chatStream(request: ChatRequest): Flow<StreamChunk> = flow {
+            override fun chatStreamLegacy(request: ChatRequest): Flow<StreamChunk> = flow {
                 emit(StreamChunk(id = "c1", delta = "First reasoning ", reasoningDelta = "step1 "))
                 emit(StreamChunk(id = "c1", delta = "", reasoningDelta = "step2 "))
                 emit(StreamChunk(id = "c1", delta = "Answer", reasoningDelta = "", finishReason = "stop"))
@@ -825,7 +826,7 @@ class EnhancedAgentLoopTest {
         // 期望:完全不发出 ModelReasoningRoundStart(避免前端创建空卡片)
         val gateway = object : ModelGateway() {
             override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
-            override fun chatStream(request: ChatRequest): Flow<StreamChunk> = flow {
+            override fun chatStreamLegacy(request: ChatRequest): Flow<StreamChunk> = flow {
                 emit(StreamChunk(id = "c2", delta = "Just plain text", reasoningDelta = ""))
                 emit(StreamChunk(id = "c2", delta = " answer", reasoningDelta = "", finishReason = "stop"))
                 emit(StreamChunk(id = "c2", delta = "", reasoningDelta = "", done = true))
@@ -863,7 +864,7 @@ class EnhancedAgentLoopTest {
         val callCount = intArrayOf(0)
         val gateway = object : ModelGateway() {
             override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
-            override fun chatStream(request: ChatRequest): Flow<StreamChunk> = flow {
+            override fun chatStreamLegacy(request: ChatRequest): Flow<StreamChunk> = flow {
                 callCount[0]++
                 when (callCount[0]) {
                     1 -> {
@@ -919,7 +920,7 @@ class EnhancedAgentLoopTest {
     private fun createRepeatedRuntimeExceptionGateway(): ModelGateway {
         return object : ModelGateway() {
             override fun getCurrentAdapter(model: String): ModelAdapter? = createFakeAdapter()
-            override fun chatStream(request: ChatRequest): Flow<StreamChunk> = flow {
+            override fun chatStreamLegacy(request: ChatRequest): Flow<StreamChunk> = flow {
                 throw RuntimeException("simulated non-network error")
             }
         }

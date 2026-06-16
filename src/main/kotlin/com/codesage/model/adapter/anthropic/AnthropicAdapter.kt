@@ -1,6 +1,8 @@
 package com.codesage.model.adapter.anthropic
 
 import com.codesage.model.adapter.ModelAdapter
+import com.codesage.model.adapter.StreamEvent
+import com.codesage.model.adapter.StreamEventNormalizer
 import com.codesage.model.dto.*
 import com.codesage.shared.exceptions.NetworkException
 import com.codesage.shared.utils.Logger
@@ -76,6 +78,21 @@ class AnthropicAdapter(
     )
 
     private val streamParser = AnthropicStreamParser()
+
+    /**
+     * 2026-06: 旧 API — 返回 List<StreamChunk> 的版本,供既有测试使用。
+     * 新代码应使用 [parseStreamChunk](返回 List<StreamEvent>)。
+     */
+    fun parseStreamChunkLegacy(chunk: String): List<StreamChunk> = streamParser.parseEvent(chunk)
+
+    /**
+     * 2026-06: 该 adapter 用的协议层 normalizer(per-adapter 单例,跨 chunk 累积状态)。
+     */
+    private val anthropicNormalizer: AnthropicStreamNormalizer by lazy {
+        AnthropicStreamNormalizer()
+    }
+
+    override fun streamNormalizer(): StreamEventNormalizer = anthropicNormalizer
 
     /**
      * OkHttp 客户端（lazy 初始化）
@@ -320,10 +337,6 @@ class AnthropicAdapter(
             choices = listOf(choice),
             usage = usage
         )
-    }
-
-    override fun parseStreamChunk(chunk: String): List<StreamChunk> {
-        return streamParser.parseEvent(chunk)
     }
 
     /**

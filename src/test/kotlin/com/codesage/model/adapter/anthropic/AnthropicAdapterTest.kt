@@ -259,7 +259,7 @@ class AnthropicAdapterTest {
         val event = """
             {"type": "message_start", "message": {"id": "msg_x", "model": "claude-3-5-sonnet"}}
         """.trimIndent()
-        val chunk = adapter.parseStreamChunk(event).firstOrNull()
+        val chunk = adapter.parseStreamChunkLegacy(event).firstOrNull()
         assertNotNull(chunk)
         assertEquals("msg_x", chunk!!.id)
         assertFalse(chunk.done)
@@ -271,7 +271,7 @@ class AnthropicAdapterTest {
         val event = """
             {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}
         """.trimIndent()
-        val chunk = adapter.parseStreamChunk(event).firstOrNull()
+        val chunk = adapter.parseStreamChunkLegacy(event).firstOrNull()
         assertNotNull(chunk)
         assertEquals("Hello", chunk!!.delta)
     }
@@ -314,7 +314,7 @@ class AnthropicAdapterTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     fun `parseStreamChunk handles message_stop event`() {
         val event = """{"type": "message_stop"}"""
-        val chunk = adapter.parseStreamChunk(event).firstOrNull()
+        val chunk = adapter.parseStreamChunkLegacy(event).firstOrNull()
         assertNotNull(chunk)
         assertTrue(chunk!!.done)
     }
@@ -455,8 +455,8 @@ class AnthropicAdapterTest {
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     fun `parseStreamChunk returns null for unknown event types`() {
-        assertTrue(adapter.parseStreamChunk("""{"type": "ping"}""").isEmpty())
-        assertTrue(adapter.parseStreamChunk("not valid json").isEmpty())
+        assertTrue(adapter.parseStreamChunkLegacy("""{"type": "ping"}""").isEmpty())
+        assertTrue(adapter.parseStreamChunkLegacy("not valid json").isEmpty())
     }
 
     // === 能力测试 ===

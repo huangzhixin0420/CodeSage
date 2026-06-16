@@ -37,9 +37,10 @@ class OpenAICompatibleAdapterTest {
         val chunk = "data: {\"id\":\"1\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}"
         val result = adapter.parseStreamChunk(chunk)
 
-        assertNotNull(result)
-        assertEquals("Hello", result?.firstOrNull()?.delta)
-        assertFalse(result?.firstOrNull()?.done ?: true)
+        assertEquals(1, result.size)
+        val evt = result[0]
+        assertTrue(evt is com.codesage.model.adapter.StreamEvent.Content.Text)
+        assertEquals("Hello", (evt as com.codesage.model.adapter.StreamEvent.Content.Text).delta)
     }
 
     @Test
@@ -47,8 +48,8 @@ class OpenAICompatibleAdapterTest {
         val chunk = "data: [DONE]"
         val result = adapter.parseStreamChunk(chunk)
 
-        assertNotNull(result)
-        assertTrue(result?.firstOrNull()?.done ?: false)
+        // [DONE] 触发 Flow.Finished(STOP)
+        assertTrue(result.any { it is com.codesage.model.adapter.StreamEvent.Flow.Finished })
     }
 
     @Test

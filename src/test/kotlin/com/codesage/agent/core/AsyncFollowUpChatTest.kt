@@ -1,4 +1,5 @@
 package com.codesage.agent.core
+import com.codesage.model.adapter.StreamEvent
 
 import com.codesage.model.adapter.ModelAdapter
 import com.codesage.model.dto.*
@@ -148,7 +149,7 @@ class AsyncFollowUpChatTest {
             override fun fromVendorResponse(response: String): ChatResponse =
                 ChatResponse("", "", emptyList(), null)
 
-            override fun parseStreamChunk(chunk: String): List<StreamChunk> = emptyList()
+            override fun parseStreamChunk(chunk: String): List<StreamEvent> = emptyList()
             override fun getStreamEndpoint(): String = "http://fake"
             override fun getChatEndpoint(): String = "http://fake"
             override fun getHeaders(): Map<String, String> = emptyMap()
