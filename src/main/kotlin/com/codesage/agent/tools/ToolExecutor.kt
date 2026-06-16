@@ -80,7 +80,7 @@ class ToolExecutor(
             logger.warn("[ToolExecutor] $message")
             auditLog?.log(
                 toolName = toolCall.name,
-                arguments = parseArguments(toolCall.arguments),
+                arguments = parseArguments(toolCall),
                 resultStatus = "blocked",
                 durationMs = System.currentTimeMillis() - startTime,
                 rateLimitWarning = rateLimitResult.warning
@@ -89,7 +89,7 @@ class ToolExecutor(
         }
 
         return try {
-            val args = parseArguments(toolCall.arguments)
+            val args = parseArguments(toolCall)
 
             // 2. Guardrails 前置检查（不重试）
             guardrails?.let { g ->
@@ -189,7 +189,7 @@ class ToolExecutor(
             )
             auditLog?.log(
                 toolName = toolCall.name,
-                arguments = parseArguments(toolCall.arguments),
+                arguments = parseArguments(toolCall),
                 resultStatus = "error",
                 durationMs = duration
             )
@@ -309,10 +309,34 @@ class ToolExecutor(
         }
     }
 
-    private fun parseArguments(arguments: String): JsonObject {
+    private fun parseArguments(toolCall: ToolCall): JsonObject =
+        parseArguments(toolCall.name, toolCall.arguments)
+
+    /**
+     * 解析 tool_call.arguments JSON 字符串。
+     *
+     * 失败时 logger.warn 记录 toolName + 异常类型 + 原始 JSON 预览(前 500 字符),
+     * 然后返回空 JsonObject,让 guardrails 走 "Missing X" 路径。
+     *
+     * 方案 C:不修根因,只加速定位。下次出现 "Missing X" 时,IDE 日志中能立刻看到:
+     * - exception 区分 (1) JsonDecodingException:partial_json 残缺
+     *                (2) JsonConvertException:provider 返回 object 而非 string
+     *                (3) 其它:LLM 输出本身就坏
+     * - raw 预览:直接看 provider 实际给的字符串
+     * 不修改 guardrails 行为,也不抛错(保持现有契约,不影响 tool flow)。
+     */
+    private fun parseArguments(toolName: String, arguments: String): JsonObject {
         return try {
             json.parseToJsonElement(arguments).jsonObject
         } catch (e: Exception) {
+            val preview = arguments.take(500).replace("\n", "\\n")
+            logger.warn(
+                "[ToolExecutor] Failed to parse tool_call arguments for '$toolName': " +
+                    "exception=${e.javaClass.simpleName}: ${e.message?.take(200)} " +
+                    "raw='$preview' " +
+                    "(args will be empty JsonObject; guardrails will report 'Missing ...' " +
+                    "which masks the real cause)"
+            )
             JsonObject(emptyMap())
         }
     }
