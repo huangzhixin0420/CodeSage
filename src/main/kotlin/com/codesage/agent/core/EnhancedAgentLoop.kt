@@ -7,6 +7,7 @@ import com.codesage.agent.memory.MemoryNudger
 import com.codesage.agent.tools.SkillToolAdapter
 import com.codesage.agent.tools.ToolExecutor
 import com.codesage.agent.tools.ToolRegistry
+import com.codesage.model.adapter.StreamEvent
 import com.codesage.model.dto.*
 import com.codesage.model.gateway.ModelGateway
 import com.codesage.shared.exceptions.*
@@ -75,6 +76,17 @@ class EnhancedAgentLoop(
     private val subAgentExecutor: SubAgentExecutor? = null,
     private val agentCore: AgentCore? = null,
     private val contextBudgetManager: ContextBudgetManager? = null,
+    /**
+     * 2026-06: 流式状态机 reducer — 接收 StreamEvent 输出 (newState, AgentStreamEvent list)。
+     * 默认 [TurnReducer] 实现 12+ case 穷举;测试可注入 fake reducer 验证状态推导。
+     */
+    private val streamReducer: TurnReducer = TurnReducer(),
+    /**
+     * 2026-06: 业务编排钩子列表(SubAgentDispatch / ToolConfirmation / ContextCompression /
+     * ModeSuggestion / SessionMigration)。与 Reducer 分工: Reducer 处理高频流事件,
+     * Hook 处理低频编排事件。默认空(无业务钩子,纯流式)。
+     */
+    private val turnHooks: List<TurnLifecycleHook> = emptyList(),
 ) {
 
     private val logger = Logger.getLogger<EnhancedAgentLoop>()
@@ -285,170 +297,80 @@ class EnhancedAgentLoop(
                 logger.info("[Turn $turnNumber] Sending request: model=$currentModelLocal, messages=${messages.size}, tools=$toolsCount")
                 logger.debug("[Turn $turnNumber] Tools list: ${toolRegistry.getAllTools().map { it.name }}")
 
-                // 流式请求：实时收集文本和工具调用增量
-                // O5.1: 标记"本轮是否已经补发过 RoundStart",在每轮循环开始时重置
-                var roundReasoningStarted = false
-                // 排查日志 2026-06-16:逐条 chunk 序号,搭配 CHUNK #N 日志使用
-                var chunkInspectCount = 0
-
+                // 流式请求:实时收集文本和工具调用增量 — 2026-06 改造为 TurnReducer 状态机驱动。
+                // 旧版的 roundReasoningStarted / chunkInspectCount 等 5 个并行变量已迁入 TurnState。
                 val result = try {
-                    var assistantContent = ""
-                    val streamingToolCalls = mutableMapOf<Int, StreamingToolCallBuilder>()
-                    var hasToolCalls = false
-                    var finishReason: String? = null
+                    // 2026-06: 接入新 StreamEvent + TurnReducer 管道。
+                    // Reducer 内部累积 state(文本/工具调用/代码块),返回 (newState, effects)。
+                    // EnhancedAgentLoop 只负责 emit effects 和 turn 末的 lifecycle hook,
+                    // 不再维护 5 个并行 mutable 变量(原 assistantContent / streamingToolCalls /
+                    // hasToolCalls / finishReason / responseUsage 全部由 state 取代)。
+                    val turnState = TurnState()
                     var responseUsage: Usage? = null
+                    var finishedReasonString: String? = null
+                    var hasToolCalls = false
 
-                    gateway.chatStreamLegacy(request).collect { chunk ->
+                    gateway.chatStream(request).collect { event ->
                         if (interrupted) return@collect
 
-                        // 先处理 finishReason（即使 done chunk 也可能携带）
-                        if (chunk.finishReason != null) {
-                            finishReason = chunk.finishReason
-                            if (chunk.finishReason == "tool_calls") {
+                        val (_, effects) = streamReducer.reduce(turnState, event)
+                        for (effect in effects) {
+                            emitEvent(effect)
+                        }
+
+                        // 跟踪 flow 结束事件以便后续组装 ChatResponse。
+                        if (event is StreamEvent.Flow.Finished) {
+                            responseUsage = event.usage ?: responseUsage
+                            finishedReasonString = when (event.finishReason) {
+                                FinishReason.STOP -> "stop"
+                                FinishReason.LENGTH -> "length"
+                                FinishReason.TOOL_CALLS -> "tool_calls"
+                                FinishReason.CONTENT_FILTER -> "content_filter"
+                                FinishReason.UNKNOWN -> "stop"
+                            }
+                            if (event.finishReason == FinishReason.TOOL_CALLS) {
                                 hasToolCalls = true
                             }
                         }
+                    }
 
-                        // 排查日志 2026-06-16:逐条 chunk dump。
-                        // 目的:定位 "<think>...</think> 段为什么没作为 ModelReasoning
-                        // 事件流到前端,却以 text 代码块形式出现在 UI" 这个 bug。
-                        // 打印每条 chunk 的 delta 长度/头、reasoningDelta 长度/头,
-                        // 由此可直接看出:
-                        //   - 段是否被切到 reasoningDelta
-                        //   - 段是否被误塞进 delta
-                        //   - 还是干脆两路都没切(整段被丢弃)
-                        // 用一个内部计数器 limitLogChunks 避免 100+ chunks 刷屏,
-                        // 前 30 条 + 末 5 条 + 任何 "delta 含 <think>" 的关键 chunk 全打。
-                        chunkInspectCount += 1
-                        val isLastChunk = chunk.done
-                        val deltaHead = chunk.delta.take(80).replace("\n", "\\n").replace("\"", "\\\"")
-                        val rdHead = (chunk.reasoningDelta ?: "").take(80).replace("\n", "\\n").replace("\"", "\\\"")
-                        val deltaHasThink = chunk.delta.contains("<think>")
-                        val rdHasThink = (chunk.reasoningDelta ?: "").contains("<think>")
-                        if (chunkInspectCount <= 30 || isLastChunk || deltaHasThink || rdHasThink) {
-                            logger.info(
-                                "[Turn $turnNumber] CHUNK #${chunkInspectCount} " +
-                                    "delta.len=${chunk.delta.length} " +
-                                    "rd.len=${chunk.reasoningDelta?.length ?: 0} " +
-                                    "done=${chunk.done} " +
-                                    "delta.head=\"" + deltaHead + "\" " +
-                                    "rd.head=\"" + rdHead + "\" " +
-                                    "deltaHasThink=$deltaHasThink " +
-                                    "rdHasThink=$rdHasThink"
-                            )
-                        }
+                    // 关键日志:流结束摘要,排查 reasoning 被吞 / 混入正文 / ```text``` 包裹等 bug。
+                    // 内容片段只截前 300 字符,避免日志膨胀。
+                    val assistantContent = turnState.assistantTextString()
+                    val hasThinkTag = assistantContent.contains("<think>")
+                    val hasTextCodeBlock = Regex("""`{3}text\b""").containsMatchIn(assistantContent) ||
+                        Regex("""`{3}\s*\n\s*[A-Za-z]""").containsMatchIn(assistantContent)
+                    val hasAnyCodeFence = assistantContent.contains("```")
+                    logger.info(
+                        "[Turn $turnNumber] STREAM END " +
+                            "model=$currentModelLocal " +
+                            "content.len=${assistantContent.length} " +
+                            "hasThinkTag=$hasThinkTag " +
+                            "hasTextCodeBlock=$hasTextCodeBlock " +
+                            "hasAnyCodeFence=$hasAnyCodeFence " +
+                            "finishReason=$finishedReasonString " +
+                            "hasToolCalls=$hasToolCalls " +
+                            "usage=$responseUsage " +
+                            "content.head=${assistantContent.take(300).replace("\n", "\\n")}"
+                    )
 
-                        // 处理 done chunk：保存 usage 后返回
-                        if (chunk.done) {
-                            // 关键日志:进入 done 分支(高频确认,排查 STREAM END 缺失)
-                            logger.info("[Turn ${turnNumber}] DONE branch entered, content.len=${assistantContent.length}")
-                            // O5.1 修正:如果流结束时推理 round 仍未关闭(例如纯 reasoning
-                            // 流到 done 才结束),在此处补发 RoundEnd,避免卡片卡在"思考中…"
-                            if (roundReasoningStarted) {
-                                roundReasoningStarted = false
-                                emitEvent(AgentStreamEvent.ModelReasoningRoundEnd(turnNumber))
-                            }
-                            responseUsage = chunk.usage
-                            // 关键日志:流结束摘要,排查 reasoning 被吞 / 混入正文 / ```text``` 包裹等 bug。
-                            // 内容片段只截前 300 字符,避免日志膨胀。
-                            val hasThinkTag = assistantContent.contains("<think>")
-                            val hasTextCodeBlock = Regex("""`{3}text\b""").containsMatchIn(assistantContent) ||
-                                Regex("""`{3}\s*\n\s*[A-Za-z]""").containsMatchIn(assistantContent)
-                            val hasAnyCodeFence = assistantContent.contains("```")
-                            logger.info(
-                                "[Turn $turnNumber] STREAM END " +
-                                    "model=$currentModelLocal " +
-                                    "content.len=${assistantContent.length} " +
-                                    "hasThinkTag=$hasThinkTag " +
-                                    "hasTextCodeBlock=$hasTextCodeBlock " +
-                                    "hasAnyCodeFence=$hasAnyCodeFence " +
-                                    "finishReason=$finishReason " +
-                                    "hasToolCalls=$hasToolCalls " +
-                                    "usage=$responseUsage " +
-                                    "content.head=${assistantContent.take(300).replace("\n", "\\n")}"
-                            )
-                            return@collect
-                        }
-
-                        // O5.1 修正:检测 reasoning round 边界
-                        //   判定:本 chunk 没有 reasoningDelta(无论有没有 delta / 工具调用)
-                        //   即表示"上一段 reasoning 结束了,接下来是文本/工具/其他"
-                        //   必须在处理 delta / 工具调用之前先关闭,前端据此折叠当前卡片
-                        if (roundReasoningStarted && chunk.reasoningDelta.isNullOrEmpty()) {
-                            roundReasoningStarted = false
-                            emitEvent(AgentStreamEvent.ModelReasoningRoundEnd(turnNumber))
-                        }
-
-                        // 文本增量：实时 emit
-                        if (chunk.delta.isNotEmpty()) {
-                            assistantContent += chunk.delta
-                            emitEvent(batchEmitter.acquireTextDelta(chunk.delta))
-                        }
-
-                        // 模型推理内容：实时 emit
-                        // O5.1 修正(用户反馈 2026-06):推理开始/结束事件严格按内容边界
-                        //   - RoundStart 只在首次解析到 reasoningDelta 时懒发射
-                        //   - RoundEnd 在"上一段 reasoning 结束、下一个是其他内容"时发射
-                        //   - 这保证:
-                        //       1) 不支持 reasoning 的模型完全不发,前端无空卡片
-                        //       2) 多轮推理(同 turn 内多次调用模型)每轮都有独立卡片
-                        //       3) 卡片不会卡在"思考中…"状态(每轮都有匹配的 End)
-                        if (!chunk.reasoningDelta.isNullOrEmpty()) {
-                            if (!roundReasoningStarted) {
-                                roundReasoningStarted = true
-                                emitEvent(AgentStreamEvent.ModelReasoningRoundStart(turnNumber))
-                            }
-                            emitEvent(AgentStreamEvent.ModelReasoning(chunk.reasoningDelta))
-                        }
-
-                        // 2026-06: 代码块事件转发(由 OpenAI 围栏状态机产出)
-                        // Start / Delta / End 三选一,直接 emit 对应 AgentStreamEvent
-                        when (val cb = chunk.codeBlock) {
-                            is com.codesage.model.dto.CodeBlockEvent.Start ->
-                                emitEvent(AgentStreamEvent.CodeBlockStart(cb.codeBlockId, cb.language, cb.filePath))
-                            is com.codesage.model.dto.CodeBlockEvent.Delta ->
-                                emitEvent(AgentStreamEvent.CodeBlockDelta(cb.codeBlockId, cb.delta))
-                            is com.codesage.model.dto.CodeBlockEvent.End ->
-                                emitEvent(AgentStreamEvent.CodeBlockEnd(cb.codeBlockId, cb.filePath))
-                            null -> {}
-                        }
-
-                        // 工具调用增量：检测开始、累积参数
-                        for (tcDelta in chunk.toolCallDeltas) {
-                            val builder = streamingToolCalls.getOrPut(tcDelta.index) {
-                                StreamingToolCallBuilder()
-                            }
-                            if (tcDelta.id != null) builder.id = tcDelta.id
-                            if (tcDelta.name != null) {
-                                builder.name = tcDelta.name
-                                if (builder.id.isNotEmpty()) {
-                                    emitEvent(AgentStreamEvent.ToolCallStart(ToolCall(builder.id, builder.name, "")))
-                                }
-                            }
-                            if (tcDelta.arguments != null) {
-                                builder.arguments.append(tcDelta.arguments)
-                                if (builder.id.isNotEmpty() && builder.name.isNotEmpty()) {
-                                    emitEvent(
-                                        AgentStreamEvent.ToolCallDelta(
-                                            builder.id,
-                                            builder.name,
-                                            tcDelta.arguments
-                                        )
-                                    )
-                                }
-                            }
+                    // 调用 turn-end hook(在组装 response 之前,让 hook 可读 state)
+                    for (hook in turnHooks) {
+                        val hookEffects = hook.onTurnEnd(turnNumber, turnState, null)
+                        for (effect in hookEffects) {
+                            emitEvent(effect)
                         }
                     }
 
                     // 将流式结果包装为 ChatResponse，复用后续处理逻辑
                     val toolCalls = if (hasToolCalls) {
-                        streamingToolCalls.values
+                        turnState.toolCalls.values
                             .filter { it.id.isNotEmpty() && it.name.isNotEmpty() }
                             .map { ToolCall(it.id, it.name, it.arguments.toString()) }
                     } else null
 
                     val message = Message.assistantMessage(assistantContent, toolCalls)
-                    val choice = Choice(index = 0, message = message, finishReason = finishReason)
+                    val choice = Choice(index = 0, message = message, finishReason = finishedReasonString)
                     Result.success(
                         ChatResponse(
                             id = "stream_${System.currentTimeMillis()}",

@@ -740,10 +740,10 @@ open class AgentCore(
 
                 val fullResponse = StringBuilder()
 
-                gateway.chatStreamLegacy(request).collect { chunk ->
-                    if (!chunk.done) {
-                        fullResponse.append(chunk.delta)
-                        emit(chunk.delta)
+                gateway.chatStream(request).collect { event ->
+                    if (event is com.codesage.model.adapter.StreamEvent.Content.Text) {
+                        fullResponse.append(event.delta)
+                        emit(event.delta)
                     }
                 }
 

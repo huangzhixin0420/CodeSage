@@ -776,6 +776,7 @@ class EnhancedAgentLoopTest {
                             "{\"type\":\"error\",\"error\":{\"type\":\"bad_request_error\",\"message\":\"invalid params, tool call result does not follow tool call (2013)\",\"http_code\":\"400\"}}"
                 )
             }
+            override fun chatStream(request: ChatRequest): kotlinx.coroutines.flow.Flow<com.codesage.model.adapter.StreamEvent> = chatStreamLegacy(request).toStreamEventFlow()
         }
     }
 
@@ -793,6 +794,7 @@ class EnhancedAgentLoopTest {
                 emit(StreamChunk(id = "c1", delta = "Answer", reasoningDelta = "", finishReason = "stop"))
                 emit(StreamChunk(id = "c1", delta = "", reasoningDelta = "", done = true))
             }
+            override fun chatStream(request: ChatRequest): kotlinx.coroutines.flow.Flow<com.codesage.model.adapter.StreamEvent> = chatStreamLegacy(request).toStreamEventFlow()
         }
         val loop = EnhancedAgentLoop(
             gateway = gateway,
@@ -831,6 +833,7 @@ class EnhancedAgentLoopTest {
                 emit(StreamChunk(id = "c2", delta = " answer", reasoningDelta = "", finishReason = "stop"))
                 emit(StreamChunk(id = "c2", delta = "", reasoningDelta = "", done = true))
             }
+            override fun chatStream(request: ChatRequest): kotlinx.coroutines.flow.Flow<com.codesage.model.adapter.StreamEvent> = chatStreamLegacy(request).toStreamEventFlow()
         }
         val loop = EnhancedAgentLoop(
             gateway = gateway,
@@ -883,6 +886,7 @@ class EnhancedAgentLoopTest {
                     }
                 }
             }
+            override fun chatStream(request: ChatRequest): kotlinx.coroutines.flow.Flow<com.codesage.model.adapter.StreamEvent> = chatStreamLegacy(request).toStreamEventFlow()
         }
         val loop = EnhancedAgentLoop(
             gateway = gateway,
@@ -923,6 +927,76 @@ class EnhancedAgentLoopTest {
             override fun chatStreamLegacy(request: ChatRequest): Flow<StreamChunk> = flow {
                 throw RuntimeException("simulated non-network error")
             }
+            override fun chatStream(request: ChatRequest): kotlinx.coroutines.flow.Flow<com.codesage.model.adapter.StreamEvent> = chatStreamLegacy(request).toStreamEventFlow()
         }
     }
 }
+
+
+/**
+ * 2026-06: Test helper - 把 StreamChunk 转换为 StreamEvent 列表。
+ */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+/**
+ * 2026-06: Test helper - 跨多个 StreamChunk 跟踪 tool call id(按 index 关联)。
+ * 既有 chatStreamLegacy 测试,后续 chunk 通常不带 id,需要回退到首 chunk 的 id,
+ * 才能让 TurnReducer 正确累积。
+ */
+private val STREAM_TEST_TOOL_IDS = mutableMapOf<Int, String>()
+
+private fun com.codesage.model.dto.StreamChunk.toStreamEvent(): List<com.codesage.model.adapter.StreamEvent> {
+    val events = mutableListOf<com.codesage.model.adapter.StreamEvent>()
+    if (delta.isNotEmpty()) {
+        events += com.codesage.model.adapter.StreamEvent.Content.Text(delta = delta)
+    }
+    if (!reasoningDelta.isNullOrEmpty()) {
+        events += com.codesage.model.adapter.StreamEvent.Content.Reasoning(delta = reasoningDelta!!)
+    }
+    for (tc in toolCallDeltas) {
+        // 2026-06: 同一 index 上,后续 chunk 缺省 id 时回退到首 chunk 的 id
+        // (OpenAI/Anthropic 协议首 chunk 带 id+name,后续 chunk 只追加 arguments,
+        //  新协议用 toolCallId 作主键,无 id 等于新工具调用,会破坏累积)。
+        val effectiveId = tc.id ?: STREAM_TEST_TOOL_IDS.getOrPut(tc.index) { "test_call_${tc.index}" }
+        if (tc.id != null) STREAM_TEST_TOOL_IDS[tc.index] = tc.id
+        events += com.codesage.model.adapter.StreamEvent.ToolCall.Delta(
+            toolCallId = effectiveId,
+            toolName = tc.name,
+            argumentsFragment = tc.arguments ?: "",
+        )
+    }
+    when (val cb = codeBlock) {
+        is com.codesage.model.dto.CodeBlockEvent.Start ->
+            events += com.codesage.model.adapter.StreamEvent.CodeBlock.Started(codeBlockId = cb.codeBlockId, language = cb.language)
+        is com.codesage.model.dto.CodeBlockEvent.Delta ->
+            events += com.codesage.model.adapter.StreamEvent.CodeBlock.Delta(codeBlockId = cb.codeBlockId, delta = cb.delta)
+        is com.codesage.model.dto.CodeBlockEvent.End ->
+            events += com.codesage.model.adapter.StreamEvent.CodeBlock.Ended(codeBlockId = cb.codeBlockId)
+        null -> {}
+    }
+    if (done) {
+        events += com.codesage.model.adapter.StreamEvent.Flow.Finished(
+            finishReason = com.codesage.model.dto.FinishReason.from(finishReason),
+            usage = usage,
+        )
+    } else if (finishReason != null) {
+        events += com.codesage.model.adapter.StreamEvent.Flow.Finished(
+            finishReason = com.codesage.model.dto.FinishReason.from(finishReason),
+            usage = usage,
+        )
+    }
+    return events
+}
+
+/**
+ * 2026-06: Test helper - 把 Flow<StreamChunk> 转换为 Flow<StreamEvent>。
+ * 让既有 chatStreamLegacy 模拟可以复用 — 在 chatStream override 中调用此 helper。
+ */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+private fun kotlinx.coroutines.flow.Flow<com.codesage.model.dto.StreamChunk>.toStreamEventFlow(): kotlinx.coroutines.flow.Flow<com.codesage.model.adapter.StreamEvent> =
+    kotlinx.coroutines.flow.flow {
+        collect { chunk ->
+            for (event in chunk.toStreamEvent()) {
+                emit(event)
+            }
+        }
+    }
