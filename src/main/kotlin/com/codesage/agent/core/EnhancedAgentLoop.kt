@@ -288,6 +288,8 @@ class EnhancedAgentLoop(
                 // 流式请求：实时收集文本和工具调用增量
                 // O5.1: 标记"本轮是否已经补发过 RoundStart",在每轮循环开始时重置
                 var roundReasoningStarted = false
+                // 排查日志 2026-06-16:逐条 chunk 序号,搭配 CHUNK #N 日志使用
+                var chunkInspectCount = 0
 
                 val result = try {
                     var assistantContent = ""
@@ -305,6 +307,35 @@ class EnhancedAgentLoop(
                             if (chunk.finishReason == "tool_calls") {
                                 hasToolCalls = true
                             }
+                        }
+
+                        // 排查日志 2026-06-16:逐条 chunk dump。
+                        // 目的:定位 "<think>...</think> 段为什么没作为 ModelReasoning
+                        // 事件流到前端,却以 text 代码块形式出现在 UI" 这个 bug。
+                        // 打印每条 chunk 的 delta 长度/头、reasoningDelta 长度/头,
+                        // 由此可直接看出:
+                        //   - 段是否被切到 reasoningDelta
+                        //   - 段是否被误塞进 delta
+                        //   - 还是干脆两路都没切(整段被丢弃)
+                        // 用一个内部计数器 limitLogChunks 避免 100+ chunks 刷屏,
+                        // 前 30 条 + 末 5 条 + 任何 "delta 含 <think>" 的关键 chunk 全打。
+                        chunkInspectCount += 1
+                        val isLastChunk = chunk.done
+                        val deltaHead = chunk.delta.take(80).replace("\n", "\\n").replace("\"", "\\\"")
+                        val rdHead = (chunk.reasoningDelta ?: "").take(80).replace("\n", "\\n").replace("\"", "\\\"")
+                        val deltaHasThink = chunk.delta.contains("<think>")
+                        val rdHasThink = (chunk.reasoningDelta ?: "").contains("<think>")
+                        if (chunkInspectCount <= 30 || isLastChunk || deltaHasThink || rdHasThink) {
+                            logger.info(
+                                "[Turn $turnNumber] CHUNK #${chunkInspectCount} " +
+                                    "delta.len=${chunk.delta.length} " +
+                                    "rd.len=${chunk.reasoningDelta?.length ?: 0} " +
+                                    "done=${chunk.done} " +
+                                    "delta.head=\"" + deltaHead + "\" " +
+                                    "rd.head=\"" + rdHead + "\" " +
+                                    "deltaHasThink=$deltaHasThink " +
+                                    "rdHasThink=$rdHasThink"
+                            )
                         }
 
                         // 处理 done chunk：保存 usage 后返回
