@@ -242,16 +242,21 @@ open class ModelGateway(
                                 continue
                             }
 
-                            val chunk = adapter.parseStreamChunk(line)
-                            if (chunk != null) {
+                            // 2026-06: parseStreamChunk 返回 List<StreamChunk>
+                            // 一次 SSE 行可能产生多个 chunk(典型:Delta + End 配对)。
+                            val chunks = adapter.parseStreamChunk(line)
+                            if (chunks.isNotEmpty()) {
                                 consecutiveNullChunks = 0
                                 emittedAnyChunk = true
-                                chunkCount++
-                                if (chunk.usage != null) lastUsage = chunk.usage
-                                if (chunk.finishReason != null) lastFinishReason = chunk.finishReason
-                                lastChunkDone = chunk.done
-                                emit(chunk)
-                                if (chunk.done) break
+                                chunkCount += chunks.size
+                                for (chunk in chunks) {
+                                    if (chunk.usage != null) lastUsage = chunk.usage
+                                    if (chunk.finishReason != null) lastFinishReason = chunk.finishReason
+                                    lastChunkDone = chunk.done
+                                    emit(chunk)
+                                    if (chunk.done) break
+                                }
+                                if (chunks.any { it.done }) break
                             } else {
                                 consecutiveNullChunks++
                                 if (consecutiveNullChunks > maxConsecutiveNullChunks) {
@@ -262,7 +267,23 @@ open class ModelGateway(
                             }
                         }
 
-                        // 兜底：如果整个响应体没有 emit 任何 chunk，至少 emit done
+                        // 2026-06: 流结束前先 flush 围栏状态机可能残留的 codeBlock 事件
+                        // (典型:代码块未闭合,流中断时 splitter.flush() 兜底 emit Delta + End)
+                        if (adapter is com.codesage.model.adapter.OpenAICompatibleAdapter) {
+                            val pendingCodeEvents = adapter.flushCodeBlockEvents()
+                            for (cbEvent in pendingCodeEvents) {
+                                emittedAnyChunk = true
+                                chunkCount++
+                                emit(StreamChunk(
+                                    id = "",
+                                    delta = "",
+                                    reasoningDelta = null,
+                                    done = false,
+                                    codeBlock = cbEvent,
+                                ))
+                            }
+                        }
+                        // 兜底:如果整个响应体没有 emit 任何 chunk,至少 emit done
                         if (!emittedAnyChunk) {
                             emit(StreamChunk(id = "", delta = "", done = true, usage = null))
                         } else if (!lastChunkDone) {

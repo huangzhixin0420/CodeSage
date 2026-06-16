@@ -189,7 +189,7 @@ class AgentCoreEndToEndTest {
         override fun fromVendorResponse(response: String): ChatResponse =
             ChatResponse("resp", "fake-model", emptyList(), null)
 
-        override fun parseStreamChunk(chunk: String): StreamChunk? = null
+        override fun parseStreamChunk(chunk: String): List<StreamChunk> = emptyList()
         override fun getStreamEndpoint(): String = "http://fake-e2e"
         override fun getChatEndpoint(): String = "http://fake-e2e"
         override fun getHeaders(): Map<String, String> = emptyMap()

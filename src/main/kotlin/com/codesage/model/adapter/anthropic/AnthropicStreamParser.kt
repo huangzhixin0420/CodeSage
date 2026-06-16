@@ -37,20 +37,24 @@ class AnthropicStreamParser {
      * 解析一个 SSE event (data 行内容)
      * @return StreamChunk 增量，null 表示应跳过该事件
      */
-    fun parseEvent(data: String): StreamChunk? {
+    /**
+     * 2026-06: 改为返回 List<StreamChunk>。原本返回 null = 跳过,改为返回空 list。
+     * 多数分支只产生 1 个 chunk,content_block_start 等分支返回空 list 表示跳过。
+     */
+    fun parseEvent(data: String): List<StreamChunk> {
         val event = try {
             json.decodeFromString(AnthropicStreamEvent.serializer(), data)
         } catch (e: Exception) {
             // 忽略无法解析的事件
-            return null
+            return emptyList()
         }
 
         return when (event.type) {
             "message_start" -> {
-                // 消息开始，返回空 delta（携带 model id）
+                // 消息开始,返回空 delta(携带 model id)
                 val modelId = event.message?.model ?: "unknown"
                 val messageId = event.message?.id ?: "msg_${System.currentTimeMillis()}"
-                StreamChunk(id = messageId, delta = "", done = false)
+                listOf(StreamChunk(id = messageId, delta = "", done = false))
             }
 
             "content_block_start" -> {
@@ -59,58 +63,50 @@ class AnthropicStreamParser {
                 if (block?.type == "tool_use") {
                     val id = block.id
                     val name = block.name
-                    // 严格校验：Anthropic tool_use id 格式必须合法。
-                    // 原因：上游 LLM 代理 / SDK 有时会返特殊字符 / 控制字符 / 超长 id，
-                    // 这些会被 Anthropic 拒为 "tool call id is invalid (2013)"。
-                    // 规则：1~64 chars，[A-Za-z0-9_-] 范围。
+                    // 严格校验:Anthropic tool_use id 格式必须合法
                     val idValid = id != null && isValidToolId(id)
                     val nameValid = !name.isNullOrBlank()
                     if (!idValid || !nameValid) {
                         toolMetas.remove(index)
                         toolInputs.remove(index)
-                        // 详细记下：但不 dump 完整 id（避免生成长 log），只报长度 + 首几个字符
                         val preview = id?.take(20)?.let { "len=${it.length} preview=\"$it\"" } ?: "null"
                         logger.warn(
                             "[AnthropicStreamParser] Skipping tool_use with invalid id/name " +
                                     "(index=$index, id=$preview, name=${name?.take(20) ?: "null"})"
                         )
-                        return null
+                        return emptyList()
                     }
                     toolMetas[index] = id!! to name!!
                     toolInputs[index] = StringBuilder()
                 }
-                null
+                emptyList()
             }
 
             "content_block_delta" -> {
                 val delta = event.delta
                 val index = event.index ?: 0
                 when (delta?.type) {
-                    "text_delta" -> {
-                        StreamChunk(
-                            id = "",
-                            delta = delta.text ?: "",
-                            done = false
-                        )
-                    }
+                    "text_delta" -> listOf(StreamChunk(
+                        id = "",
+                        delta = delta.text ?: "",
+                        done = false
+                    ))
 
-                    "thinking_delta" -> {
-                        StreamChunk(
-                            id = "",
-                            delta = "",
-                            reasoningDelta = delta.thinking ?: "",
-                            done = false
-                        )
-                    }
+                    "thinking_delta" -> listOf(StreamChunk(
+                        id = "",
+                        delta = "",
+                        reasoningDelta = delta.thinking ?: "",
+                        done = false
+                    ))
 
                     "input_json_delta" -> {
                         // 累积工具参数 JSON 片段
                         toolInputs.getOrPut(index) { StringBuilder() }.append(delta.partialJson ?: "")
-                        // 暂不返回 stream chunk，等 content_block_stop 时一次性返回完整 tool call
-                        null
+                        // 暂不返回 stream chunk,等 content_block_stop 时一次性返回完整 tool call
+                        emptyList()
                     }
 
-                    else -> null
+                    else -> emptyList()
                 }
             }
 
@@ -120,7 +116,7 @@ class AnthropicStreamParser {
                 val inputBuilder = toolInputs.remove(index)
                 if (meta != null && inputBuilder != null) {
                     val (toolId, toolName) = meta
-                    StreamChunk(
+                    listOf(StreamChunk(
                         id = "",
                         delta = "",
                         done = false,
@@ -132,33 +128,33 @@ class AnthropicStreamParser {
                                 arguments = inputBuilder.toString()
                             )
                         )
-                    )
+                    ))
                 } else {
-                    null
+                    emptyList()
                 }
             }
 
             "message_delta" -> {
                 // 包含 stop_reason 和 usage
-                StreamChunk(
+                listOf(StreamChunk(
                     id = "",
                     delta = "",
                     done = false,
                     finishReason = event.delta?.stopReason
-                )
+                ))
             }
 
             "message_stop" -> {
-                StreamChunk(id = "", delta = "", done = true)
+                listOf(StreamChunk(id = "", delta = "", done = true))
             }
 
-            "ping" -> null
+            "ping" -> emptyList()
             "error" -> {
-                // 错误事件，让上层捕获
+                // 错误事件,让上层捕获
                 throw RuntimeException("Anthropic stream error: $data")
             }
 
-            else -> null
+            else -> emptyList()
         }
     }
 

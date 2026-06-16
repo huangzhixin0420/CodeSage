@@ -253,27 +253,27 @@ class GeminiAdapter(
      * - toolCallDeltas：拼接所有 part.functionCall
      * - done：finishReason == "STOP" 时为 true
      */
-    override fun parseStreamChunk(chunk: String): StreamChunk? {
+    override fun parseStreamChunk(chunk: String): List<StreamChunk> {
         // 跳过 SSE 注释行
-        if (chunk.startsWith(":")) return null
+        if (chunk.startsWith(":")) return emptyList()
         // 跳过空行
-        if (chunk.isBlank()) return null
+        if (chunk.isBlank()) return emptyList()
         // 提取 data: 后面的 JSON（如果是 SSE）
         val jsonContent = if (chunk.startsWith("data:")) {
             chunk.removePrefix("data:").trim()
         } else {
             chunk
         }
-        if (jsonContent.isEmpty() || jsonContent == "[DONE]") return null
+        if (jsonContent.isEmpty() || jsonContent == "[DONE]") return emptyList()
 
         val geminiResp = try {
             json.decodeFromString(GeminiStreamChunk.serializer(), jsonContent)
         } catch (e: Exception) {
             // 忽略无法解析的行
-            return null
+            return emptyList()
         }
 
-        val candidate = geminiResp.candidates.firstOrNull() ?: return null
+        val candidate = geminiResp.candidates.firstOrNull() ?: return emptyList()
         val parts = candidate.content?.parts.orEmpty()
 
         val text = parts.mapNotNull { it.text }.joinToString("")
@@ -288,7 +288,7 @@ class GeminiAdapter(
             }
         }
 
-        return StreamChunk(
+        return listOf(StreamChunk(
             id = "",
             delta = text,
             done = candidate.finishReason == "STOP",
@@ -301,7 +301,7 @@ class GeminiAdapter(
                     totalTokens = u.totalTokenCount
                 )
             }
-        )
+        ))
     }
 
     /**

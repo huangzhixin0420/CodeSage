@@ -119,7 +119,7 @@ class ModelCapabilitiesTest {
         override fun fromVendorResponse(response: String): com.codesage.model.dto.ChatResponse =
             com.codesage.model.dto.ChatResponse("", "", emptyList(), null)
 
-        override fun parseStreamChunk(chunk: String): com.codesage.model.dto.StreamChunk? = null
+        override fun parseStreamChunk(chunk: String): List<com.codesage.model.dto.StreamChunk> = emptyList()
         override fun getStreamEndpoint(): String = "http://test"
         override fun getChatEndpoint(): String = "http://test"
         override fun getHeaders(): Map<String, String> = emptyMap()

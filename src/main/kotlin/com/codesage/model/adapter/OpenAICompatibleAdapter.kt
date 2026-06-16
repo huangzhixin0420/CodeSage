@@ -30,6 +30,8 @@ abstract class OpenAICompatibleAdapter(
     // 状态机每次推进消费一段 delta,产出 reasoning 跟 content 拆分。
     private var inThinkBlock: Boolean = false
     private var pendingThink: StringBuilder = StringBuilder()
+    // 2026-06: fenced code block 状态机 — 跨 chunk 识别 ```/~~~ 围栏
+    private val fencedCodeSplitter = FencedCodeSplitter()
     // 关键日志:首块 dump 标志。turn 间由 resetStreamState() 重置。
     private var firstChunkDumped: Boolean = false
 
@@ -71,6 +73,8 @@ abstract class OpenAICompatibleAdapter(
         inThinkBlock = false
         pendingThink.setLength(0)
         firstChunkDumped = false
+        // 2026-06: 重置围栏状态机(同 adapter 实例多 turn 复用)
+        fencedCodeSplitter.reset()
     }
 
     override fun toVendorRequest(request: ChatRequest): String {
@@ -129,22 +133,32 @@ abstract class OpenAICompatibleAdapter(
         )
     }
 
-    override fun parseStreamChunk(chunk: String): StreamChunk? {
-        if (!chunk.startsWith("data:")) return null
+    /**
+     * 2026-06: parseStreamChunk 改为返回 List<StreamChunk>。
+     *
+     * 原因:围栏状态机(FencedCodeSplitter)在一帧 SSE 数据内可能产生多个事件
+     * (典型:Delta + End 同时出现)。保留单 StreamChunk 返回意味着只能
+     * emit 1 个事件,会丢 Delta 的代码内容。
+     *
+     * ModelGateway 会用 for 循环消费整个列表,语义无变化。
+     *
+     * 其他 adapter (AnthropicStreamParser / GeminiAdapter) 保留 StreamChunk? 旧契约,
+     * ModelGateway 已做兼容:若 parseStreamChunk 返回 null 当成空 list。
+     */
+    override fun parseStreamChunk(chunk: String): List<StreamChunk> {
+        if (!chunk.startsWith("data:")) return emptyList()
 
         val jsonStr = chunk.removePrefix("data:").trim()
         if (jsonStr == "[DONE]") {
-            // 关键日志:done sentinel 一定打印,排查 "STREAM END 不触发" 类问题
             logger.info("[$providerName] DONE SENTINEL received")
-            return StreamChunk(id = "", delta = "", done = true)
+            return listOf(StreamChunk(id = "", delta = "", done = true))
         }
 
         return try {
             val streamData = json.decodeFromString<VendorStreamData>(jsonStr)
             val choice = streamData.choices.firstOrNull()
             val rawDelta = choice?.delta?.content ?: ""
-            // 关键日志:每个 provider 实例只 dump 一次首个非空 chunk,便于定位 reasoning 字段名。
-            // 用 instance 级标志避免 100+ chunks 时刷屏;resetStreamState() 时会重置。
+            // 关键日志:每个 provider 实例只 dump 一次首个非空 chunk
             if (rawDelta.isNotEmpty() && !firstChunkDumped) {
                 firstChunkDumped = true
                 val d = choice?.delta
@@ -159,40 +173,36 @@ abstract class OpenAICompatibleAdapter(
                         "rawJson.head=${jsonStr.take(500)}"
                 )
             }
-            // === reasoning 提取,按优先级支持三种模式:
-            //   1) 供应商专有字段: reasoning_content / reasoning / thinking
-            //   2) <think>...</think> 标签包裹在 delta.content 内
-            //     (MiniMax-M3 / Qwen2.5 / DeepSeek-R1 distill Qwen 等)
-            // 两种模式不互斥:模式 1 优先(供应商专有),模式 2 兜底。
-            // 模式 1 触发条件: 三个专有字段(reasoningContent / reasoning / thinking)
-            // 中**第一个非空白字段**。注意是"非空白"而非"非 null" ——
-            // 很多 OpenAI 兼容中转(含部分中转给 minimax 的代理)会发
-            // `reasoning_content: ""` 作为"该模型无 thinking"的占位,
-            // Kotlin 的 `?:` 在空串上不触发回退,会把空串当成"有 reasoning"，
-            // 错走模式 1 → 跳过 <think> 标签解析 → 正文卡里出现 <think> 文本 +
-            // 整段答案代码 + 标签字符,视觉上"思考卡和正文卡内容混在一起"。
+            // === reasoning 提取(同原逻辑) ===
             val dedicatedReasoning: String? = choice?.delta?.let { d ->
                 listOf(d.reasoningContent, d.reasoning, d.thinking)
                     .firstOrNull { !it.isNullOrBlank() }
             }
-            val (reasoningDelta, delta) = if (dedicatedReasoning != null) {
-                // 模式 1: 供应商专有字段。delta.content 已经是正文,无 <think> 标签。
+            val (reasoningDelta, reasoningParsedDelta) = if (dedicatedReasoning != null) {
                 Pair(dedicatedReasoning, rawDelta)
             } else if (rawDelta.contains("<") && (inThinkBlock || rawDelta.contains("<think>") || rawDelta.contains("</think>"))) {
-                // 模式 2: <think> 标签模式。跑状态机切分。
                 splitThinkTag(rawDelta)
             } else if (inThinkBlock) {
-                // 上一帧在 <think> 内但这一帧不含 <,说明正文段后续纯文本
-                // (这种情况很少见,但要兜住:把整段当 thinking,下一帧重新判断)
                 pendingThink.append(rawDelta)
                 Pair(rawDelta, "")
             } else {
-                // 普通正文,不含任何 thinking
                 Pair(null, rawDelta)
             }
-            val finishReason = choice?.finishReason
+            // reasoningParsedDelta 是去 think 后的纯文本(可能含代码围栏)
 
-            // 解析流式工具调用增量
+            // === 围栏状态机(2026-06 新增) ===
+            // 优先级:reasoning > codeBlock > text
+            // - 若 reasoningDelta 非空,这一帧是 reasoning 段,代码围栏不会出现(模型思考时不写代码)
+            // - 否则跑 fencedCodeSplitter,把代码块字符切走,text 里只留非代码文本
+            val (textDelta, codeBlockEvents) = if (reasoningDelta != null) {
+                // reasoning 帧:围栏忽略(不应该出现,但兜底)
+                Pair(reasoningParsedDelta, emptyList<CodeBlockEvent>())
+            } else {
+                val result = fencedCodeSplitter.feed(reasoningParsedDelta)
+                Pair(result.text, result.events)
+            }
+
+            val finishReason = choice?.finishReason
             val toolCallDeltas = choice?.delta?.toolCalls?.map { tcDelta ->
                 StreamToolCallDelta(
                     index = tcDelta.index,
@@ -202,18 +212,46 @@ abstract class OpenAICompatibleAdapter(
                 )
             } ?: emptyList()
 
-            StreamChunk(
+            // 构造 StreamChunk 列表
+            // - 若有多个 codeBlockEvents(典型 Delta+End),需要多个 StreamChunk
+            // - 否则返回 1 个(把 codeBlockEvent 填进去)
+            val mainChunk = StreamChunk(
                 id = streamData.id,
-                delta = delta,
+                delta = textDelta,
                 reasoningDelta = reasoningDelta,
                 done = false,
                 toolCallDeltas = toolCallDeltas,
-                finishReason = finishReason
+                finishReason = finishReason,
+                codeBlock = codeBlockEvents.firstOrNull(),
             )
+            if (codeBlockEvents.size <= 1) {
+                listOf(mainChunk)
+            } else {
+                // 多事件:第 1 个装到 mainChunk,剩余作为独立 chunk(只带 codeBlock)
+                listOf(mainChunk) + codeBlockEvents.drop(1).map { cbEvent ->
+                    StreamChunk(
+                        id = streamData.id,
+                        delta = "",
+                        reasoningDelta = null,
+                        done = false,
+                        toolCallDeltas = emptyList(),
+                        finishReason = null,
+                        codeBlock = cbEvent,
+                    )
+                }
+            }
         } catch (e: Exception) {
-            null
+            emptyList()
         }
     }
+
+    /**
+     * 2026-06: 流结束兜底,flush 围栏状态机可能残留的 events(典型:流中断时
+     * 代码块未闭合,splitter.flush() 会在 done=true 之前 emit Delta + End)。
+     *
+     * ModelGateway 在 SSE 循环结束后调一次;无残留时返回空 list。
+     */
+    fun flushCodeBlockEvents(): List<CodeBlockEvent> = fencedCodeSplitter.flush()
 
     protected open val userAgent: String = "CodeSage/1.0"
 

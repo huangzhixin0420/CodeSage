@@ -57,7 +57,7 @@ interface ModelAdapter {
     /**
      * 解析流式响应片段
      */
-    fun parseStreamChunk(chunk: String): StreamChunk?
+    fun parseStreamChunk(chunk: String): List<StreamChunk>
 
     /**
      * 获取模型信息

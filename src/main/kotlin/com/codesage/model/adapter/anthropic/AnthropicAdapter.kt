@@ -322,7 +322,7 @@ class AnthropicAdapter(
         )
     }
 
-    override fun parseStreamChunk(chunk: String): StreamChunk? {
+    override fun parseStreamChunk(chunk: String): List<StreamChunk> {
         return streamParser.parseEvent(chunk)
     }
 

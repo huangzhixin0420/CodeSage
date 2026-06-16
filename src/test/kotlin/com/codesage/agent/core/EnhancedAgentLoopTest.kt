@@ -285,7 +285,7 @@ class EnhancedAgentLoopTest {
             override fun fromVendorResponse(response: String): ChatResponse =
                 ChatResponse("", "", emptyList(), null)
 
-            override fun parseStreamChunk(chunk: String): StreamChunk? = null
+            override fun parseStreamChunk(chunk: String): List<StreamChunk> = emptyList()
             override fun getStreamEndpoint(): String = "http://fake"
             override fun getChatEndpoint(): String = "http://fake"
             override fun getHeaders(): Map<String, String> = emptyMap()

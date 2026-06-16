@@ -284,7 +284,7 @@ class GeminiAdapterTest {
     fun `parseStreamChunk handles SSE data prefix`() {
         val sseLine =
             """data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Hi"}]},"finishReason":""}]}"""
-        val chunk = adapter.parseStreamChunk(sseLine)
+        val chunk = adapter.parseStreamChunk(sseLine).firstOrNull()
         assertNotNull(chunk)
         assertEquals("Hi", chunk!!.delta)
         assertFalse(chunk.done)
@@ -296,7 +296,7 @@ class GeminiAdapterTest {
         val rawJson = """
             {"candidates":[{"content":{"role":"model","parts":[{"text":"Hello"}]},"finishReason":""}]}
         """.trimIndent()
-        val chunk = adapter.parseStreamChunk(rawJson)
+        val chunk = adapter.parseStreamChunk(rawJson).firstOrNull()
         assertNotNull(chunk)
         assertEquals("Hello", chunk!!.delta)
     }
@@ -307,7 +307,7 @@ class GeminiAdapterTest {
         val rawJson = """
             {"candidates":[{"content":{"role":"model","parts":[{"text":"Done"}]},"finishReason":"STOP"}]}
         """.trimIndent()
-        val chunk = adapter.parseStreamChunk(rawJson)
+        val chunk = adapter.parseStreamChunk(rawJson).firstOrNull()
         assertNotNull(chunk)
         assertTrue(chunk!!.done)
         assertEquals("STOP", chunk.finishReason)
@@ -319,7 +319,7 @@ class GeminiAdapterTest {
         val rawJson = """
             {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"sum","args":{"a":1,"b":2}}}]},"finishReason":""}]}
         """.trimIndent()
-        val chunk = adapter.parseStreamChunk(rawJson)
+        val chunk = adapter.parseStreamChunk(rawJson).firstOrNull()
         assertNotNull(chunk)
         assertEquals(1, chunk!!.toolCallDeltas.size)
         val firstArgs = chunk.toolCallDeltas[0].arguments ?: ""
@@ -333,20 +333,20 @@ class GeminiAdapterTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     fun `parseStreamChunk returns null for empty data line`() {
         // SSE 中结束标志
-        assertNull(adapter.parseStreamChunk("data: [DONE]"))
+        assertTrue(adapter.parseStreamChunk("data: [DONE]").isEmpty())
     }
 
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     fun `parseStreamChunk returns null for invalid JSON`() {
-        assertNull(adapter.parseStreamChunk("not json at all"))
+        assertTrue(adapter.parseStreamChunk("not json at all").isEmpty())
     }
 
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     fun `parseStreamChunk returns null for SSE comment line`() {
         // SSE 注释行以 : 开头
-        assertNull(adapter.parseStreamChunk(": heartbeat"))
+        assertTrue(adapter.parseStreamChunk(": heartbeat").isEmpty())
     }
 
     // === 完整流程测试（MockWebServer + 非流式 chat） ===

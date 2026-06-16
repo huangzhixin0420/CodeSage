@@ -38,8 +38,8 @@ class OpenAICompatibleAdapterTest {
         val result = adapter.parseStreamChunk(chunk)
 
         assertNotNull(result)
-        assertEquals("Hello", result?.delta)
-        assertFalse(result?.done ?: true)
+        assertEquals("Hello", result?.firstOrNull()?.delta)
+        assertFalse(result?.firstOrNull()?.done ?: true)
     }
 
     @Test
@@ -48,14 +48,14 @@ class OpenAICompatibleAdapterTest {
         val result = adapter.parseStreamChunk(chunk)
 
         assertNotNull(result)
-        assertTrue(result?.done ?: false)
+        assertTrue(result?.firstOrNull()?.done ?: false)
     }
 
     @Test
     fun `should return null for non-data lines`() {
         val chunk = "event: message"
         val result = adapter.parseStreamChunk(chunk)
-        assertNull(result)
+        assertTrue(result.isEmpty())
     }
 
     @Test

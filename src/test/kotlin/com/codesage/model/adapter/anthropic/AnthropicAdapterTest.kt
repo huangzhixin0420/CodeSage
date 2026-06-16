@@ -259,7 +259,7 @@ class AnthropicAdapterTest {
         val event = """
             {"type": "message_start", "message": {"id": "msg_x", "model": "claude-3-5-sonnet"}}
         """.trimIndent()
-        val chunk = adapter.parseStreamChunk(event)
+        val chunk = adapter.parseStreamChunk(event).firstOrNull()
         assertNotNull(chunk)
         assertEquals("msg_x", chunk!!.id)
         assertFalse(chunk.done)
@@ -271,7 +271,7 @@ class AnthropicAdapterTest {
         val event = """
             {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}
         """.trimIndent()
-        val chunk = adapter.parseStreamChunk(event)
+        val chunk = adapter.parseStreamChunk(event).firstOrNull()
         assertNotNull(chunk)
         assertEquals("Hello", chunk!!.delta)
     }
@@ -285,7 +285,7 @@ class AnthropicAdapterTest {
         val start = """
             {"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "toolu_1", "name": "search"}}
         """.trimIndent()
-        assertNull(parser.parseEvent(start))
+        assertTrue(parser.parseEvent(start).isEmpty())
 
         // 2. 多个 input_json_delta
         val d1 = """
@@ -294,14 +294,14 @@ class AnthropicAdapterTest {
         val d2 = """
             {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "\"Kotlin\"}"}}
         """.trimIndent()
-        assertNull(parser.parseEvent(d1))
-        assertNull(parser.parseEvent(d2))
+        assertTrue(parser.parseEvent(d1).isEmpty())
+        assertTrue(parser.parseEvent(d2).isEmpty())
 
         // 3. content_block_stop - 此时应返回完整 tool call
         val stop = """
             {"type": "content_block_stop", "index": 1}
         """.trimIndent()
-        val chunk = parser.parseEvent(stop)
+        val chunk = parser.parseEvent(stop).firstOrNull()
         assertNotNull(chunk)
         assertEquals(1, chunk!!.toolCallDeltas.size)
         val tc = chunk.toolCallDeltas[0]
@@ -314,7 +314,7 @@ class AnthropicAdapterTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     fun `parseStreamChunk handles message_stop event`() {
         val event = """{"type": "message_stop"}"""
-        val chunk = adapter.parseStreamChunk(event)
+        val chunk = adapter.parseStreamChunk(event).firstOrNull()
         assertNotNull(chunk)
         assertTrue(chunk!!.done)
     }
@@ -334,18 +334,18 @@ class AnthropicAdapterTest {
              "content_block": {"type": "tool_use", "name": "search"}}
         """.trimIndent()
         // content_block_start 返回 null（仅记录元数据，不发 chunk）
-        assertNull(parser.parseEvent(start))
+        assertTrue(parser.parseEvent(start).isEmpty())
 
         // 即使后续有 input_json_delta，也不应发 tool_call_delta
         val delta = """
             {"type": "content_block_delta", "index": 1,
              "delta": {"type": "input_json_delta", "partial_json": "{\"query\":\"k\"}"}}
         """.trimIndent()
-        assertNull(parser.parseEvent(delta))
+        assertTrue(parser.parseEvent(delta).isEmpty())
 
         // content_block_stop 也不应发出占位 id
         val stop = """{"type": "content_block_stop", "index": 1}"""
-        assertNull(parser.parseEvent(stop), "Should NOT emit a tool_call with fabricated id")
+        assertTrue(parser.parseEvent(stop).isEmpty(), "Should NOT emit a tool_call with fabricated id")
     }
 
     @Test
@@ -357,9 +357,9 @@ class AnthropicAdapterTest {
             {"type": "content_block_start", "index": 0,
              "content_block": {"type": "tool_use", "id": "", "name": "x"}}
         """.trimIndent()
-        assertNull(parser.parseEvent(start))
+        assertTrue(parser.parseEvent(start).isEmpty())
         val stop = """{"type": "content_block_stop", "index": 0}"""
-        assertNull(parser.parseEvent(stop))
+        assertTrue(parser.parseEvent(stop).isEmpty())
     }
 
     @Test
@@ -371,9 +371,9 @@ class AnthropicAdapterTest {
             {"type": "content_block_start", "index": 0,
              "content_block": {"type": "tool_use", "id": "toolu_1"}}
         """.trimIndent()
-        assertNull(parser.parseEvent(start))
+        assertTrue(parser.parseEvent(start).isEmpty())
         val stop = """{"type": "content_block_stop", "index": 0}"""
-        assertNull(parser.parseEvent(stop))
+        assertTrue(parser.parseEvent(stop).isEmpty())
     }
 
     // ===== P0 修复：tool_result toolCallId 为空 → 跳过、不能发空 tool_use_id =====
@@ -455,8 +455,8 @@ class AnthropicAdapterTest {
     @Test
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     fun `parseStreamChunk returns null for unknown event types`() {
-        assertNull(adapter.parseStreamChunk("""{"type": "ping"}"""))
-        assertNull(adapter.parseStreamChunk("not valid json"))
+        assertTrue(adapter.parseStreamChunk("""{"type": "ping"}""").isEmpty())
+        assertTrue(adapter.parseStreamChunk("not valid json").isEmpty())
     }
 
     // === 能力测试 ===
