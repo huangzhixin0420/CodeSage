@@ -129,6 +129,63 @@ sealed class AgentStreamEvent {
     data class ModelReasoningRoundEnd(val roundIndex: Int) : AgentStreamEvent()
 
     /**
+     * 2026-06: 代码块开始事件。
+     *
+     * 后端 LLM adapter(`OpenAICompatibleAdapter` 等)在解析到 fenced code block
+     * 开围栏时 emit,前端据此创建独立的 [CodeBlockCard] 组件,后续 [CodeBlockDelta]
+     * 增量推入内容,流结束时由 [CodeBlockEnd] 折叠/挂工具栏。
+     *
+     * 与 [ModelReasoning] / [ModelReasoningRoundStart] 同构,后端识别 + 前端组件
+     * 实时渲染,避免"流结束才看到代码块增强"的延迟问题(也消除 enhanceCodeBlocks
+     * 误伤自管组件的边界问题)。
+     *
+     * 调研依据: `docs/research/CodeBlock围栏格式调研-2026-06-16-01.md`
+     *
+     * @param codeBlockId 唯一 ID(`cb-N`,N 从 1 开始;同 turn 内多代码块并行时区分)
+     * @param language info string(trim 后),常见值 `kotlin` / `python` / `text`;
+     *                 围栏无 info string 时为 null,前端 fallback 为 "text"
+     * @param filePath info string 中可能的文件路径(暂由前端解析;本次实现先原样透传)
+     */
+    data class CodeBlockStart(
+        val codeBlockId: String,
+        val language: String? = null,
+        val filePath: String? = null,
+    ) : AgentStreamEvent()
+
+    /**
+     * 2026-06: 代码块内容增量。
+     *
+     * 适配器在开围栏之后,每段代码字符流式 emit Delta,前端增量推入 [CodeBlockCard]。
+     * 多个代码块并行时按 [codeBlockId] 分桶(coalesceKey 包含 ID),
+     * 互不覆盖。
+     *
+     * @param codeBlockId 与对应 [CodeBlockStart.codeBlockId] 相同
+     * @param delta 本 chunk 内的代码字符增量
+     */
+    data class CodeBlockDelta(
+        val codeBlockId: String,
+        val delta: String,
+    ) : AgentStreamEvent()
+
+    /**
+     * 2026-06: 代码块结束事件,与 [CodeBlockStart] 配对。
+     *
+     * 触发时机:
+     *   1) 适配器解析到闭围栏(同类型 + 长度 ≥ 开围栏)
+     *   2) 流正常结束但仍在代码块内(`done=true` 兜底,符合 CommonMark 规范)
+     *
+     * 前端收到后,complete 当前 [CodeBlockCard] 并挂 5 按钮工具栏
+     * (应用/插入/创建/复制/拒绝/diff,视 lang 和 filePath 决定显示哪些)。
+     *
+     * @param codeBlockId 与对应 [CodeBlockStart.codeBlockId] 相同
+     * @param filePath 同 CodeBlockStart(允许补全/修正)
+     */
+    data class CodeBlockEnd(
+        val codeBlockId: String,
+        val filePath: String? = null,
+    ) : AgentStreamEvent()
+
+    /**
      * 发生错误
      */
     data class Error(val message: String) : AgentStreamEvent()

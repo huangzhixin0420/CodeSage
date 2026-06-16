@@ -367,11 +367,22 @@ class EventConsumer(
                 // O5.1: 多轮推理终点 — 纯状态事件,无需额外日志
             }
 
+            // 2026-06: CodeBlock 事件 - 投递日志(便于 grep 调试)
+            is AgentStreamEvent.CodeBlockStart -> logger.info(
+                "[EventConsumer] delivered: type=CodeBlockStart, turnId=$turnId, " +
+                        "codeBlockId=${event.codeBlockId}, language=${event.language}, msgType=$msgType"
+            )
+            is AgentStreamEvent.CodeBlockEnd -> logger.info(
+                "[EventConsumer] delivered: type=CodeBlockEnd, turnId=$turnId, " +
+                        "codeBlockId=${event.codeBlockId}, msgType=$msgType"
+            )
+
             is AgentStreamEvent.TextDelta,
             is AgentStreamEvent.Thinking,
             is AgentStreamEvent.ModelReasoning,
+            is AgentStreamEvent.CodeBlockDelta,
             is AgentStreamEvent.ToolCallDelta -> {
-                // 异常路径:这四种应该是 Coalescable,不应走 Terminal 分支
+                // 异常路径:这五种应该是 Coalescable,不应走 Terminal 分支
                 // 落到这里说明 classifier 与事件流不一致 — 立刻 WARN
                 logger.warn(
                     "[EventConsumer] delivered via Terminal path (classifier/state mismatch): " +

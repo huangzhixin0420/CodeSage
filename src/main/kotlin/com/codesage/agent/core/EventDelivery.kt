@@ -52,6 +52,10 @@ val AgentStreamEvent.coalesceKey: String?
         // O5.1: RoundStart / RoundEnd 都走 Terminal,不参与合并(null)
         is AgentStreamEvent.ModelReasoningRoundStart -> null
         is AgentStreamEvent.ModelReasoningRoundEnd -> null
+        // 2026-06: CodeBlockStart/End 走 Terminal(立即发),CodeBlockDelta 按 ID 分桶拼接
+        is AgentStreamEvent.CodeBlockStart -> null
+        is AgentStreamEvent.CodeBlockEnd -> null
+        is AgentStreamEvent.CodeBlockDelta -> "code_block_delta/${this.codeBlockId}"
         else -> null
     }
 
@@ -92,6 +96,10 @@ fun AgentStreamEvent.mergeWith(other: AgentStreamEvent): AgentStreamEvent? = whe
             other.processId.takeIf { it.isNotEmpty() } ?: this.processId,
             other.done
         )
+
+    // 2026-06: CodeBlockDelta 拼接 - 同一 codeBlockId 的多 chunk 累积成完整代码
+    this is AgentStreamEvent.CodeBlockDelta && other is AgentStreamEvent.CodeBlockDelta ->
+        AgentStreamEvent.CodeBlockDelta(this.codeBlockId, this.delta + other.delta)
 
     else -> null
 }

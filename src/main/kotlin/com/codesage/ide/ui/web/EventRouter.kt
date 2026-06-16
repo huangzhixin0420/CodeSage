@@ -86,6 +86,33 @@ class EventRouter {
             )
         }
 
+        // === 代码块(2026-06:流式事件驱动,替代前端 enhanceCodeBlocks post-processing) ===
+        register<AgentStreamEvent.CodeBlockStart> { e, turnId ->
+            mapOf(
+                "type" to "code_block_start",
+                "turnId" to turnId,
+                "codeBlockId" to e.codeBlockId,
+                "language" to e.language,
+                "filePath" to e.filePath,
+            )
+        }
+        register<AgentStreamEvent.CodeBlockDelta> { e, turnId ->
+            mapOf(
+                "type" to "code_block_delta",
+                "turnId" to turnId,
+                "codeBlockId" to e.codeBlockId,
+                "delta" to e.delta,
+            )
+        }
+        register<AgentStreamEvent.CodeBlockEnd> { e, turnId ->
+            mapOf(
+                "type" to "code_block_end",
+                "turnId" to turnId,
+                "codeBlockId" to e.codeBlockId,
+                "filePath" to e.filePath,
+            )
+        }
+
         // === 工具调用 ===
         register<AgentStreamEvent.ToolCallStart> { e, turnId ->
             // 修复:summary 不再是 "Running X..." 跟工具名重复

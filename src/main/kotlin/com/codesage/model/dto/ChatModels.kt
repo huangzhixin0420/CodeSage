@@ -65,6 +65,49 @@ data class StreamToolCallDelta(
 )
 
 /**
+ * 2026-06: 流式代码块事件 (fenced code block 的 Start / Delta / End 三选一)
+ *
+ * 由 [com.codesage.model.adapter.OpenAICompatibleAdapter] 等 adapter 在解析到
+ * fenced code block 边界时产出,塞进 [StreamChunk.codeBlock] 字段。
+ *
+ * 设计目的:让 adapter 直接 emit 结构化的代码块事件,而不是把代码块字符混在
+ * [StreamChunk.delta] 里,这样:
+ *   1) 多个代码块并行时按 [codeBlockId] 分桶
+ *   2) 代码块字符不再进 assistantContent,避免前端的 markdown 二次解析
+ *   3) 后续对接 Anthropic(Gemini)时,Anthropic 的 `content_block_start/delta/stop`
+ *      可以直接透传为本 sealed 的 3 个成员
+ *
+ * 调研依据: docs/research/CodeBlock围栏格式调研-2026-06-16-01.md
+ */
+sealed class CodeBlockEvent {
+    /**
+     * 开围栏识别成功时产生;codeBlockId 由 adapter 内部计数器生成(`cb-N`),
+     * 同 turn 内从 1 开始递增。
+     */
+    data class Start(
+        val codeBlockId: String,
+        val language: String? = null,
+        val filePath: String? = null,
+    ) : CodeBlockEvent()
+
+    /**
+     * 开闭围栏之间的代码字符增量,可能跨多个 chunk,前端合并。
+     */
+    data class Delta(
+        val codeBlockId: String,
+        val delta: String,
+    ) : CodeBlockEvent()
+
+    /**
+     * 闭围栏识别成功,或流正常结束但仍在代码块内(CommonMark 允许不闭合)。
+     */
+    data class End(
+        val codeBlockId: String,
+        val filePath: String? = null,
+    ) : CodeBlockEvent()
+}
+
+/**
  * 流式响应片段
  */
 data class StreamChunk(
@@ -74,7 +117,13 @@ data class StreamChunk(
     val done: Boolean = false,
     val toolCallDeltas: List<StreamToolCallDelta> = emptyList(),
     val finishReason: String? = null,
-    val usage: Usage? = null
+    val usage: Usage? = null,
+    /**
+     * 2026-06: 代码块事件(Start / Delta / End 三选一)。
+     * 一次 chunk 最多携带一个 codeBlock 事件,因为 fence 边界天然不会重叠。
+     * 设计上跟 [toolCallDeltas] 同级(都是非 TextDelta 类的"结构化增量")。
+     */
+    val codeBlock: CodeBlockEvent? = null,
 )
 
 /**

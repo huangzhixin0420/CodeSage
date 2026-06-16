@@ -1019,6 +1019,10 @@ open class AgentCore(
                 is AgentStreamEvent.ModelReasoningRoundEnd -> {
                     // O5.1: 多轮推理终点,执行流日志忽略
                 }
+                // 2026-06: CodeBlock 事件 - 执行流日志忽略(只关心文本和工具结果)
+                is AgentStreamEvent.CodeBlockStart -> {}
+                is AgentStreamEvent.CodeBlockDelta -> {}
+                is AgentStreamEvent.CodeBlockEnd -> {}
                 AgentStreamEvent.Done -> {}
             }
         }
