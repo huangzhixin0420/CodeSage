@@ -218,7 +218,8 @@ open class AgentCore(
         ToolGuardrails(
             projectRoot = it.basePath,
             confirmationCallback = confirmationCallback,
-            contextBudgetManager = contextBudgetManager
+            contextBudgetManager = contextBudgetManager,
+            toolRegistry = toolRegistry
         )
     }
     private val toolExecutor: ToolExecutor = ToolExecutor(

@@ -2,6 +2,7 @@ package com.codesage.agent.tools.handlers
 
 import com.codesage.agent.tools.ToolResult
 import com.codesage.agent.tools.UnifiedTool
+import com.codesage.tools.guardrails.SensitiveActionPolicy
 import com.codesage.model.dto.ToolCategory
 import com.codesage.model.dto.ToolParameters
 import com.codesage.model.dto.ToolProperty
@@ -65,7 +66,8 @@ class FetchUrlMarkdownTool : UnifiedTool(
             )
         ),
         required = listOf("url")
-    )
+    ),
+    riskLevel = SensitiveActionPolicy.RiskLevel.CAUTION
 ) {
     override val tool = super.tool.copy(
         category = ToolCategory.SEARCH,

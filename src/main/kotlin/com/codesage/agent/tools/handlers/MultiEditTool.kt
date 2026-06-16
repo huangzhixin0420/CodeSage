@@ -3,6 +3,7 @@ package com.codesage.agent.tools.handlers
 import com.codesage.agent.tools.IDETools
 import com.codesage.agent.tools.ToolResult
 import com.codesage.agent.tools.UnifiedTool
+import com.codesage.tools.guardrails.SensitiveActionPolicy
 import com.codesage.model.dto.ToolParameters
 import com.codesage.model.dto.ToolProperty
 import kotlinx.serialization.json.JsonObject
@@ -40,7 +41,8 @@ class MultiEditTool(private val ideTools: IDETools) : UnifiedTool(
             )
         ),
         required = listOf("path", "edits")
-    )
+    ),
+    riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS
 ) {
     override suspend fun execute(args: JsonObject): ToolResult =
         ideTools.multiEdit(args)

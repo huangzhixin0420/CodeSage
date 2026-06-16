@@ -2,6 +2,7 @@ package com.codesage.agent.tools.handlers
 
 import com.codesage.agent.tools.IDETools
 import com.codesage.agent.tools.UnifiedTool
+import com.codesage.tools.guardrails.SensitiveActionPolicy
 import com.codesage.model.dto.ToolParameters
 import com.codesage.model.dto.ToolProperty
 import kotlinx.serialization.json.JsonObject
@@ -45,7 +46,8 @@ class ApplyPatchTool(private val ideTools: IDETools) : UnifiedTool(
             )
         ),
         required = listOf("patch")
-    )
+    ),
+    riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS
 ) {
     override suspend fun execute(args: JsonObject): com.codesage.agent.tools.ToolResult =
         ideTools.applyPatch(args)

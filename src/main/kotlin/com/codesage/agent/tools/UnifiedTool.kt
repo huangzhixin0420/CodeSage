@@ -2,6 +2,7 @@ package com.codesage.agent.tools
 
 import com.codesage.model.dto.Tool
 import com.codesage.model.dto.ToolParameters
+import com.codesage.tools.guardrails.SensitiveActionPolicy
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -47,7 +48,8 @@ import kotlinx.serialization.json.JsonObject
 abstract class UnifiedTool(
     name: String,
     description: String,
-    parameters: ToolParameters
+    parameters: ToolParameters,
+    override val riskLevel: SensitiveActionPolicy.RiskLevel = SensitiveActionPolicy.RiskLevel.SAFE
 ) : ToolHandler {
 
     override val tool: Tool = Tool(

@@ -3,6 +3,7 @@ package com.codesage.agent.tools.handlers
 import com.codesage.agent.tools.BackgroundProcessManager
 import com.codesage.agent.tools.ToolResult
 import com.codesage.agent.tools.UnifiedTool
+import com.codesage.tools.guardrails.SensitiveActionPolicy
 import com.codesage.model.dto.ToolParameters
 import com.codesage.model.dto.ToolProperty
 import kotlinx.serialization.json.*
@@ -26,7 +27,8 @@ class KillProcessTool : UnifiedTool(
             "process_id" to ToolProperty("string", "Process ID returned by run_command")
         ),
         required = listOf("process_id")
-    )
+    ),
+    riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS
 ) {
     override suspend fun execute(args: JsonObject): ToolResult {
         val processId = args["process_id"]?.jsonPrimitive?.content

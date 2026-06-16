@@ -3,6 +3,7 @@ package com.codesage.tools.guardrails
 import com.codesage.agent.context.ContextBudgetManager
 import com.codesage.agent.context.OutputLimits
 import com.codesage.agent.core.AgentStreamEvent
+import com.codesage.agent.tools.ToolRegistry
 import com.codesage.agent.tools.ToolResult
 import com.codesage.agent.tools.ToolResultMetadata
 import com.codesage.shared.utils.Logger
@@ -19,7 +20,16 @@ class ToolGuardrails(
     private val confirmationCallback: ConfirmationCallback? = null,
     private val confirmationTimeoutMs: Long = 30_000,
     private val eventEmitter: ((AgentStreamEvent.ToolConfirmationNeeded) -> Unit)? = null,
-    private val contextBudgetManager: ContextBudgetManager? = null
+    private val contextBudgetManager: ContextBudgetManager? = null,
+    /**
+     * 工具注册表(可选)。
+     * 注入后,未知工具决策从"白名单"改为"查 handler.riskLevel":
+     * - handler 不存在 -> REQUIRES_CONFIRMATION(与 C3 修复一致,避免恶意自定义工具静默放行)
+     * - handler.riskLevel == SAFE -> ALLOWED
+     * - handler.riskLevel == CAUTION / DANGEROUS -> REQUIRES_CONFIRMATION
+     * 未注入时仍回退到 KNOWN_SAFE_TOOLS 白名单(向后兼容,便于单元测试)。
+     */
+    private val toolRegistry: ToolRegistry? = null
 ) {
     private val logger = Logger.getLogger<ToolGuardrails>()
 
@@ -323,20 +333,46 @@ class ToolGuardrails(
             }
 
             else -> {
-                // C3 修复：白名单反转。
-                // 旧逻辑：未在白名单的工具默认 ALLOWED —— 任何 LLM 注册的自定义工具都直接通过，
-                //          可能被 prompt injection 诱导执行恶意工具。
-                // 新逻辑：默认 REQUIRES_CONFIRMATION；只有 [KNOWN_SAFE_TOOLS] 中的工具直接放行。
-                // 注意：这里只是为了解决 review C3 的白名单反转问题。如果用户在 PluginConfig 里
-                // 显式启用了某个工具，建议由 ToolRegistry 在注册时把 allow 状态写到 Tool metadata，
-                // Guardrails 直接读 metadata（不与具体工具名硬编码）。
+                // 决策优先级:
+                // 1) 注入 ToolRegistry 时,按 handler.riskLevel 决策(替代硬编码白名单):
+                //    - handler 不存在 -> REQUIRES_CONFIRMATION(与 C3 修复一致,避免恶意自定义工具静默放行)
+                //    - handler.riskLevel == SAFE -> ALLOWED
+                //    - handler.riskLevel == CAUTION / DANGEROUS -> REQUIRES_CONFIRMATION
+                // 2) 未注入 ToolRegistry 时(回退路径,主要服务于无 registry 注入的单元测试),
+                //    仍走 KNOWN_SAFE_TOOLS 白名单 —— 历史行为,保持兼容。
                 if (toolName in KNOWN_SAFE_TOOLS) {
                     SensitiveActionPolicy.PolicyDecision(
                         verdict = SensitiveActionPolicy.PolicyDecision.Verdict.ALLOWED,
                         riskLevel = SensitiveActionPolicy.RiskLevel.SAFE,
                         reason = "Known safe tool: $toolName"
                     )
+                } else if (toolRegistry != null) {
+                    // ToolRegistry 注入但工具名不在白名单中 —— 按 handler.riskLevel 二次判断
+                    val handler = toolRegistry.getHandler(toolName)
+                    if (handler == null) {
+                        logger.warn("[ToolGuardrails] Unregistered tool name: $toolName, requiring confirmation")
+                        SensitiveActionPolicy.PolicyDecision(
+                            verdict = SensitiveActionPolicy.PolicyDecision.Verdict.REQUIRES_CONFIRMATION,
+                            riskLevel = SensitiveActionPolicy.RiskLevel.CAUTION,
+                            reason = "Unregistered tool \'$toolName\', explicit user confirmation required"
+                        )
+                    } else {
+                        when (handler.riskLevel) {
+                            SensitiveActionPolicy.RiskLevel.SAFE -> SensitiveActionPolicy.PolicyDecision(
+                                verdict = SensitiveActionPolicy.PolicyDecision.Verdict.ALLOWED,
+                                riskLevel = SensitiveActionPolicy.RiskLevel.SAFE,
+                                reason = "Tool \'$toolName\' registered with riskLevel=SAFE"
+                            )
+                            SensitiveActionPolicy.RiskLevel.CAUTION,
+                            SensitiveActionPolicy.RiskLevel.DANGEROUS -> SensitiveActionPolicy.PolicyDecision(
+                                verdict = SensitiveActionPolicy.PolicyDecision.Verdict.REQUIRES_CONFIRMATION,
+                                riskLevel = handler.riskLevel,
+                                reason = "Tool \'$toolName\' riskLevel=${handler.riskLevel} requires confirmation"
+                            )
+                        }
+                    }
                 } else {
+                    // 旧兜底:无 ToolRegistry 注入(单测路径),且不在 KNOWN_SAFE_TOOLS -> 确认
                     logger.warn("[ToolGuardrails] Unknown tool name: $toolName, requiring confirmation")
                     SensitiveActionPolicy.PolicyDecision(
                         verdict = SensitiveActionPolicy.PolicyDecision.Verdict.REQUIRES_CONFIRMATION,

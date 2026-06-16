@@ -2,6 +2,7 @@ package com.codesage.agent.tools.handlers
 
 import com.codesage.agent.core.AgentStreamEvent
 import com.codesage.agent.tools.*
+import com.codesage.tools.guardrails.SensitiveActionPolicy
 import com.codesage.model.dto.Tool
 import com.codesage.shared.utils.Logger
 import com.intellij.openapi.project.Project
@@ -23,7 +24,8 @@ object TestToolHandlers {
         StreamingFunctionalToolHandler(
             tool = runTestsTool(),
             executor = { args -> executeRunTests(args, project) },
-            executorStreaming = { args, onStream -> executeRunTestsStreaming(args, project, onStream) }
+            executorStreaming = { args, onStream -> executeRunTestsStreaming(args, project, onStream) },
+            riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS
         )
 
     /**

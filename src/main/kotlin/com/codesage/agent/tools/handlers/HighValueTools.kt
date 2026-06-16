@@ -1,6 +1,7 @@
 package com.codesage.agent.tools.handlers
 
 import com.codesage.agent.tools.UnifiedTool
+import com.codesage.tools.guardrails.SensitiveActionPolicy
 import com.codesage.shared.serialization.JsonArgDecoders
 import com.codesage.model.dto.ToolCategory
 import com.codesage.model.dto.ToolParameters
@@ -53,7 +54,8 @@ class CreatePullRequestTool : UnifiedTool(
             "draft" to ToolProperty("boolean", "Create as draft PR (default: false)")
         ),
         required = listOf("title")
-    )
+    ),
+    riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS
 ) {
     override val tool = super.tool.copy(
         category = ToolCategory.GIT,
@@ -101,7 +103,8 @@ class RunLinterTool : UnifiedTool(
             "fix" to ToolProperty("boolean", "Pass --fix to auto-fix linting issues (default: false)")
         ),
         required = emptyList()
-    )
+    ),
+    riskLevel = SensitiveActionPolicy.RiskLevel.CAUTION
 ) {
     override val tool = super.tool.copy(
         category = ToolCategory.BUILD,
@@ -159,7 +162,8 @@ class StartDebuggerTool(private val project: com.intellij.openapi.project.Projec
             "session_name" to ToolProperty("string", "Human-readable name for this debug session")
         ),
         required = emptyList()
-    )
+    ),
+    riskLevel = SensitiveActionPolicy.RiskLevel.CAUTION
 ) {
     override val tool = super.tool.copy(
         category = ToolCategory.SYSTEM,
@@ -211,7 +215,8 @@ class DatabaseSchemaTool : UnifiedTool(
             "catalog" to ToolProperty("string", "Optional catalog/schema name to scope the query")
         ),
         required = listOf("jdbc_url")
-    )
+    ),
+    riskLevel = SensitiveActionPolicy.RiskLevel.CAUTION
 ) {
     override val tool = super.tool.copy(
         category = ToolCategory.SYSTEM,
@@ -257,7 +262,8 @@ class GitWorktreeTool : UnifiedTool(
             "working_dir" to ToolProperty("string", "Repository root")
         ),
         required = listOf("action")
-    )
+    ),
+    riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS
 ) {
     override val tool = super.tool.copy(
         category = ToolCategory.GIT,

@@ -1,6 +1,7 @@
 package com.codesage.agent.tools.handlers
 
 import com.codesage.agent.tools.*
+import com.codesage.tools.guardrails.SensitiveActionPolicy
 import com.codesage.model.dto.Tool
 import com.codesage.shared.utils.Logger
 import kotlinx.serialization.json.*
@@ -13,7 +14,7 @@ import java.util.concurrent.TimeUnit
 object BuildToolHandlers {
     private val logger = Logger.getLogger<BuildToolHandlers>()
 
-    fun createMavenHandler(): ToolHandler = FunctionalToolHandler(mavenTool()) { args ->
+    fun createMavenHandler(): ToolHandler = FunctionalToolHandler(mavenTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS, executor = {  args ->
         val workingDir = args["working_dir"]?.jsonPrimitive?.content
             ?: System.getProperty("user.dir")
         val goals = args["goals"]?.jsonPrimitive?.content
@@ -38,9 +39,9 @@ object BuildToolHandlers {
 
         val cmd = BuildCommandResolver.mavenCommand(workingDir, args)
         executeBuildCommand(cmd, workingDir, "Maven")
-    }
+     })
 
-    fun createGradleHandler(): ToolHandler = FunctionalToolHandler(gradleTool()) { args ->
+    fun createGradleHandler(): ToolHandler = FunctionalToolHandler(gradleTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS, executor = {  args ->
         val workingDir = args["working_dir"]?.jsonPrimitive?.content
             ?: System.getProperty("user.dir")
         val tasks = args["tasks"]?.jsonPrimitive?.content
@@ -59,7 +60,7 @@ object BuildToolHandlers {
 
         val cmd = BuildCommandResolver.gradleCommand(workingDir, args)
         executeBuildCommand(cmd, workingDir, "Gradle")
-    }
+     })
 
     private fun executeBuildCommand(cmd: List<String>, workingDir: String, toolName: String): ToolResult {
         return try {

@@ -1,6 +1,7 @@
 package com.codesage.agent.tools.handlers
 
 import com.codesage.agent.tools.*
+import com.codesage.tools.guardrails.SensitiveActionPolicy
 import com.codesage.model.dto.Tool
 import com.codesage.shared.net.ProxyAwareHttpClientFactory
 import com.codesage.shared.utils.Logger
@@ -31,6 +32,7 @@ object WebScraperToolHandlers {
 
     fun createWebScraperHandler(): ToolHandler = object : ToolHandler {
         override val tool: Tool = webScraperTool()
+        override val riskLevel = SensitiveActionPolicy.RiskLevel.CAUTION
         override suspend fun execute(args: JsonObject): ToolResult = withContext(Dispatchers.IO) {
             val url = args["url"]?.jsonPrimitive?.content
                 ?: return@withContext ToolResult.Error("Missing 'url' parameter")
@@ -98,7 +100,7 @@ object WebScraperToolHandlers {
 object ClipboardToolHandlers {
     private val logger = Logger.getLogger<ClipboardToolHandlers>()
 
-    fun createClipboardHandler(): ToolHandler = FunctionalToolHandler(clipboardTool()) { args ->
+    fun createClipboardHandler(): ToolHandler = FunctionalToolHandler(clipboardTool(), riskLevel = SensitiveActionPolicy.RiskLevel.CAUTION, executor = {  args ->
         val action = args["action"]?.jsonPrimitive?.content
             ?: return@FunctionalToolHandler ToolResult.Error("Missing 'action' parameter")
 
@@ -137,7 +139,7 @@ object ClipboardToolHandlers {
 
             else -> ToolResult.Error("Unknown clipboard action: $action")
         }
-    }
+     })
 }
 
 object TimestampToolHandlers {
@@ -246,7 +248,7 @@ object UUIDToolHandlers {
 object DocumentationToolHandlers {
     private val logger = Logger.getLogger<DocumentationToolHandlers>()
 
-    fun createGenerateDocHandler(project: Project?): ToolHandler = FunctionalToolHandler(generateDocTool()) { args ->
+    fun createGenerateDocHandler(project: Project?): ToolHandler = FunctionalToolHandler(generateDocTool(), riskLevel = SensitiveActionPolicy.RiskLevel.CAUTION, executor = {  args ->
         val filePath = args["file_path"]?.jsonPrimitive?.content
             ?: return@FunctionalToolHandler ToolResult.Error("Missing 'file_path' parameter")
         val lineStart = args["line_start"]?.jsonPrimitive?.intOrNull
@@ -308,13 +310,13 @@ object DocumentationToolHandlers {
                 )
             )
         )
-    }
+     })
 }
 
 object DatabaseToolHandlers {
     private val logger = Logger.getLogger<DatabaseToolHandlers>()
 
-    fun createSqlExecuteHandler(project: Project?): ToolHandler = FunctionalToolHandler(sqlExecuteTool()) { args ->
+    fun createSqlExecuteHandler(project: Project?): ToolHandler = FunctionalToolHandler(sqlExecuteTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS, executor = {  args ->
         // 简化实现：通过 JDBC 直接连接。生产环境应集成 IntelliJ Database Tools API。
         val dataSourceName = args["data_source_name"]?.jsonPrimitive?.content
             ?: return@FunctionalToolHandler ToolResult.Error("Missing 'data_source_name' parameter")
@@ -340,13 +342,13 @@ object DatabaseToolHandlers {
                 )
             )
         )
-    }
+     })
 }
 
 object DockerToolHandlers {
     private val logger = Logger.getLogger<DockerToolHandlers>()
 
-    fun createDockerHandler(): ToolHandler = FunctionalToolHandler(dockerTool()) { args ->
+    fun createDockerHandler(): ToolHandler = FunctionalToolHandler(dockerTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS, executor = {  args ->
         val command = args["command"]?.jsonPrimitive?.content
             ?: return@FunctionalToolHandler ToolResult.Error("Missing 'command' parameter")
         val target = args["target"]?.jsonPrimitive?.content
@@ -381,7 +383,7 @@ object DockerToolHandlers {
             logger.error("Docker command failed: $command", e)
             ToolResult.Error("Docker command failed: ${e.message}")
         }
-    }
+     })
 }
 
 object DependencyToolHandlers {

@@ -2,6 +2,7 @@ package com.codesage.agent.tools
 
 import com.codesage.agent.core.AgentStreamEvent
 import com.codesage.model.dto.Tool
+import com.codesage.tools.guardrails.SensitiveActionPolicy
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -42,12 +43,25 @@ interface ToolHandler {
      * 工具名称（从 tool 中派生，便于快速访问）
      */
     val name: String get() = tool.name
+
+    /**
+     * 工具风险等级（用于 ToolGuardrails 决策，替代硬编码 KNOWN_SAFE_TOOLS 白名单）。
+     *
+     * 默认 SAFE：仅读取 / 分析类工具的合理默认，新工具保持默认即可通过 guardrails。
+     * 危险工具（写文件、执行 shell、提交代码、调用外部服务等）必须显式 override 为 DANGEROUS。
+     *
+     * ToolGuardrails 在 else 分支会先查 handler.riskLevel，再决定 ALLOWED / REQUIRES_CONFIRMATION。
+     */
+    val riskLevel: SensitiveActionPolicy.RiskLevel get() = SensitiveActionPolicy.RiskLevel.SAFE
 }
 
 /**
- * 将现有的非 suspend 工具方法适配为 ToolHandler
- */
-abstract class SyncToolHandler(override val tool: Tool) : ToolHandler {
+* 将现有的非 suspend 工具方法适配为 ToolHandler
+*/
+abstract class SyncToolHandler(
+    override val tool: Tool,
+    override val riskLevel: SensitiveActionPolicy.RiskLevel = SensitiveActionPolicy.RiskLevel.SAFE
+) : ToolHandler {
     final override suspend fun execute(args: JsonObject): ToolResult {
         return executeSync(args)
     }
@@ -60,6 +74,7 @@ abstract class SyncToolHandler(override val tool: Tool) : ToolHandler {
  */
 class FunctionalToolHandler(
     override val tool: Tool,
+    override val riskLevel: SensitiveActionPolicy.RiskLevel = SensitiveActionPolicy.RiskLevel.SAFE,
     private val executor: (JsonObject) -> ToolResult
 ) : ToolHandler {
     override suspend fun execute(args: JsonObject): ToolResult = executor(args)
@@ -73,6 +88,7 @@ class FunctionalToolHandler(
  */
 class StreamingFunctionalToolHandler(
     override val tool: Tool,
+    override val riskLevel: SensitiveActionPolicy.RiskLevel = SensitiveActionPolicy.RiskLevel.SAFE,
     private val executor: (JsonObject) -> ToolResult,
     private val executorStreaming: suspend (JsonObject, suspend (AgentStreamEvent) -> Unit) -> ToolResult
 ) : ToolHandler {

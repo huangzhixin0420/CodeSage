@@ -1,6 +1,7 @@
 package com.codesage.agent.tools.handlers
 
 import com.codesage.agent.tools.*
+import com.codesage.tools.guardrails.SensitiveActionPolicy
 import com.codesage.model.dto.Tool
 import kotlinx.serialization.json.*
 import java.io.File
@@ -21,7 +22,7 @@ object IDEFileHandlers {
         FunctionalToolHandler(readFileTool()) { ideTools.readFile(it) }
 
     fun createWriteFileHandler(ideTools: IDETools): ToolHandler =
-        FunctionalToolHandler(writeFileTool()) { ideTools.writeFile(it) }
+        FunctionalToolHandler(writeFileTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS) { ideTools.writeFile(it) }
 
     fun createListDirectoryHandler(ideTools: IDETools): ToolHandler =
         FunctionalToolHandler(listDirectoryTool()) { ideTools.listDirectory(it) }
@@ -127,16 +128,16 @@ object IDEFileHandlers {
         }
 
     fun createEditFileHandler(ideTools: IDETools): ToolHandler =
-        FunctionalToolHandler(editFileTool()) { ideTools.editFile(it) }
+        FunctionalToolHandler(editFileTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS) { ideTools.editFile(it) }
 
     fun createDeleteFileHandler(ideTools: IDETools): ToolHandler =
-        FunctionalToolHandler(deleteFileTool()) { ideTools.deleteFile(it) }
+        FunctionalToolHandler(deleteFileTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS) { ideTools.deleteFile(it) }
 
     fun createCopyFileHandler(ideTools: IDETools): ToolHandler =
-        FunctionalToolHandler(copyFileTool()) { ideTools.copyFile(it) }
+        FunctionalToolHandler(copyFileTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS) { ideTools.copyFile(it) }
 
     fun createMoveFileHandler(ideTools: IDETools): ToolHandler =
-        FunctionalToolHandler(moveFileTool()) { ideTools.moveFile(it) }
+        FunctionalToolHandler(moveFileTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS) { ideTools.moveFile(it) }
 
     fun createSearchCodeHandler(ideTools: IDETools): ToolHandler =
         FunctionalToolHandler(searchCodeTool()) { ideTools.searchCode(it) }
@@ -144,6 +145,7 @@ object IDEFileHandlers {
     fun createRunCommandHandler(ideTools: IDETools): ToolHandler =
         object : ToolHandler {
             override val tool: Tool = runCommandTool()
+            override val riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS
             override suspend fun execute(args: JsonObject): ToolResult =
                 ideTools.runCommand(args)
 
@@ -159,7 +161,7 @@ object IDEFileHandlers {
     // region 新增文件操作工具
 
     fun createCreateDirectoryHandler(ideTools: IDETools): ToolHandler =
-        FunctionalToolHandler(createDirectoryTool()) { args ->
+        FunctionalToolHandler(createDirectoryTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS, executor = {  args ->
             val path = args["path"]?.jsonPrimitive?.content
                 ?: return@FunctionalToolHandler ToolResult.Error("Missing 'path' parameter")
             val resolved = ideTools.resolvePath(path)
@@ -180,10 +182,10 @@ object IDEFileHandlers {
                     JsonObject(mapOf("path" to JsonPrimitive(path), "created" to JsonPrimitive(success)))
                 )
             }
-        }
+         })
 
     fun createZipDirectoryHandler(ideTools: IDETools): ToolHandler =
-        FunctionalToolHandler(zipDirectoryTool()) { args ->
+        FunctionalToolHandler(zipDirectoryTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS, executor = {  args ->
             val source = args["source"]?.jsonPrimitive?.content
                 ?: return@FunctionalToolHandler ToolResult.Error("Missing 'source' parameter")
             val destination = args["destination"]?.jsonPrimitive?.content
@@ -218,10 +220,10 @@ object IDEFileHandlers {
                     )
                 )
             )
-        }
+         })
 
     fun createUnzipArchiveHandler(ideTools: IDETools): ToolHandler =
-        FunctionalToolHandler(unzipArchiveTool()) { args ->
+        FunctionalToolHandler(unzipArchiveTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS, executor = {  args ->
             val source = args["source"]?.jsonPrimitive?.content
                 ?: return@FunctionalToolHandler ToolResult.Error("Missing 'source' parameter")
             val destination = args["destination"]?.jsonPrimitive?.content
@@ -258,7 +260,7 @@ object IDEFileHandlers {
                     )
                 )
             )
-        }
+         })
 
     // endregion
 }

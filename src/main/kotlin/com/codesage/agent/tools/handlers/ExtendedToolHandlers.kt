@@ -1,6 +1,7 @@
 package com.codesage.agent.tools.handlers
 
 import com.codesage.agent.tools.*
+import com.codesage.tools.guardrails.SensitiveActionPolicy
 import com.codesage.model.dto.Tool
 import com.codesage.shared.utils.Logger
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +32,7 @@ object ExtendedToolHandlers {
     ): ToolHandler =
         object : ToolHandler {
             override val tool: Tool = execShellTool()
+            override val riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS
             override suspend fun execute(args: JsonObject): ToolResult {
                 // P0 优化 6.4.1：exec_shell 已废弃，统一转发到 run_command 执行。
                 return ideTools.runCommand(args)
@@ -73,7 +75,7 @@ object ExtendedToolHandlers {
     // region 增强版 Git 工具
 
     fun createGitAddHandler(extended: ExtendedTools): ToolHandler =
-        FunctionalToolHandler(gitAddTool()) { args ->
+        FunctionalToolHandler(gitAddTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS, executor = {  args ->
             val workingDir = extended.resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
             val all = args["all"]?.jsonPrimitive?.booleanOrNull ?: false
             val files = args["files"]?.jsonArray?.map { it.jsonPrimitive.content } ?: emptyList()
@@ -108,10 +110,10 @@ object ExtendedToolHandlers {
                     )
                 }
             }
-        }
+         })
 
     fun createGitCommitHandler(extended: ExtendedTools): ToolHandler =
-        FunctionalToolHandler(gitCommitTool()) { args ->
+        FunctionalToolHandler(gitCommitTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS, executor = {  args ->
             val workingDir = extended.resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
             val message = args["message"]?.jsonPrimitive?.content
             val amend = args["amend"]?.jsonPrimitive?.booleanOrNull ?: false
@@ -150,10 +152,10 @@ object ExtendedToolHandlers {
                     )
                 }
             }
-        }
+         })
 
     fun createGitStashHandler(extended: ExtendedTools): ToolHandler =
-        FunctionalToolHandler(gitStashTool()) { args ->
+        FunctionalToolHandler(gitStashTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS, executor = {  args ->
             val workingDir = extended.resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
             val action = args["action"]?.jsonPrimitive?.content ?: "save"
             val message = args["message"]?.jsonPrimitive?.content
@@ -187,7 +189,7 @@ object ExtendedToolHandlers {
                     )
                 }
             }
-        }
+         })
 
     fun createGitBlameHandler(extended: ExtendedTools): ToolHandler =
         FunctionalToolHandler(gitBlameTool()) { args ->
@@ -270,7 +272,7 @@ object ExtendedToolHandlers {
      * 若分支尚无上游跟踪分支，自动使用 `git push -u origin <branch>`。
      */
     fun createGitPushHandler(extended: ExtendedTools): ToolHandler =
-        FunctionalToolHandler(gitPushTool()) { args ->
+        FunctionalToolHandler(gitPushTool(), riskLevel = SensitiveActionPolicy.RiskLevel.DANGEROUS, executor = {  args ->
             val workingDir = extended.resolveWorkingDir(args["working_dir"]?.jsonPrimitive?.content)
             val remote = args["remote"]?.jsonPrimitive?.content ?: "origin"
             val branchArg = args["branch"]?.jsonPrimitive?.content
@@ -311,7 +313,7 @@ object ExtendedToolHandlers {
                     )
                 }
             }
-        }
+         })
 
     // endregion
 
