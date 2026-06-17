@@ -115,14 +115,19 @@ function parseToolError(str) {
   if (parsed.success !== false) return null;
   const message = parsed.error || parsed.message;
   if (!message || typeof message !== "string") return null;
-  const context = {};
+  // 方案 B: 把 context 序列化为 string 而不是 object。
+  // 原因: cs-tool-call.js:401 renderErrorCard(r.message, r.stack, r.hint || r.context)
+  // 会把 r.context 当作 hint 传给 escapeHtml —— escapeHtml 内部 String(hint) 强制把
+  // object toString 成 "[object Object]", 跟 message 拼成 "Missing 'path' parameter\n[object Object]"。
+  // 把 context 整体 flatten 成 "k=v\nk2=v2" 字符串, 既保留调试信息, 又避免下游 escapeHtml 炸。
+  const contextPairs = [];
   for (const k of Object.keys(parsed)) {
     if (k === "success" || k === "error" || k === "message") continue;
     const v = parsed[k];
     if (v == null) continue;
-    context[k] = typeof v === "object" ? JSON.stringify(v, null, 2) : String(v);
+    contextPairs.push(`${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`);
   }
-  return { message, context };
+  return { message, context: contextPairs.join("\n") };
 }
 
 function parseToolResultWrapper(str, toolName, args) {
