@@ -229,12 +229,12 @@ open class ModelGateway(
                     if (!response.isSuccessful) {
                         val errorBody = response.body?.string()?.take(2000) ?: "(empty body)"
                         logger.error(
-                            "[Gateway.chatStream] ✗ ${'$'}{request.model} | " +
-                                    "status=${'$'}{response.code} requestSize=${'$'}{vendorRequest.length}B " +
-                                    "durationMs=${'$'}{System.currentTimeMillis() - startMs} | " +
+                            "[Gateway.chatStream] ✗ ${request.model} | " +
+                                    "status=${response.code} requestSize=${vendorRequest.length}B " +
+                                    "durationMs=${System.currentTimeMillis() - startMs} | " +
                                     "body=$errorBody"
                         )
-                        throw NetworkException("HTTP ${'$'}{response.code} (requestSize=${'$'}{vendorRequest.length}B): $errorBody")
+                        throw NetworkException("HTTP ${response.code} (requestSize=${vendorRequest.length}B): $errorBody")
                     }
 
                     val body = response.body ?: throw NetworkException("Empty response body in stream")

@@ -439,4 +439,139 @@ class AgentErrorRecoveryTest {
             "abort should include the 400 body for diagnosis, got: $msg"
         )
     }
+    // ─── BAD_REQUEST_PAYLOAD 分类 & Abort 行为 ─────────────────────────────
+    // 场景：Anthropic 第二轮拒收 client 发的 tool_use input(例如 EnhancedAgentLoop
+    // 残缺 JSON 序列化 / 嵌入未转义双引号),body 里会有 "invalid function arguments"
+    // + tool_call_id。要求：
+    //   1) classify() 归到 BAD_REQUEST_PAYLOAD(不是 BAD_REQUEST)
+    //   2) recover() first call 就 Abort(不进入 compress / fallback 分支)
+    //   3) Abort 消息要带 tool_call_id hint + 完整 body 前 1000 字符,方便用户诊断
+
+    @Test
+    fun `400 with invalid function arguments classifies as BAD_REQUEST_PAYLOAD not BAD_REQUEST`() {
+        // Anthropic 拒 tool_use input 的典型 body 片段
+        val body = "HTTP 400 (requestSize=1234B): " +
+                "{\"type\":\"error\",\"error\":{\"type\":\"bad_request_error\",\"message\":\"" +
+                "invalid params, invalid function arguments json string, " +
+                "tool_call_id: call_Abc123_xyz\"}}"
+        val error = NetworkException(body)
+        val classified = recovery.classify(error, model = "claude-sonnet-4.5")
+
+        assertEquals(
+            FailoverReason.BAD_REQUEST_PAYLOAD, classified.reason,
+            "schema-error 400 must be BAD_REQUEST_PAYLOAD, got: ${classified.reason}"
+        )
+        assertFalse(classified.retryable, "BAD_REQUEST_PAYLOAD is not retryable")
+        assertFalse(classified.shouldCompress, "schema 错压缩不会修,不要消耗上下文")
+        assertFalse(classified.shouldFallback, "schema 错不同 model 协议一样存在")
+        assertEquals(400, classified.statusCode)
+    }
+
+    @Test
+    fun `400 with invalid params keyword also classifies as BAD_REQUEST_PAYLOAD`() {
+        // 没有 tool_call_id 也不影响分类 —— 只要含 'invalid params' 关键字
+        val error = NetworkException(
+            "HTTP 400 (requestSize=500B): " +
+                    "{\"error\":{\"type\":\"bad_request_error\",\"message\":\"invalid params: missing field\"}}"
+        )
+        val classified = recovery.classify(error, model = "claude-sonnet-4.5")
+        assertEquals(FailoverReason.BAD_REQUEST_PAYLOAD, classified.reason)
+    }
+
+    @Test
+    fun `400 without schema keywords still classifies as BAD_REQUEST for fallback`() {
+        // 保留旧行为:不带 schema 关键字的 400 还是 BAD_REQUEST(走 1 次 fallback)
+        val error = NetworkException("HTTP 400: payload too large")
+        val classified = recovery.classify(error, model = "claude-sonnet-4.5")
+        assertEquals(
+            FailoverReason.BAD_REQUEST, classified.reason,
+            "non-schema 400 must stay BAD_REQUEST to keep fallback path alive"
+        )
+    }
+
+    @Test
+    fun `BAD_REQUEST_PAYLOAD recover first call aborts with tool_call_id and body`() {
+        // maxRetries[BAD_REQUEST_PAYLOAD]=0 -> first call 必须直接 Abort,
+        // 不能进 CompressAndRetry 也不能进 RetryWithModel。
+        val body = "HTTP 400 (requestSize=1234B): " +
+                "{\"type\":\"error\",\"error\":{\"type\":\"bad_request_error\",\"message\":\"" +
+                "invalid function arguments json string, tool_call_id: call_DEADBEEF_42\"}}"
+        val error = NetworkException(body)
+        val classified = recovery.classify(error, model = "claude-sonnet-4.5")
+        val agent = AgentCore()
+
+        val action = recovery.recover(
+            agent, classified,
+            fallbackModels = listOf("fallback-model-A", "fallback-model-B")
+        )
+
+        // 必须是 Abort,不能是 CompressAndRetry / RetryWithModel
+        assertTrue(
+            action is RecoveryAction.Abort,
+            "BAD_REQUEST_PAYLOAD first call must Abort, got: $action"
+        )
+        val msg = (action as RecoveryAction.Abort).message
+
+        // 消息要带 tool_call_id hint(让用户能定位哪个 tool_use 被拒)
+        assertTrue(
+            msg.contains("call_DEADBEEF_42"),
+            "abort msg should expose tool_call_id=call_DEADBEEF_42, got: $msg"
+        )
+        // 消息要带原始 provider body 片段(前 1000 字符)
+        assertTrue(
+            msg.contains("invalid function arguments"),
+            "abort msg should expose provider body, got: $msg"
+        )
+        assertTrue(
+            msg.contains("claude-sonnet-4.5"),
+            "abort msg should mention which model failed, got: $msg"
+        )
+    }
+
+    @Test
+    fun `BAD_REQUEST_PAYLOAD abort uses dedicated pre-check not generic max-retries message`() {
+        // 关键不变式:即便提供 fallback-models,BAD_REQUEST_PAYLOAD 也必须走专用 pre-check
+        // 路径,Abort 消息含 "Payload schema error" 而非通用 "超过最大重试次数 (0)"。
+        val error = NetworkException(
+            "HTTP 400: " +
+                    "{\"error\":{\"type\":\"bad_request_error\",\"message\":\"invalid schema, " +
+                    "input_schema not satisfied, tool_call_id: call_zzz\"}}"
+        )
+        val classified = recovery.classify(error, model = "primary-model")
+        val agent = AgentCore()
+
+        val action = recovery.recover(
+            agent, classified, fallbackModels = listOf("fallback-X")
+        )
+        assertTrue(action is RecoveryAction.Abort, "first call must Abort")
+        val msg = (action as RecoveryAction.Abort).message
+        assertTrue(
+            msg.contains("Payload schema error"),
+            "abort must come from BAD_REQUEST_PAYLOAD pre-check, " +
+                    "not generic max-retries path. got: $msg"
+        )
+        assertFalse(
+            msg.contains("超过最大重试次数"),
+            "BAD_REQUEST_PAYLOAD should NOT use generic max-retries-exceeded message, " +
+                    "got: $msg"
+        )
+    }
+
+    @Test
+    fun `BAD_REQUEST_PAYLOAD without tool_call_id still aborts cleanly`() {
+        // 缺 tool_call_id 时 hint 部分为空字符串,Abort 消息仍要可读
+        val error = NetworkException(
+            "HTTP 400: " +
+                    "{\"error\":{\"type\":\"bad_request_error\",\"message\":\"invalid function arguments\"}}"
+        )
+        val classified = recovery.classify(error, model = "gpt-4o")
+        val agent = AgentCore()
+
+        val action = recovery.recover(agent, classified, fallbackModels = listOf("fb"))
+        assertTrue(action is RecoveryAction.Abort)
+        val msg = (action as RecoveryAction.Abort).message
+        assertTrue(msg.contains("Payload schema error"))
+        assertTrue(msg.contains("gpt-4o"))
+        assertTrue(msg.contains("invalid function arguments"))
+    }
 }

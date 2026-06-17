@@ -18,6 +18,9 @@ enum class FailoverReason {
     CONTEXT_TOO_LONG,        // 413 / context limit
     IMAGE_TOO_LARGE,         // 400 image size
     BAD_REQUEST,             // 400 - 请求被拒为格式错误（重试同 payload 不会好）
+    BAD_REQUEST_PAYLOAD,     // 400 - payload 格式/schema 错（Anthropic 'invalid function arguments' 等）
+                             // 与 BAD_REQUEST 区别:这种错任何重试/压缩/fallback 都不会变好,
+                             // 直接 Abort 暴露 error body 给用户,不要无意义消耗上下文。
     MULTIMODAL_UNSUPPORTED,  // provider 不支持多模态 tool content
     TIMEOUT,                 // 网络超时
     EMPTY_RESPONSE,          // 模型返回空内容
@@ -85,6 +88,7 @@ class AgentErrorRecovery {
         FailoverReason.CONTEXT_TOO_LONG to 2,
         FailoverReason.IMAGE_TOO_LARGE to 2,
         FailoverReason.BAD_REQUEST to 1,  // 同 payload 重试无意义，只试 1 次 fallback
+        FailoverReason.BAD_REQUEST_PAYLOAD to 0,  // payload 格式/schema 错,任何重试不会好,直接 Abort
         FailoverReason.MULTIMODAL_UNSUPPORTED to 1,
         FailoverReason.AUTH_EXPIRED to 2,
         FailoverReason.PROVIDER_UNAVAILABLE to 3,
@@ -177,6 +181,22 @@ class AgentErrorRecovery {
                     shouldCompress = true,
                     shouldFallback = true,
                     statusCode = statusCode,
+                    originalError = error,
+                    modelName = model
+                )
+
+            // HTTP 400 + payload 格式/schema 错(Anthropic 'invalid function arguments' / 'invalid params' /
+            // 'invalid schema' / 'tools' / 'tool_call_id' 等)。这种错任何重试/压缩/fallback 都不会好,
+            // 因为 conversation history 里的 tool_use input 字段已写死,client 不能改。
+            // 直接 Abort + 暴露完整 error body 让用户看到 tool_call_id + Anthropic schema diff。
+            // 注意:必须在 BAD_REQUEST 之前匹配,否则被吞掉。
+            statusCode == 400 && isPayloadSchemaError(message) ->
+                ClassifiedError(
+                    reason = FailoverReason.BAD_REQUEST_PAYLOAD,
+                    retryable = false,
+                    shouldCompress = false,  // 压缩不会修 schema 错,避免无意义上下文损失
+                    shouldFallback = false,  // 不同 model 协议不一样,但 schema 错依然存在
+                    statusCode = 400,
                     originalError = error,
                     modelName = model
                 )
@@ -335,6 +355,32 @@ class AgentErrorRecovery {
                     "(retry $currentRetries/$maxRetry, status=${classified.statusCode})"
         )
 
+        // BAD_REQUEST_PAYLOAD 是 special case:
+        //   - maxRetries[BAD_REQUEST_PAYLOAD]=0 是"零重试/零 fallback"语义
+        //   - 但下面通用 currentRetries >= maxRetry 分支会先于 when 分支命中,
+        //     吐出"超过最大重试次数 (0)"这种没诊断价值的 Abort
+        // 所以在通用 max-retry 检查之前,先把 BAD_REQUEST_PAYLOAD 路由到
+        // 自己的 Abort 分支,带 tool_call_id hint + 完整 provider error body。
+        if (classified.reason == FailoverReason.BAD_REQUEST_PAYLOAD) {
+            // 计数 +1(仅为外部观测/日志一致性,实际不会再次进入 recover)
+            retryCounters.computeIfAbsent(counterKey) { AtomicInteger(0) }.incrementAndGet()
+            val body = classified.originalError?.message ?: "(no error body)"
+            val toolCallIdHint = Regex("""tool_call_id['"]?\s*[:=]\s*['"]?([a-zA-Z0-9_]+)""")
+                .find(body)?.groupValues?.get(1)
+                ?.let { " (tool_call_id=$it)" } ?: ""
+            logger.error(
+                "HTTP 400 payload schema error on model=${classified.modelName}" +
+                        "$toolCallIdHint. Aborting without retry/compress/fallback. " +
+                        "Body (first 1000 chars): ${body.take(1000)}"
+            )
+            return RecoveryAction.Abort(
+                "Payload schema error (HTTP 400, model=${classified.modelName})" +
+                        "$toolCallIdHint — provider 拒收 conversation 中的 tool_use input, " +
+                        "重试/压缩/fallback 都不会修复。\n" +
+                        "完整 provider error body (前 1000 字符):\n${body.take(1000)}"
+            )
+        }
+
         // 检查是否超过最大重试次数
         if (currentRetries >= maxRetry) {
             // 附上原始异常详情（类名 + 消息），让上层能看到根因
@@ -380,6 +426,21 @@ class AgentErrorRecovery {
 
             FailoverReason.IMAGE_TOO_LARGE ->
                 RecoveryAction.CompressAndRetry()
+
+            FailoverReason.BAD_REQUEST_PAYLOAD -> {
+                // 兜底:正常路径已在 recover() 入口处的 BAD_REQUEST_PAYLOAD pre-check
+                // 直接 return Abort,这里理论上到不了。保留为保险,语义和 pre-check 一致。
+                val body = classified.originalError?.message ?: "(no error body)"
+                val toolCallIdHint = Regex("""tool_call_id['"]?\s*[:=]\s*['"]?([a-zA-Z0-9_]+)""")
+                    .find(body)?.groupValues?.get(1)
+                    ?.let { " (tool_call_id=$it)" } ?: ""
+                RecoveryAction.Abort(
+                    "Payload schema error (HTTP 400, model=${classified.modelName})" +
+                            "$toolCallIdHint — provider 拒收 conversation 中的 tool_use input, " +
+                            "重试/压缩/fallback 都不会修复。\n" +
+                            "完整 provider error body (前 1000 字符):\n${body.take(1000)}"
+                )
+            }
 
             FailoverReason.BAD_REQUEST -> {
                 // HTTP 400：同 payload 重试不会变好。但不同 model 验证规则不同，
@@ -561,6 +622,30 @@ class AgentErrorRecovery {
         val regex = Regex("""\b(\d{3})\b""")
         val match = regex.find(message)
         return match?.groupValues?.get(1)?.toIntOrNull()
+    }
+
+    /**
+     * 判断 400 是否为 payload 格式/schema 错(无法通过重试/压缩/fallback 修复)。
+     *
+     * 关键词匹配 Anthropic / OpenAI / Gemini 常见 schema 错错误体:
+     * - "invalid function arguments" — Anthropic 拒 tool_use input 字段
+     * - "invalid params" — Anthropic 通用 schema 错
+     * - "invalid schema" — OpenAI tools schema 错
+     * - "tools" + "required" — tools 数组字段缺失
+     * - "tool_call_id" — Anthropic tool_call id 关联错
+     * - "messages.tool_use_id" — Anthropic tool_result 关联错
+     * - "input_schema" — OpenAI tools.input_schema 错
+     */
+    private fun isPayloadSchemaError(message: String): Boolean {
+        if (message.isEmpty()) return false
+        val lower = message.lowercase()
+        return lower.contains("invalid function arguments") ||
+                lower.contains("invalid params") ||
+                lower.contains("invalid schema") ||
+                (lower.contains("tools") && lower.contains("required")) ||
+                lower.contains("tool_call_id") ||
+                lower.contains("input_schema") ||
+                lower.contains("messages.tool_use_id")
     }
 
     companion object {
